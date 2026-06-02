@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>STARHAWK — Neon Arcade</title>
+<link rel="stylesheet" href="style.css">
+<script src="sfx.js"></script>
+<script src="three.min.js"></script>
+<style>:root{ --accent: var(--neon-pink); }
+  .status{ font-family:'Press Start 2P',monospace; font-size:13px; color:var(--neon-pink); text-align:center; min-height:16px; margin-top:14px; }
+  .d3-badge{ font-family:'Press Start 2P',monospace; font-size:9px; color:var(--neon-violet); border:1px solid var(--neon-violet); border-radius:3px; padding:3px 6px; letter-spacing:1px; }
+</style>
+</head>
+<body>
+  <div class="crt-on" aria-hidden="true"></div>
+  <div class="crt-lines" aria-hidden="true"></div>
+  <div class="crt-glass" aria-hidden="true"></div>
+  <nav class="gamebar">
+    <a class="back" href="index.html">‹ ARCADE</a>
+    <h1 class="game-title">STARHAWK</h1>
+    <span class="d3-badge">▣ 3D</span>
+  </nav>
+  <div class="stage">
+    <div class="hud"><span>SCORE <b id="score">0</b></span><span>LIVES <b id="lives">3</b></span><span>BEST <b id="best">0</b></span></div>
+    <canvas id="c" width="480" height="480"></canvas>
+    <p class="status" id="status">Aim with mouse · FIRE to blast the swarm</p>
+    <button class="btn" id="start">PRESS START</button>
+    <p class="hint">MOUSE/WASD/ARROWS aim · SPACE or CLICK/TAP to fire</p>
+  </div>
+<script>
+(function(){
+  'use strict';
+  var cv = document.getElementById('c');
+  var scoreEl = document.getElementById('score');
+  var livesEl = document.getElementById('lives');
+  var bestEl  = document.getElementById('best');
+  var statusEl= document.getElementById('status');
+  var startBtn= document.getElementById('start');
+
+  var W = 480, H = 480;
+  var renderer = new THREE.WebGLRenderer({canvas:cv, antialias:true});
+  renderer.setSize(W, H, false);
+  var CLEAR = 0x07020f;
+  renderer.setClearColor(CLEAR, 1);
+
+  var scene = new THREE.Scene();
+  scene.fog = new THREE.FogExp2(CLEAR, 0.006);
+
+  var camera = new THREE.PerspectiveCamera(75, 1, 0.1, 500);
+  camera.position.set(0,0,0);
+  camera.lookAt(0,0,-1);
+
+  // Starfield
+  var starGeo = new THREE.BufferGeometry();
+  var starCount = 400;
+  var starPos = new Float32Array(starCount*3);
+  var starCol = new Float32Array(starCount*3);
+  for (var i=0;i<starCount;i++){
+    starPos[i*3]   = (Math.random()-0.5)*300;
+    starPos[i*3+1] = (Math.random()-0.5)*300;
+    starPos[i*3+2] = -Math.random()*400 - 5;
+    var cyan = Math.random() < 0.4;
+    starCol[i*3]   = cyan ? 0.45 : 1.0;
+    starCol[i*3+1] = 1.0;
+    starCol[i*3+2] = cyan ? 1.0 : 1.0;
+  }
+  starGeo.setAttribute('position', new THREE.BufferAttribute(starPos,3));
+  starGeo.setAttribute('color', new THREE.BufferAttribute(starCol,3));
+  var starMat = new THREE.PointsMaterial({size:0.9, vertexColors:true, transparent:true, opacity:0.9});
+  var stars = new THREE.Points(starGeo, starMat);
+  scene.add(stars);
+
+  // ---- Cockpit / ship presence (parented to camera so it always frames the view) ----
+  var cockpit = new THREE.Group();
+  camera.add(cockpit);
+  scene.add(camera);
+  // ship nose pointing forward at bottom-center
+  var noseMat = new THREE.MeshBasicMaterial({color:0xb14bff, wireframe:true, transparent:true, opacity:0.55});
+  var nose = new THREE.Mesh(new THREE.ConeGeometry(1.1, 3.2, 4), noseMat);
+  nose.rotation.x = -Math.PI/2;
+  nose.position.set(0, -3.4, -5.2);
+  cockpit.add(nose);
+  // twin gun barrels at the lower corners
+  var barrelMat = new THREE.MeshBasicMaterial({color:0x25f4ee, wireframe:true, transparent:true, opacity:0.5});
+  var barrelGeo = new THREE.CylinderGeometry(0.18, 0.22, 4.5, 6);
+  var barrelL = new THREE.Mesh(barrelGeo, barrelMat);
+  barrelL.rotation.x = Math.PI/2;
+  barrelL.position.set(-2.6, -3.0, -4.8);
+  cockpit.add(barrelL);
+  var barrelR = barrelL.clone();
+  barrelR.position.x = 2.6;
+  cockpit.add(barrelR);
+  // muzzle glow sprites (hidden until fire)
+  var muzzleMat = new THREE.MeshBasicMaterial({color:0xffffff, transparent:true, opacity:0});
+  var muzzleL = new THREE.Mesh(new THREE.SphereGeometry(0.5, 8, 8), muzzleMat.clone());
+  muzzleL.position.set(-2.6, -3.0, -6.9);
+  cockpit.add(muzzleL);
+  var muzzleR = new THREE.Mesh(new THREE.SphereGeometry(0.5, 8, 8), muzzleMat.clone());
+  muzzleR.position.set(2.6, -3.0, -6.9);
+  cockpit.add(muzzleR);
+  var muzzleTimer = 0;
+
+  // Crosshair reticle in scene at fixed forward distance
+  var AIM_DIST = 12;
+  var reticleGroup = new THREE.Group();
+  var ringGeo = new THREE.RingGeometry(0.55, 0.7, 24);
+  var ringMat = new THREE.MeshBasicMaterial({color:0xff2e97, side:THREE.DoubleSide, transparent:true, opacity:0.95});
+  var ring = new THREE.Mesh(ringGeo, ringMat);
+  reticleGroup.add(ring);
+  var ring2Mat = new THREE.MeshBasicMaterial({color:0x25f4ee, side:THREE.DoubleSide, transparent:true, opacity:0.35});
+  var ring2 = new THREE.Mesh(new THREE.RingGeometry(0.9, 1.0, 24), ring2Mat);
+  reticleGroup.add(ring2);
+  var dotGeo = new THREE.SphereGeometry(0.08, 8, 8);
+  var dotMat = new THREE.MeshBasicMaterial({color:0x25f4ee});
+  reticleGroup.add(new THREE.Mesh(dotGeo, dotMat));
+  scene.add(reticleGroup);
+  // reticle lags toward the aim point for game-feel
+  var retX = 0, retY = 0;
+
+  var COLORS = [0xff2e97, 0x25f4ee, 0xffd319, 0xb14bff, 0xacff3d];
+
+  // aim is normalized screen offset in [-1,1] (x right, y up)
+  var aimX = 0, aimY = 0;
+
+  var enemies = [];   // {mesh, vz, spin, type, hp, weave, baseX, hitFlash}
+  var bullets = [];   // {mesh, dir, life}
+  var pops = [];      // {pts, life, ttl, vel}
+  var floaters = [];  // {el, life} score popups (DOM)
+
+  var score = 0, lives = 3, alive = false, raf = 0;
+  var lastT = 0, spawnTimer = 0;
+  var wave = 0, waveKills = 0, waveQuota = 0, waveBannerTimer = 0;
+  var combo = 0, comboTimer = 0;
+  var shakeT = 0, shakeMag = 0;
+  var best = +(localStorage.starhawkBest || 0);
+  bestEl.textContent = best;
+
+  // floating score popup layer over the canvas
+  var stage = cv.parentNode;
+  var floatLayer = document.createElement('div');
+  floatLayer.style.cssText = 'position:absolute;inset:0;pointer-events:none;overflow:hidden;';
+  if (getComputedStyle(stage).position === 'static') stage.style.position = 'relative';
+  // place layer right after canvas so it overlaps it
+  cv.insertAdjacentElement('afterend', floatLayer);
+  // align the layer to the canvas box
+  function syncFloatLayer(){
+    floatLayer.style.left = cv.offsetLeft + 'px';
+    floatLayer.style.top = cv.offsetTop + 'px';
+    floatLayer.style.width = cv.offsetWidth + 'px';
+    floatLayer.style.height = cv.offsetHeight + 'px';
+    floatLayer.style.right = 'auto';
+    floatLayer.style.bottom = 'auto';
+  }
+
+  function clearEnemies(){ for (var i=0;i<enemies.length;i++) scene.remove(enemies[i].mesh); enemies.length = 0; }
+  function clearBullets(){ for (var i=0;i<bullets.length;i++) scene.remove(bullets[i].mesh); bullets.length = 0; }
+  function clearPops(){ for (var i=0;i<pops.length;i++) scene.remove(pops[i].pts); pops.length = 0; }
+  function clearFloaters(){ for (var i=0;i<floaters.length;i++){ if(floaters[i].el.parentNode) floaters[i].el.parentNode.removeChild(floaters[i].el); } floaters.length = 0; }
+
+  function aimWorldPoint(nx, ny){
+    var halfH = Math.tan((75*Math.PI/180)/2) * AIM_DIST;
+    var halfW = halfH; // aspect 1
+    return new THREE.Vector3(nx*halfW, ny*halfH, -AIM_DIST);
+  }
+
+  function updateReticle(){
+    var p = aimWorldPoint(retX, retY);
+    reticleGroup.position.copy(p);
+    reticleGroup.lookAt(0,0,0);
+  }
+
+  // ---- Enemy types ----
+  // darter: small, fast, 1hp ; tank: big, slow, 2hp ; weaver: medium, strafes
+  function makeEnemy(type, color){
+    var geo, scale;
+    if (type === 'darter'){ geo = new THREE.TetrahedronGeometry(1.0); }
+    else if (type === 'tank'){ geo = new THREE.BoxGeometry(2.6,2.6,2.6); }
+    else { geo = new THREE.OctahedronGeometry(1.5); } // weaver
+    var mat = new THREE.MeshBasicMaterial({color:color, wireframe:true});
+    return new THREE.Mesh(geo, mat);
+  }
+
+  function spawnEnemy(){
+    var r = Math.random();
+    var type = r < 0.45 ? 'darter' : (r < 0.75 ? 'weaver' : 'tank');
+    var color = type === 'tank' ? 0xff2e97 : (type === 'weaver' ? 0xb14bff : 0x25f4ee);
+    var m = makeEnemy(type, color);
+    var baseX = (Math.random()-0.5)*70;
+    m.position.set(baseX, (Math.random()-0.5)*50, -165 - Math.random()*30);
+    scene.add(m);
+    var ramp = (wave-1)*0.12;
+    var base = type === 'darter' ? 20 : (type === 'tank' ? 9 : 14);
+    var vz = base + Math.random()*5 + base*ramp;
+    enemies.push({
+      mesh:m, vz:vz, type:type,
+      hp: type === 'tank' ? 2 : 1,
+      baseColor: color,
+      spin:{x:(Math.random()-0.5)*2, y:(Math.random()-0.5)*2.4},
+      weave: type === 'weaver' ? {amp: 14+Math.random()*8, freq: 1.2+Math.random()*0.8, ph: Math.random()*6.28} : null,
+      baseX: baseX,
+      hitFlash: 0,
+      popT: 0
+    });
+  }
+
+  function fire(){
+    if (!alive) return;
+    var target = aimWorldPoint(aimX, aimY);
+    var dir = target.clone().normalize();
+    var bg = new THREE.SphereGeometry(0.18, 8, 8);
+    var bm = new THREE.MeshBasicMaterial({color:0xffffff});
+    var b = new THREE.Mesh(bg, bm);
+    b.position.set(0,0,0);
+    scene.add(b);
+    bullets.push({mesh:b, dir:dir, life:2.0});
+    // muzzle flash
+    muzzleTimer = 0.08;
+    muzzleL.material.opacity = 1; muzzleR.material.opacity = 1;
+    if (window.SFX) SFX.laser();
+  }
+
+  // ---- Particle burst explosion ----
+  function spawnPop(pos, color){
+    var n = 16;
+    var pg = new THREE.BufferGeometry();
+    var pp = new Float32Array(n*3);
+    var vel = [];
+    for (var i=0;i<n;i++){
+      pp[i*3]=pos.x; pp[i*3+1]=pos.y; pp[i*3+2]=pos.z;
+      var v = new THREE.Vector3((Math.random()-0.5), (Math.random()-0.5), (Math.random()-0.5));
+      v.normalize().multiplyScalar(8 + Math.random()*14);
+      vel.push(v);
+    }
+    pg.setAttribute('position', new THREE.BufferAttribute(pp,3));
+    var pm = new THREE.PointsMaterial({color:color, size:0.7, transparent:true, opacity:1});
+    var pts = new THREE.Points(pg, pm);
+    scene.add(pts);
+    pops.push({pts:pts, life:0.55, ttl:0.55, vel:vel});
+  }
+
+  function shake(mag){ shakeT = 0.28; shakeMag = mag; }
+
+  function flash(){
+    renderer.setClearColor(0x3a0010, 1);
+    setTimeout(function(){ if(alive) renderer.setClearColor(CLEAR, 1); }, 90);
+  }
+
+  function showFloater(text, color, nx, ny){
+    var el = document.createElement('div');
+    el.textContent = text;
+    el.style.cssText = 'position:absolute;font-family:"Press Start 2P",monospace;font-size:11px;'+
+      'color:'+color+';text-shadow:0 0 6px '+color+';transform:translate(-50%,-50%);will-change:transform,opacity;';
+    el.style.left = ((nx*0.5+0.5)*100) + '%';
+    el.style.top  = ((-ny*0.5+0.5)*100) + '%';
+    floatLayer.appendChild(el);
+    floaters.push({el:el, life:0.8, ttl:0.8});
+  }
+
+  function worldToNorm(pos){
+    var v = pos.clone().project(camera);
+    return {x:v.x, y:v.y};
+  }
+
+  function loseLife(en, idx){
+    spawnPop(en.mesh.position, 0xff2e97);
+    scene.remove(en.mesh);
+    enemies.splice(idx,1);
+    lives--;
+    livesEl.textContent = lives;
+    flash();
+    shake(1.4);
+    combo = 0; comboTimer = 0;
+    if (window.SFX) SFX.explode();
+    if (lives <= 0) gameOver();
+  }
+
+  function destroyEnemy(en, idx){
+    spawnPop(en.mesh.position, en.baseColor);
+    var np = worldToNorm(en.mesh.position);
+    scene.remove(en.mesh);
+    enemies.splice(idx,1);
+    // combo / streak scoring
+    combo++; comboTimer = 1.6;
+    var pts = en.type === 'tank' ? 25 : (en.type === 'weaver' ? 15 : 10);
+    var bonus = combo >= 2 ? (combo-1)*5 : 0;
+    var gain = pts + bonus;
+    score += gain;
+    scoreEl.textContent = score;
+    var col = combo >= 3 ? '#ffd319' : '#25f4ee';
+    showFloater('+'+gain + (combo>=2 ? ' x'+combo : ''), col, np.x, np.y);
+    waveKills++;
+    shake(0.4);
+    if (window.SFX){ SFX.hit(); SFX.explode(); }
+  }
+
+  function startWave(n){
+    wave = n;
+    waveKills = 0;
+    waveQuota = 4 + n*2;        // kills to clear the wave
+    waveBannerTimer = 1.8;
+    spawnTimer = 0.6;
+    statusEl.textContent = 'WAVE ' + n;
+    if (n > 1 && window.SFX) SFX.powerup();
+  }
+
+  function gameOver(){
+    alive = false;
+    cancelAnimationFrame(raf);
+    raf = 0;
+    renderer.setClearColor(CLEAR, 1);
+    if (window.SFX) SFX.gameover();
+    if (score > best){
+      best = score; bestEl.textContent = best; localStorage.starhawkBest = best;
+      statusEl.textContent = '★ NEW BEST · SCORE ' + score + ' ★';
+    } else {
+      statusEl.textContent = 'GAME OVER · SCORE ' + score;
+    }
+    startBtn.textContent = 'PLAY AGAIN';
+  }
+
+  function frame(t){
+    var dt = Math.min((t - lastT)/1000, 0.05);
+    lastT = t;
+
+    // drift stars subtly
+    stars.rotation.z += dt*0.02;
+
+    // muzzle flash decay
+    if (muzzleTimer > 0){
+      muzzleTimer -= dt;
+      var mo = Math.max(0, muzzleTimer/0.08);
+      muzzleL.material.opacity = mo; muzzleR.material.opacity = mo;
+    }
+
+    // combo decay
+    if (comboTimer > 0){ comboTimer -= dt; if (comboTimer <= 0) combo = 0; }
+
+    // ---- wave management ----
+    if (waveBannerTimer > 0) waveBannerTimer -= dt;
+    if (alive && waveKills >= waveQuota && enemies.length === 0){
+      startWave(wave + 1);
+    }
+    // spawn within wave until quota of spawns met
+    spawnTimer -= dt;
+    var interval = Math.max(0.35, 1.2 - wave*0.08);
+    var spawnedThisWave = waveKills + enemies.length;
+    if (alive && waveBannerTimer <= 0 && spawnTimer <= 0 && spawnedThisWave < waveQuota && enemies.length < 6){
+      spawnEnemy(); spawnTimer = interval;
+    }
+
+    // enemies
+    for (var i=enemies.length-1;i>=0;i--){
+      var en = enemies[i];
+      en.mesh.position.z += en.vz*dt;
+      en.mesh.rotation.x += en.spin.x*dt;
+      en.mesh.rotation.y += en.spin.y*dt;
+      if (en.weave){
+        en.weave.ph += en.weave.freq*dt;
+        en.mesh.position.x = en.baseX + Math.sin(en.weave.ph)*en.weave.amp;
+      }
+      // hit-flash + scale pop fade
+      if (en.hitFlash > 0){
+        en.hitFlash -= dt;
+        en.mesh.material.color.setHex(en.hitFlash > 0 ? 0xffffff : en.baseColor);
+      }
+      if (en.popT > 0){
+        en.popT -= dt;
+        var s = 1 + Math.max(0, en.popT/0.12)*0.5;
+        en.mesh.scale.set(s,s,s);
+      }
+      if (en.mesh.position.z > 2){ loseLife(en, i); if(!alive) return; }
+    }
+
+    // bullets
+    for (var b=bullets.length-1;b>=0;b--){
+      var bu = bullets[b];
+      bu.mesh.position.addScaledVector(bu.dir, 150*dt);
+      bu.life -= dt;
+      var removed = false;
+      for (var e=enemies.length-1;e>=0;e--){
+        var tgt = enemies[e];
+        var rad = tgt.type === 'tank' ? 2.9 : 2.2;
+        if (bu.mesh.position.distanceTo(tgt.mesh.position) < rad){
+          tgt.hp--;
+          scene.remove(bu.mesh);
+          bullets.splice(b,1);
+          removed = true;
+          if (tgt.hp <= 0){
+            destroyEnemy(tgt, e);
+          } else {
+            // damaged tank: colour-shift + flash + pop
+            tgt.hitFlash = 0.12;
+            tgt.popT = 0.12;
+            tgt.baseColor = 0xffd319; // cracked colour shift
+            tgt.mesh.material.color.setHex(0xffffff);
+            if (window.SFX) SFX.hit();
+          }
+          break;
+        }
+      }
+      if (removed) continue;
+      if (bu.life <= 0 || bu.mesh.position.z < -190){
+        scene.remove(bu.mesh);
+        bullets.splice(b,1);
+      }
+    }
+
+    // particle pops
+    for (var p=pops.length-1;p>=0;p--){
+      var po = pops[p];
+      po.life -= dt;
+      var arr = po.pts.geometry.attributes.position.array;
+      for (var k=0;k<po.vel.length;k++){
+        po.vel[k].multiplyScalar(0.92);
+        arr[k*3]   += po.vel[k].x*dt;
+        arr[k*3+1] += po.vel[k].y*dt;
+        arr[k*3+2] += po.vel[k].z*dt;
+      }
+      po.pts.geometry.attributes.position.needsUpdate = true;
+      po.pts.material.opacity = Math.max(0, po.life/po.ttl);
+      if (po.life <= 0){ scene.remove(po.pts); pops.splice(p,1); }
+    }
+
+    // floating score popups (DOM)
+    for (var f=floaters.length-1;f>=0;f--){
+      var fl = floaters[f];
+      fl.life -= dt;
+      var k2 = 1 - fl.life/fl.ttl;
+      fl.el.style.opacity = Math.max(0, fl.life/fl.ttl);
+      fl.el.style.transform = 'translate(-50%,calc(-50% - '+(k2*26)+'px))';
+      if (fl.life <= 0){ if(fl.el.parentNode) fl.el.parentNode.removeChild(fl.el); floaters.splice(f,1); }
+    }
+
+    // reticle easing toward aim
+    retX += (aimX - retX) * Math.min(1, dt*12);
+    retY += (aimY - retY) * Math.min(1, dt*12);
+    ring.rotation.z += dt*1.5;
+    var pulse = 1 + Math.sin(t*0.006)*0.06;
+    ring.scale.set(pulse,pulse,pulse);
+    updateReticle();
+
+    // screen shake (camera offset)
+    if (shakeT > 0){
+      shakeT -= dt;
+      var amt = (shakeT/0.28) * shakeMag;
+      camera.position.x = (Math.random()-0.5)*amt;
+      camera.position.y = (Math.random()-0.5)*amt;
+    } else {
+      camera.position.x = 0; camera.position.y = 0;
+    }
+
+    renderer.render(scene, camera);
+    if (alive) raf = requestAnimationFrame(frame);
+  }
+
+  // ---- Input ----
+  var keys = {};
+  function setk(e, down){
+    var k = e.key.toLowerCase();
+    if (['arrowup','arrowdown','arrowleft','arrowright',' ','w','a','s','d'].indexOf(k) !== -1){
+      e.preventDefault();
+    }
+    if (k === ' '){ if (down && alive) fire(); return; }
+    keys[k] = down;
+  }
+  addEventListener('keydown', function(e){ setk(e,true); });
+  addEventListener('keyup', function(e){ setk(e,false); });
+
+  // key-driven aim nudge runs off a light interval so it works even between frames
+  setInterval(function(){
+    var sp = 0.04;
+    if (keys['arrowleft']||keys['a']) aimX -= sp;
+    if (keys['arrowright']||keys['d']) aimX += sp;
+    if (keys['arrowup']||keys['w']) aimY += sp;
+    if (keys['arrowdown']||keys['s']) aimY -= sp;
+    aimX = Math.max(-1, Math.min(1, aimX));
+    aimY = Math.max(-1, Math.min(1, aimY));
+    if (!alive){ retX = aimX; retY = aimY; updateReticle(); renderer.render(scene, camera); }
+  }, 16);
+
+  function pointAt(clientX, clientY){
+    var r = cv.getBoundingClientRect();
+    var nx = ((clientX - r.left) / r.width) * 2 - 1;
+    var ny = -(((clientY - r.top) / r.height) * 2 - 1);
+    aimX = Math.max(-1, Math.min(1, nx));
+    aimY = Math.max(-1, Math.min(1, ny));
+  }
+
+  cv.addEventListener('pointermove', function(e){ pointAt(e.clientX, e.clientY); });
+  cv.addEventListener('pointerdown', function(e){
+    e.preventDefault();
+    pointAt(e.clientX, e.clientY);
+    fire();
+  });
+  cv.addEventListener('touchmove', function(e){
+    if (e.touches[0]) pointAt(e.touches[0].clientX, e.touches[0].clientY);
+  }, {passive:true});
+
+  // ---- Game control ----
+  function start(){
+    if (window.SFX) SFX.select();
+    cancelAnimationFrame(raf);
+    raf = 0;
+    clearEnemies(); clearBullets(); clearPops(); clearFloaters();
+    renderer.setClearColor(CLEAR, 1);
+    score = 0; lives = 3; spawnTimer = 0;
+    combo = 0; comboTimer = 0; shakeT = 0;
+    camera.position.set(0,0,0);
+    scoreEl.textContent = '0'; livesEl.textContent = '3';
+    aimX = 0; aimY = 0; retX = 0; retY = 0;
+    startBtn.textContent = 'RESTART';
+    alive = true;
+    syncFloatLayer();
+    startWave(1);
+    lastT = performance.now();
+    raf = requestAnimationFrame(frame);
+  }
+  startBtn.addEventListener('click', start);
+  addEventListener('resize', syncFloatLayer);
+
+  // initial idle render
+  syncFloatLayer();
+  updateReticle();
+  renderer.render(scene, camera);
+})();
+</script>
+</body>
+</html>

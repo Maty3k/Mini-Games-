@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ECHO — Neon Arcade</title>
+<link rel="stylesheet" href="style.css">
+<script src="sfx.js"></script>
+<style>
+  :root{ --accent: var(--neon-lime); }
+  .simon{ position:relative; width:min(86vw,340px); height:min(86vw,340px);
+    border-radius:50%; background:#0a0418; border:4px solid #1a0d30;
+    box-shadow:0 0 22px rgba(177,75,255,.4), inset 0 0 40px rgba(0,0,0,.8);
+    display:grid; grid-template-columns:1fr 1fr; grid-template-rows:1fr 1fr; gap:8px; padding:14px; overflow:hidden; }
+  .pad{ cursor:pointer; opacity:.42; transition:opacity .08s, box-shadow .08s; }
+  .pad.lit{ opacity:1; }
+  .pad.g{ background:#1f8f3a; border-top-left-radius:100%; }
+  .pad.r{ background:#c5283a; border-top-right-radius:100%; }
+  .pad.y{ background:#d9b020; border-bottom-left-radius:100%; }
+  .pad.b{ background:#2569c7; border-bottom-right-radius:100%; }
+  .pad.g.lit{ background:#3dff6e; box-shadow:0 0 30px #3dff6e; }
+  .pad.r.lit{ background:#ff4d63; box-shadow:0 0 30px #ff4d63; }
+  .pad.y.lit{ background:#ffe23d; box-shadow:0 0 30px #ffe23d; }
+  .pad.b.lit{ background:#4d9bff; box-shadow:0 0 30px #4d9bff; }
+  .hub{ position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+    width:34%; height:34%; border-radius:50%; background:#0a0418; border:3px solid var(--neon-violet);
+    display:flex; align-items:center; justify-content:center; flex-direction:column; z-index:2;
+    box-shadow:0 0 14px rgba(177,75,255,.5); }
+  .hub .lv{ font-family:'Press Start 2P',monospace; font-size:22px; color:var(--neon-lime); text-shadow:0 0 10px var(--neon-lime); }
+  .hub .lb{ font-family:'Press Start 2P',monospace; font-size:7px; color:#8a79b0; margin-top:5px; }
+  .status{ font-family:'Press Start 2P',monospace; font-size:13px; color:var(--neon-amber);
+    text-align:center; min-height:16px; margin-top:18px; }
+</style>
+</head>
+<body>
+  <div class="crt-on" aria-hidden="true"></div>
+  <div class="crt-lines" aria-hidden="true"></div>
+  <div class="crt-glass" aria-hidden="true"></div>
+
+  <nav class="gamebar">
+    <a class="back" href="index.html">‹ ARCADE</a>
+    <h1 class="game-title">ECHO</h1>
+    <span style="width:84px"></span>
+  </nav>
+
+  <div class="stage">
+    <div class="hud">
+      <span>LEVEL <b id="lvl">0</b></span>
+      <span>BEST <b id="best">0</b></span>
+    </div>
+    <div class="simon" id="simon">
+      <div class="pad g" data-k="0"></div>
+      <div class="pad r" data-k="1"></div>
+      <div class="pad y" data-k="2"></div>
+      <div class="pad b" data-k="3"></div>
+      <div class="hub"><div class="lv" id="lv">--</div><div class="lb">LEVEL</div></div>
+    </div>
+    <p class="status" id="status">PRESS START · WATCH THE PATTERN</p>
+    <button class="btn" id="start">PRESS START</button>
+    <p class="hint">Repeat the growing sequence. One miss ends the game.</p>
+  </div>
+
+<script>
+const pads=[...document.querySelectorAll('.pad')];
+const lvlEl=document.getElementById('lvl'), bestEl=document.getElementById('best'),
+      lvEl=document.getElementById('lv'), statusEl=document.getElementById('status'), startBtn=document.getElementById('start');
+const FREQ=[329.63,261.63,220.0,164.81];   // E4 C4 A3 E3
+let seq, input, level, best=+(localStorage.simonBest||0), playerTurn=false;
+bestEl.textContent=best;
+let actx;
+function tone(i,dur=0.4){
+  try{ actx=actx||new (window.AudioContext||window.webkitAudioContext)();
+    const o=actx.createOscillator(), g=actx.createGain();
+    o.type='sine'; o.frequency.value=FREQ[i]; o.connect(g); g.connect(actx.destination);
+    g.gain.setValueAtTime(0.0001,actx.currentTime); g.gain.exponentialRampToValueAtTime(0.3,actx.currentTime+0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001,actx.currentTime+dur);
+    o.start(); o.stop(actx.currentTime+dur);
+  }catch(e){}
+}
+function flash(i,dur=400){ pads[i].classList.add('lit'); tone(i,dur/1000);
+  return new Promise(res=>setTimeout(()=>{ pads[i].classList.remove('lit'); setTimeout(res,120); }, dur)); }
+
+async function playSeq(){
+  playerTurn=false; statusEl.textContent='WATCH...'; statusEl.style.color='var(--neon-amber)';
+  await new Promise(r=>setTimeout(r,500));
+  const speed=Math.max(220,460-level*16);
+  for(const i of seq) await flash(i,speed);
+  playerTurn=true; input=0; statusEl.textContent='YOUR TURN'; statusEl.style.color='var(--neon-lime)';
+}
+function next(){
+  level++; lvlEl.textContent=level; lvEl.textContent=level;
+  if(level>1) SFX.powerup();
+  seq.push((Math.random()*4)|0); playSeq();
+}
+function start(){ SFX.select(); seq=[]; level=0; startBtn.style.display='none'; next(); }
+async function press(i){
+  if(!playerTurn) return;
+  await flash(i,200);
+  if(i!==seq[input]) return lose();
+  input++;
+  if(input===seq.length){ playerTurn=false; setTimeout(next,650); }
+}
+function lose(){
+  playerTurn=false; SFX.gameover();
+  if(level-1>best){ best=level-1; bestEl.textContent=best; localStorage.simonBest=best; }
+  statusEl.textContent='✗ WRONG! REACHED '+level; statusEl.style.color='var(--neon-pink)';
+  lvEl.textContent='--';
+  pads.forEach(p=>p.classList.add('lit')); tone(2,0.6);
+  setTimeout(()=>pads.forEach(p=>p.classList.remove('lit')),400);
+  startBtn.textContent='PLAY AGAIN'; startBtn.style.display='inline-block';
+}
+pads.forEach((p,i)=>{ p.onclick=()=>press(i); });
+startBtn.onclick=start;
+</script>
+</body>
+</html>

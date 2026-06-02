@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BOOMGRID — Neon Arcade</title>
+<link rel="stylesheet" href="style.css">
+<script src="sfx.js"></script>
+<style>:root{ --accent: var(--neon-cyan); }
+  .status{
+    font-family:'Press Start 2P',monospace; font-size:13px; text-align:center;
+    min-height:20px; margin-top:16px; letter-spacing:1px; color:var(--accent);
+    text-shadow:0 0 8px var(--accent);
+  }
+  .board{
+    display:grid; grid-template-columns:repeat(9,1fr); gap:3px;
+    width:100%; max-width:400px; padding:10px; margin-top:4px;
+    background:#0a0418; border:3px solid var(--accent); border-radius:6px;
+    box-shadow:0 0 16px var(--accent), inset 0 0 40px rgba(0,0,0,.85);
+    touch-action:manipulation; user-select:none;
+  }
+  .cell{
+    aspect-ratio:1/1; display:flex; align-items:center; justify-content:center;
+    font-family:'Press Start 2P',monospace; font-size:clamp(10px,3vw,15px);
+    background:#1a0b33; color:var(--ink); border:none; border-radius:3px;
+    cursor:pointer; padding:0; line-height:1;
+    box-shadow:inset 0 0 0 1px rgba(177,75,255,.25);
+    transition:background .08s ease;
+  }
+  .cell:hover:not(.revealed){ background:#2a1252; }
+  .cell.revealed{
+    background:#050109; box-shadow:inset 0 0 0 1px rgba(37,244,238,.15); cursor:default;
+  }
+  .cell.flag{ color:var(--amber); }
+  .cell.mine{ background:#3a0511; color:#ff5a78; }
+  .cell.boom{ background:#ff2e97; color:#fff; }
+  .n1{color:#25f4ee} .n2{color:#acff3d} .n3{color:#ff2e97}
+  .n4{color:#b14bff} .n5{color:#ffd319} .n6{color:#ff36d0}
+  .n7{color:#ff8a2a} .n8{color:#f6ecff}
+</style>
+</head>
+<body>
+  <div class="crt-on" aria-hidden="true"></div>
+  <div class="crt-lines" aria-hidden="true"></div>
+  <div class="crt-glass" aria-hidden="true"></div>
+
+  <nav class="gamebar">
+    <a class="back" href="index.html">‹ ARCADE</a>
+    <h1 class="game-title">BOOMGRID</h1>
+    <span style="width:84px"></span>
+  </nav>
+
+  <div class="stage">
+    <div class="hud">
+      <span>MINES <b id="mines">10</b></span>
+      <span>TIME <b id="time">0</b></span>
+      <span>BEST <b id="best">--</b></span>
+    </div>
+    <div class="board" id="board"></div>
+    <p class="status" id="status">TAP A CELL TO START</p>
+    <button class="btn" id="reset">NEW GAME</button>
+    <p class="hint">
+      Left-click <span class="key">reveal</span> ·
+      Right-click / long-press <span class="key">flag</span>.
+      First click is always safe.
+    </p>
+  </div>
+
+<script>
+(function(){
+  const SIZE=9, MINES=10;
+  const boardEl=document.getElementById('board');
+  const minesEl=document.getElementById('mines');
+  const timeEl=document.getElementById('time');
+  const bestEl=document.getElementById('best');
+  const statusEl=document.getElementById('status');
+  const resetBtn=document.getElementById('reset');
+  const KEY='neon_minesweeper_best';
+
+  let cells=[];        // {mine,revealed,flagged,count,el}
+  let started=false;   // mines placed
+  let over=false;
+  let flags=0;
+  let revealedCount=0;
+  let timer=null, seconds=0;
+
+  function loadBest(){
+    const v=localStorage.getItem(KEY);
+    bestEl.textContent = v?v:'--';
+  }
+  function saveBest(t){
+    const v=localStorage.getItem(KEY);
+    if(v===null || t<parseInt(v,10)){
+      localStorage.setItem(KEY,String(t));
+      bestEl.textContent=t;
+    }
+  }
+
+  function idx(r,c){ return r*SIZE+c; }
+  function inBounds(r,c){ return r>=0&&r<SIZE&&c>=0&&c<SIZE; }
+  function neighbors(r,c){
+    const out=[];
+    for(let dr=-1;dr<=1;dr++)for(let dc=-1;dc<=1;dc++){
+      if(dr===0&&dc===0)continue;
+      if(inBounds(r+dr,c+dc))out.push([r+dr,c+dc]);
+    }
+    return out;
+  }
+
+  function build(){
+    boardEl.innerHTML='';
+    cells=[];
+    for(let r=0;r<SIZE;r++){
+      for(let c=0;c<SIZE;c++){
+        const el=document.createElement('button');
+        el.className='cell';
+        el.dataset.r=r; el.dataset.c=c;
+        boardEl.appendChild(el);
+        cells.push({mine:false,revealed:false,flagged:false,count:0,el});
+      }
+    }
+  }
+
+  function placeMines(safeR,safeC){
+    // forbidden = clicked cell + its neighbors (so first reveal opens an area)
+    const forbid=new Set();
+    forbid.add(idx(safeR,safeC));
+    neighbors(safeR,safeC).forEach(([r,c])=>forbid.add(idx(r,c)));
+    const spots=[];
+    for(let i=0;i<SIZE*SIZE;i++) if(!forbid.has(i)) spots.push(i);
+    // shuffle
+    for(let i=spots.length-1;i>0;i--){
+      const j=Math.floor(Math.random()*(i+1));
+      [spots[i],spots[j]]=[spots[j],spots[i]];
+    }
+    for(let i=0;i<MINES;i++) cells[spots[i]].mine=true;
+    // compute counts
+    for(let r=0;r<SIZE;r++)for(let c=0;c<SIZE;c++){
+      if(cells[idx(r,c)].mine)continue;
+      let n=0;
+      neighbors(r,c).forEach(([nr,nc])=>{ if(cells[idx(nr,nc)].mine)n++; });
+      cells[idx(r,c)].count=n;
+    }
+    started=true;
+    startTimer();
+  }
+
+  function startTimer(){
+    seconds=0; timeEl.textContent=0;
+    timer=setInterval(()=>{ seconds++; timeEl.textContent=seconds; },1000);
+  }
+  function stopTimer(){ if(timer){clearInterval(timer);timer=null;} }
+
+  function reveal(r,c){
+    const cell=cells[idx(r,c)];
+    if(cell.revealed||cell.flagged)return;
+    cell.revealed=true; revealedCount++;
+    cell.el.classList.add('revealed');
+    cell.el.classList.remove('flag');
+    if(cell.mine){ // shouldn't happen via flood, but guard
+      cell.el.classList.add('boom'); cell.el.textContent='💣';
+      return;
+    }
+    if(cell.count>0){
+      cell.el.textContent=cell.count;
+      cell.el.classList.add('n'+cell.count);
+    } else {
+      cell.el.textContent='';
+      // flood fill
+      neighbors(r,c).forEach(([nr,nc])=>{
+        if(!cells[idx(nr,nc)].revealed) reveal(nr,nc);
+      });
+    }
+  }
+
+  function clickCell(r,c){
+    if(over)return;
+    const cell=cells[idx(r,c)];
+    if(!started) placeMines(r,c);
+    if(cell.flagged||cell.revealed)return;
+    if(cell.mine){ loss(r,c); return; }
+    SFX.tick();
+    reveal(r,c);
+    checkWin();
+  }
+
+  function toggleFlag(r,c){
+    if(over||!started)return; // can't flag before first reveal
+    const cell=cells[idx(r,c)];
+    if(cell.revealed)return;
+    cell.flagged=!cell.flagged;
+    SFX.select();
+    if(cell.flagged){ cell.el.classList.add('flag'); cell.el.textContent='🚩'; flags++; }
+    else { cell.el.classList.remove('flag'); cell.el.textContent=''; flags--; }
+    minesEl.textContent=MINES-flags;
+  }
+
+  function loss(br,bc){
+    over=true; stopTimer();
+    for(let i=0;i<cells.length;i++){
+      const cell=cells[i];
+      if(cell.mine){
+        cell.el.classList.add('revealed','mine');
+        if(!cell.flagged) cell.el.textContent='💣';
+      }
+    }
+    cells[idx(br,bc)].el.classList.add('boom');
+    SFX.explode(); SFX.gameover();
+    statusEl.textContent='BOOM!';
+  }
+
+  function checkWin(){
+    if(revealedCount===SIZE*SIZE-MINES){
+      over=true; stopTimer();
+      // flag remaining mines visually
+      for(const cell of cells){
+        if(cell.mine&&!cell.flagged){ cell.el.classList.add('flag'); cell.el.textContent='🚩'; }
+      }
+      minesEl.textContent=0;
+      SFX.win();
+      statusEl.textContent='★ CLEARED ★';
+      saveBest(seconds);
+    }
+  }
+
+  // --- input wiring ---
+  let lpTimer=null, lpFired=false;
+  boardEl.addEventListener('contextmenu',e=>{
+    e.preventDefault();
+    const t=e.target.closest('.cell'); if(!t)return;
+    toggleFlag(+t.dataset.r,+t.dataset.c);
+  });
+  boardEl.addEventListener('click',e=>{
+    const t=e.target.closest('.cell'); if(!t)return;
+    if(lpFired){ lpFired=false; return; }
+    clickCell(+t.dataset.r,+t.dataset.c);
+  });
+  // long-press for touch
+  boardEl.addEventListener('touchstart',e=>{
+    const t=e.target.closest('.cell'); if(!t)return;
+    lpFired=false;
+    lpTimer=setTimeout(()=>{
+      lpFired=true;
+      toggleFlag(+t.dataset.r,+t.dataset.c);
+    },400);
+  },{passive:true});
+  boardEl.addEventListener('touchend',()=>{ if(lpTimer)clearTimeout(lpTimer); });
+  boardEl.addEventListener('touchmove',()=>{ if(lpTimer)clearTimeout(lpTimer); });
+
+  function newGame(){
+    stopTimer();
+    started=false; over=false; flags=0; revealedCount=0; seconds=0;
+    minesEl.textContent=MINES; timeEl.textContent=0;
+    statusEl.textContent='TAP A CELL TO START';
+    build();
+  }
+
+  resetBtn.addEventListener('click',()=>{ SFX.select(); newGame(); });
+  loadBest();
+  newGame();
+})();
+</script>
+</body>
+</html>

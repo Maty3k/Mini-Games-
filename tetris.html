@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BLOKFALL — Neon Arcade</title>
+<link rel="stylesheet" href="style.css">
+<script src="sfx.js"></script>
+<style>:root{ --accent: var(--neon-cyan); }
+  .play-wrap{ display:flex; gap:18px; align-items:flex-start; }
+  .side{ display:flex; flex-direction:column; gap:14px; }
+  .next-box{ border:2px solid var(--neon-violet); border-radius:6px; padding:10px;
+    background:#0a0418; box-shadow:0 0 12px rgba(177,75,255,.4); }
+  .next-box .t{ font-family:'Press Start 2P',monospace; font-size:9px; color:var(--neon-violet); margin-bottom:8px; }
+  .ctl{ font-family:'Press Start 2P',monospace; font-size:8px; color:#8a79b0; line-height:1.9; }
+  .ctl b{ color:var(--neon-cyan); }
+</style>
+</head>
+<body>
+  <div class="crt-on" aria-hidden="true"></div>
+  <div class="crt-lines" aria-hidden="true"></div>
+  <div class="crt-glass" aria-hidden="true"></div>
+
+  <nav class="gamebar">
+    <a class="back" href="index.html">‹ ARCADE</a>
+    <h1 class="game-title">BLOKFALL</h1>
+    <span style="width:84px"></span>
+  </nav>
+
+  <div class="stage">
+    <div class="hud" style="max-width:420px">
+      <span>SCORE <b id="score">0</b></span>
+      <span>LINES <b id="lines">0</b></span>
+      <span>LV <b id="level">1</b></span>
+    </div>
+    <div class="play-wrap">
+      <canvas id="c" width="240" height="480"></canvas>
+      <div class="side">
+        <div class="next-box"><div class="t">NEXT</div><canvas id="next" width="96" height="96"></canvas></div>
+        <div class="ctl">
+          <b>← →</b> MOVE<br>
+          <b>↑</b> ROTATE<br>
+          <b>↓</b> SOFT<br>
+          <b>SPC</b> DROP<br>
+          <b>P</b> PAUSE
+        </div>
+      </div>
+    </div>
+    <button class="btn" id="start">PRESS START</button>
+    <p class="hint">Clear lines · speed climbs every 10 lines · arrows or swipe/tap</p>
+  </div>
+
+<script>
+const cv=document.getElementById('c'), ctx=cv.getContext('2d');
+const nx=document.getElementById('next'), nctx=nx.getContext('2d');
+const COLS=10, ROWS=20, S=24;
+const scoreEl=document.getElementById('score'), linesEl=document.getElementById('lines'),
+      levelEl=document.getElementById('level'), startBtn=document.getElementById('start');
+const SHAPES={
+  I:{c:'#25f4ee',m:[[1,1,1,1]]},
+  O:{c:'#ffd319',m:[[1,1],[1,1]]},
+  T:{c:'#b14bff',m:[[0,1,0],[1,1,1]]},
+  S:{c:'#acff3d',m:[[0,1,1],[1,1,0]]},
+  Z:{c:'#ff2e97',m:[[1,1,0],[0,1,1]]},
+  J:{c:'#4d9bff',m:[[1,0,0],[1,1,1]]},
+  L:{c:'#ff8a2a',m:[[0,0,1],[1,1,1]]},
+};
+const KEYS=Object.keys(SHAPES);
+let grid, cur, next, px, py, score, lines, level, dropMs, acc, last, running, paused, raf, bag=[];
+
+function newBag(){ const b=[...KEYS]; for(let i=b.length-1;i>0;i--){const j=(Math.random()*(i+1))|0;[b[i],b[j]]=[b[j],b[i]];} return b; }
+function pull(){ if(!bag.length) bag=newBag(); const k=bag.pop(); return {k, m:SHAPES[k].m.map(r=>[...r]), c:SHAPES[k].c}; }
+
+function reset(){
+  grid=Array.from({length:ROWS},()=>Array(COLS).fill(0));
+  score=0; lines=0; level=1; dropMs=800; acc=0;
+  scoreEl.textContent=0; linesEl.textContent=0; levelEl.textContent=1;
+  bag=newBag(); next=pull(); spawn();
+}
+function spawn(){
+  cur=next; next=pull();
+  px=((COLS - cur.m[0].length)/2)|0; py=0;
+  if(collide(px,py,cur.m)){ return gameOver(); }
+  drawNext();
+}
+function collide(x,y,m){
+  for(let r=0;r<m.length;r++)for(let c=0;c<m[r].length;c++) if(m[r][c]){
+    const nxp=x+c, nyp=y+r;
+    if(nxp<0||nxp>=COLS||nyp>=ROWS) return true;
+    if(nyp>=0 && grid[nyp][nxp]) return true;
+  }
+  return false;
+}
+function rotate(m){ return m[0].map((_,i)=>m.map(r=>r[i]).reverse()); }
+function tryRotate(){
+  const r=rotate(cur.m);
+  for(const dx of [0,-1,1,-2,2]) if(!collide(px+dx,py,r)){ cur.m=r; px+=dx; SFX.rotate(); return; }
+}
+function lock(){
+  cur.m.forEach((row,r)=>row.forEach((v,c)=>{ if(v && py+r>=0) grid[py+r][px+c]=cur.c; }));
+  SFX.place();
+  let cleared=0;
+  for(let r=ROWS-1;r>=0;r--) if(grid[r].every(Boolean)){ grid.splice(r,1); grid.unshift(Array(COLS).fill(0)); cleared++; r++; }
+  if(cleared){
+    if(cleared>=4) SFX.powerup(); else SFX.score();
+    score += [0,100,300,500,800][cleared]*level;
+    lines += cleared;
+    const nl=Math.floor(lines/10)+1;
+    if(nl>level){ level=nl; dropMs=Math.max(80,800-(level-1)*70); SFX.powerup(); }
+    scoreEl.textContent=score; linesEl.textContent=lines; levelEl.textContent=level;
+  }
+  spawn();
+}
+function softDrop(){ if(!collide(px,py+1,cur.m)){ py++; } else lock(); }
+function hardDrop(){ while(!collide(px,py+1,cur.m)){ py++; score+=2; } scoreEl.textContent=score; SFX.hit(); lock(); }
+
+function draw(){
+  ctx.fillStyle='#050109'; ctx.fillRect(0,0,cv.width,cv.height);
+  // subtle grid
+  ctx.strokeStyle='rgba(177,75,255,.08)';
+  for(let x=0;x<=COLS;x++){ ctx.beginPath(); ctx.moveTo(x*S,0); ctx.lineTo(x*S,ROWS*S); ctx.stroke(); }
+  for(let y=0;y<=ROWS;y++){ ctx.beginPath(); ctx.moveTo(0,y*S); ctx.lineTo(COLS*S,y*S); ctx.stroke(); }
+  for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++) if(grid[r][c]) cell(ctx,c,r,grid[r][c]);
+  // ghost
+  let gy=py; while(!collide(px,gy+1,cur.m)) gy++;
+  cur.m.forEach((row,r)=>row.forEach((v,c)=>{ if(v) cell(ctx,px+c,gy+r,cur.c,true); }));
+  cur.m.forEach((row,r)=>row.forEach((v,c)=>{ if(v && py+r>=0) cell(ctx,px+c,py+r,cur.c); }));
+}
+function cell(g,c,r,color,ghost){
+  const x=c*S, y=r*S;
+  if(ghost){ g.fillStyle='rgba(255,255,255,.08)'; g.strokeStyle=color; g.lineWidth=1;
+    g.fillRect(x+1,y+1,S-2,S-2); g.strokeRect(x+1.5,y+1.5,S-3,S-3); return; }
+  g.fillStyle=color; g.shadowColor=color; g.shadowBlur=8;
+  g.fillRect(x+1,y+1,S-2,S-2);
+  g.shadowBlur=0; g.fillStyle='rgba(255,255,255,.25)'; g.fillRect(x+1,y+1,S-2,4);
+}
+function drawNext(){
+  nctx.clearRect(0,0,nx.width,nx.height);
+  const m=next.m, s=20, ox=(nx.width-m[0].length*s)/2, oy=(nx.height-m.length*s)/2;
+  m.forEach((row,r)=>row.forEach((v,c)=>{ if(v){
+    nctx.fillStyle=next.c; nctx.shadowColor=next.c; nctx.shadowBlur=8;
+    nctx.fillRect(ox+c*s+1,oy+r*s+1,s-2,s-2); nctx.shadowBlur=0;
+  }}));
+}
+function loop(t){
+  if(!running) return;
+  if(!paused){
+    const dt=t-last; last=t; acc+=dt;
+    if(acc>dropMs){ softDrop(); acc=0; }
+    draw();
+  } else last=t;
+  raf=requestAnimationFrame(loop);
+}
+function gameOver(){
+  running=false; cancelAnimationFrame(raf); SFX.gameover(); draw();
+  ctx.fillStyle='rgba(5,1,9,.85)'; ctx.fillRect(0,0,cv.width,cv.height); ctx.textAlign='center';
+  ctx.fillStyle='#ff2e97'; ctx.font='20px "Press Start 2P", monospace'; ctx.fillText('GAME',cv.width/2,cv.height/2-16);
+  ctx.fillText('OVER',cv.width/2,cv.height/2+14);
+  ctx.fillStyle='#25f4ee'; ctx.font='10px "Press Start 2P", monospace'; ctx.fillText('SCORE '+score,cv.width/2,cv.height/2+44);
+  startBtn.textContent='PLAY AGAIN'; startBtn.style.display='inline-block';
+}
+function begin(){ SFX.select(); reset(); running=true; paused=false; startBtn.style.display='none'; last=performance.now(); acc=0; cancelAnimationFrame(raf); raf=requestAnimationFrame(loop); }
+startBtn.onclick=begin;
+
+addEventListener('keydown',e=>{
+  if(!running) return;
+  const k=e.key.toLowerCase();
+  if(['arrowleft','arrowright','arrowup','arrowdown',' '].includes(e.key.toLowerCase())) e.preventDefault();
+  if(paused && k!=='p') return;
+  if(k==='arrowleft'){ if(!collide(px-1,py,cur.m)) px--; }
+  else if(k==='arrowright'){ if(!collide(px+1,py,cur.m)) px++; }
+  else if(k==='arrowup'){ tryRotate(); }
+  else if(k==='arrowdown'){ softDrop(); acc=0; }
+  else if(k===' '){ hardDrop(); acc=0; }
+  else if(k==='p'){ paused=!paused; }
+  if(running && !paused) draw();
+});
+// touch
+let tx,ty,moved;
+cv.addEventListener('touchstart',e=>{const t=e.touches[0];tx=t.clientX;ty=t.clientY;moved=false;},{passive:true});
+cv.addEventListener('touchmove',e=>{ if(!running||paused)return; const t=e.touches[0];
+  const dx=t.clientX-tx, dy=t.clientY-ty;
+  if(Math.abs(dx)>26){ if(dx>0){ if(!collide(px+1,py,cur.m))px++; } else { if(!collide(px-1,py,cur.m))px--; } tx=t.clientX; moved=true; draw(); }
+  if(dy>30){ softDrop(); acc=0; ty=t.clientY; moved=true; draw(); }
+},{passive:true});
+cv.addEventListener('touchend',e=>{ if(!running||paused)return; if(!moved){ tryRotate(); draw(); } },{passive:true});
+
+reset(); draw(); drawNext();
+</script>
+</body>
+</html>

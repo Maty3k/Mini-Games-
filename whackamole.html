@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BONK — Neon Arcade</title>
+<link rel="stylesheet" href="style.css">
+<script src="sfx.js"></script>
+<style>
+  :root{ --accent: var(--neon-pink); }
+  .moles{ display:grid; grid-template-columns:repeat(3,1fr); gap:14px; width:100%; max-width:380px; }
+  .hole{
+    aspect-ratio:1; position:relative; overflow:hidden; cursor:pointer;
+    background:radial-gradient(ellipse at 50% 120%, #2a0f4a 0%, #0a0418 70%);
+    border:2px solid var(--neon-violet); border-radius:50%/40%;
+    box-shadow:inset 0 -10px 24px rgba(0,0,0,.7);
+  }
+  .hole::after{ content:""; position:absolute; left:12%; right:12%; bottom:8%; height:22%;
+    background:rgba(0,0,0,.55); border-radius:50%; }
+  .mole{
+    position:absolute; left:50%; bottom:6%; transform:translate(-50%,120%);
+    font-size:clamp(40px,13vw,60px); transition:transform .12s ease; pointer-events:none; z-index:2;
+    filter:drop-shadow(0 0 8px var(--neon-pink));
+  }
+  .hole.up .mole{ transform:translate(-50%,12%); }
+  .hole.bomb.up .mole{ filter:drop-shadow(0 0 10px var(--neon-amber)); }
+  .hole.bonk .mole{ transform:translate(-50%,120%) scale(.6); }
+  .status{ font-family:'Press Start 2P',monospace; font-size:14px; color:var(--neon-amber);
+    text-align:center; min-height:18px; margin-top:18px; }
+</style>
+</head>
+<body>
+  <div class="crt-on" aria-hidden="true"></div>
+  <div class="crt-lines" aria-hidden="true"></div>
+  <div class="crt-glass" aria-hidden="true"></div>
+
+  <nav class="gamebar">
+    <a class="back" href="index.html">‹ ARCADE</a>
+    <h1 class="game-title">BONK</h1>
+    <span style="width:84px"></span>
+  </nav>
+
+  <div class="stage">
+    <div class="hud">
+      <span>SCORE <b id="score">0</b></span>
+      <span>TIME <b id="time">30</b></span>
+      <span>BEST <b id="best">0</b></span>
+    </div>
+    <div class="moles" id="moles"></div>
+    <p class="status" id="status">WHACK MOLES 🐹 · AVOID BOMBS 💣</p>
+    <button class="btn" id="start">PRESS START</button>
+    <p class="hint"><span class="key">click / tap</span> the moles · bombs cost you points</p>
+  </div>
+
+<script>
+const molesEl=document.getElementById('moles'), scoreEl=document.getElementById('score'),
+      timeEl=document.getElementById('time'), bestEl=document.getElementById('best'),
+      statusEl=document.getElementById('status'), startBtn=document.getElementById('start');
+let holes=[], score, time, best=+(localStorage.wamBest||0), running, popT, tickT;
+bestEl.textContent=best;
+
+for(let i=0;i<9;i++){
+  const h=document.createElement('div'); h.className='hole';
+  h.innerHTML='<span class="mole">🐹</span>';
+  h.onclick=()=>whack(h);
+  molesEl.appendChild(h); holes.push(h);
+}
+function whack(h){
+  if(!running||!h.classList.contains('up')||h.classList.contains('bonk')) return;
+  h.classList.add('bonk');
+  if(h.dataset.type==='bomb'){ SFX.explode(); score=Math.max(0,score-3); flash(h,'#ff2e97'); }
+  else { SFX.bonk(); score++; flash(h,'#acff3d'); }
+  scoreEl.textContent=score;
+  setTimeout(()=>{ h.classList.remove('up','bonk'); },140);
+}
+function flash(h,c){ h.style.boxShadow=`0 0 22px ${c}, inset 0 -10px 24px rgba(0,0,0,.7)`;
+  setTimeout(()=>h.style.boxShadow='',160); }
+function pop(){
+  const free=holes.filter(h=>!h.classList.contains('up'));
+  if(free.length){
+    const h=free[(Math.random()*free.length)|0];
+    const bomb=Math.random()<0.22;
+    h.dataset.type=bomb?'bomb':'mole';
+    h.classList.toggle('bomb',bomb);
+    h.querySelector('.mole').textContent=bomb?'💣':'🐹';
+    h.classList.add('up');
+    const life=Math.max(550,1100-(30-time)*18);
+    setTimeout(()=>{ if(!h.classList.contains('bonk')) h.classList.remove('up'); }, life);
+  }
+  popT=setTimeout(pop, Math.max(280,720-(30-time)*14));
+}
+function start(){
+  SFX.select();
+  score=0; time=30; scoreEl.textContent=0; timeEl.textContent=30;
+  running=true; startBtn.style.display='none'; statusEl.textContent='GO!'; statusEl.style.color='var(--neon-lime)';
+  holes.forEach(h=>h.classList.remove('up','bonk','bomb'));
+  pop();
+  tickT=setInterval(()=>{ time--; timeEl.textContent=time; if(time<=0) end(); },1000);
+}
+function end(){
+  running=false; clearInterval(tickT); clearTimeout(popT);
+  holes.forEach(h=>h.classList.remove('up'));
+  SFX.gameover();
+  if(score>best){ best=score; bestEl.textContent=best; localStorage.wamBest=best; statusEl.textContent='★ NEW BEST '+score+' ★'; SFX.powerup(); }
+  else statusEl.textContent='TIME! SCORE '+score;
+  statusEl.style.color='var(--neon-amber)';
+  startBtn.textContent='PLAY AGAIN'; startBtn.style.display='inline-block';
+}
+startBtn.onclick=start;
+</script>
+</body>
+</html>

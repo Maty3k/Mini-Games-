@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NEONDRIFT — Neon Arcade</title>
+<link rel="stylesheet" href="style.css">
+<script src="sfx.js"></script>
+<script src="three.min.js"></script>
+<style>:root{ --accent: var(--neon-cyan); }
+  .status{ font-family:'Press Start 2P',monospace; font-size:13px; color:var(--neon-pink);
+    text-align:center; min-height:16px; margin-top:14px; }
+  .d3-badge{ font-family:'Press Start 2P',monospace; font-size:9px; color:var(--neon-violet);
+    border:1px solid var(--neon-violet); border-radius:3px; padding:3px 6px; letter-spacing:1px; }
+</style>
+</head>
+<body>
+  <div class="crt-on" aria-hidden="true"></div>
+  <div class="crt-lines" aria-hidden="true"></div>
+  <div class="crt-glass" aria-hidden="true"></div>
+
+  <nav class="gamebar">
+    <a class="back" href="index.html">‹ ARCADE</a>
+    <h1 class="game-title">NEONDRIFT</h1>
+    <span class="d3-badge">▣ 3D</span>
+  </nav>
+
+  <div class="stage">
+    <div class="hud">
+      <span>SCORE <b id="score">0</b></span>
+      <span>LIVES <b id="lives">♥♥♥</b></span>
+      <span>SPEED <b id="spd">1.0</b></span>
+      <span>BEST <b id="best">0</b></span>
+    </div>
+    <canvas id="c" width="480" height="480"></canvas>
+    <p class="status" id="status">Dodge the neon blocks. Fly forever.</p>
+    <button class="btn" id="start">PRESS START</button>
+    <p class="hint"><span class="key">← → ↑ ↓</span> / <span class="key">W A S D</span> steer · drag on mobile</p>
+  </div>
+
+<script>
+const cv=document.getElementById('c');
+const scoreEl=document.getElementById('score'), spdEl=document.getElementById('spd'),
+      bestEl=document.getElementById('best'), livesEl=document.getElementById('lives'),
+      statusEl=document.getElementById('status'), startBtn=document.getElementById('start');
+let best=+(localStorage.neondriftBest||0); bestEl.textContent=best;
+
+const R=6;                      // tunnel radius
+const PZ=4;                     // ship plane z
+const renderer=new THREE.WebGLRenderer({canvas:cv, antialias:true});
+renderer.setSize(480,480,false);
+const scene=new THREE.Scene();
+scene.fog=new THREE.FogExp2(0x07020f, 0.0095);
+const camera=new THREE.PerspectiveCamera(78,1,0.1,400);
+
+// tunnel rings
+const rings=[]; const RINGN=26, RGAP=9;
+const ringColors=[0x25f4ee,0xff36d0,0xb14bff];
+for(let i=0;i<RINGN;i++){
+  const g=new THREE.TorusGeometry(R,0.05,6,40);
+  const m=new THREE.MeshBasicMaterial({color:ringColors[i%3]});
+  const ring=new THREE.Mesh(g,m); ring.position.z=-i*RGAP;
+  ring.userData={base:new THREE.Color(ringColors[i%3])};
+  scene.add(ring); rings.push(ring);
+}
+// long neon rails along the tunnel for speed lines
+for(let k=0;k<8;k++){
+  const a=(k/8)*Math.PI*2;
+  const geo=new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(Math.cos(a)*R,Math.sin(a)*R,5),
+    new THREE.Vector3(Math.cos(a)*R,Math.sin(a)*R,-RINGN*RGAP)]);
+  const line=new THREE.Line(geo,new THREE.LineBasicMaterial({color:0x153a6e}));
+  scene.add(line);
+}
+
+// rushing star/streak field for sense of velocity
+const STARN=260;
+const starPos=new Float32Array(STARN*3);
+function seedStar(i,zFront){
+  const a=Math.random()*Math.PI*2, r=R*0.35+Math.random()*R*0.95;
+  starPos[i*3]=Math.cos(a)*r; starPos[i*3+1]=Math.sin(a)*r;
+  starPos[i*3+2]=zFront? (5+Math.random()*4) : (-Math.random()*RINGN*RGAP);
+}
+for(let i=0;i<STARN;i++) seedStar(i,false);
+const starGeo=new THREE.BufferGeometry();
+starGeo.setAttribute('position',new THREE.BufferAttribute(starPos,3));
+const stars=new THREE.Points(starGeo,new THREE.PointsMaterial({color:0x9fe8ff,size:0.14,transparent:true,opacity:0.85}));
+scene.add(stars);
+
+// player ship (cone)
+const SHIP_COL=0xacff3d;
+const ship=new THREE.Mesh(new THREE.ConeGeometry(0.5,1.3,4),
+  new THREE.MeshBasicMaterial({color:SHIP_COL,wireframe:true}));
+ship.rotation.x=-Math.PI/2; scene.add(ship);
+const glowS=new THREE.Mesh(new THREE.ConeGeometry(0.55,1.4,4),
+  new THREE.MeshBasicMaterial({color:SHIP_COL,transparent:true,opacity:0.25}));
+glowS.rotation.x=-Math.PI/2; scene.add(glowS);
+// engine glow / trail behind the ship
+const TRAILN=18;
+const trailPos=new Float32Array(TRAILN*3);
+const trailGeo=new THREE.BufferGeometry();
+trailGeo.setAttribute('position',new THREE.BufferAttribute(trailPos,3));
+const trail=new THREE.Points(trailGeo,new THREE.PointsMaterial({color:0xacff3d,size:0.3,transparent:true,opacity:0.5}));
+scene.add(trail);
+
+// debris burst pool (shown on hit)
+const DEBN=40;
+const debPos=new Float32Array(DEBN*3);
+const debVel=new Float32Array(DEBN*3);
+const debGeo=new THREE.BufferGeometry();
+debGeo.setAttribute('position',new THREE.BufferAttribute(debPos,3));
+const debris=new THREE.Points(debGeo,new THREE.PointsMaterial({color:0xff2e97,size:0.34,transparent:true,opacity:0}));
+scene.add(debris);
+let debLife=0;
+function burst(x,y,col){
+  debris.material.color.set(col); debris.material.opacity=1; debLife=1;
+  for(let i=0;i<DEBN;i++){
+    debPos[i*3]=x; debPos[i*3+1]=y; debPos[i*3+2]=PZ;
+    debVel[i*3]=(Math.random()-0.5)*10; debVel[i*3+1]=(Math.random()-0.5)*10; debVel[i*3+2]=(Math.random()-0.5)*8;
+  }
+}
+
+// obstacles — mix of solid blocks and ring gates
+const OBN=14; const obstacles=[];
+const obColors=[0xff2e97,0xffd319,0x25f4ee,0xb14bff];
+for(let i=0;i<OBN;i++){
+  const grp=new THREE.Group();
+  const s=1.1+Math.random()*0.7;
+  const box=new THREE.Mesh(new THREE.BoxGeometry(s,s,s),
+    new THREE.MeshBasicMaterial({color:obColors[i%4],wireframe:true}));
+  // ring gate: torus you fly THROUGH the middle of
+  const gr=2.0;
+  const gate=new THREE.Mesh(new THREE.TorusGeometry(gr,0.16,8,28),
+    new THREE.MeshBasicMaterial({color:0x36ffb0,wireframe:true}));
+  grp.add(box); grp.add(gate);
+  grp.userData={size:s, gateR:gr, active:false, kind:'block', box:box, gate:gate, scored:false};
+  scene.add(grp); obstacles.push(grp);
+}
+
+// floating "+N" score popups
+const POPN=8; const pops=[];
+for(let i=0;i<POPN;i++){
+  const cnv=document.createElement('canvas'); cnv.width=128; cnv.height=64;
+  const tx=new THREE.CanvasTexture(cnv);
+  const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:tx,transparent:true,opacity:0}));
+  sp.scale.set(2,1,1); sp.userData={ctx:cnv.getContext('2d'),tex:tx,life:0};
+  scene.add(sp); pops.push(sp);
+}
+function popText(x,y,txt,col){
+  const sp=pops.find(p=>p.userData.life<=0)||pops[0];
+  const c=sp.userData.ctx; c.clearRect(0,0,128,64);
+  c.font='bold 30px "Press Start 2P",monospace'; c.textAlign='center'; c.textBaseline='middle';
+  c.fillStyle=col; c.fillText(txt,64,34);
+  sp.userData.tex.needsUpdate=true; sp.userData.life=1;
+  sp.position.set(x,y+0.6,PZ); sp.material.opacity=1;
+}
+
+let px,py,vx,vy, dist, speed, alive, raf, lastT, lives, invuln, shake, flash;
+function placeObstacle(o,z){
+  const a=Math.random()*Math.PI*2, r=Math.random()*(R-1.4);
+  // ~30% chance of a ring gate
+  const isGate=Math.random()<0.3;
+  o.userData.kind=isGate?'gate':'block';
+  o.userData.scored=false;
+  o.userData.box.visible=!isGate; o.userData.gate.visible=isGate;
+  if(isGate){ o.position.set(Math.cos(a)*r*0.6, Math.sin(a)*r*0.6, z); }
+  else { o.position.set(Math.cos(a)*r, Math.sin(a)*r, z); }
+  o.userData.active=true;
+}
+function setLives(n){ lives=n; livesEl.textContent='♥'.repeat(Math.max(0,n))||'—'; }
+function reset(){
+  px=0;py=0;vx=0;vy=0; dist=0; speed=22; alive=true;
+  invuln=0; shake=0; flash=0; debLife=0; debris.material.opacity=0;
+  setLives(3); scoreEl.textContent=0; spdEl.textContent='1.0';
+  ship.material.color.set(SHIP_COL); ship.visible=true;
+  pops.forEach(p=>{p.userData.life=0;p.material.opacity=0;});
+  obstacles.forEach((o,i)=>placeObstacle(o, -30 - i*16));
+  rings.forEach((r,i)=>{r.position.z=-i*RGAP; r.material.color.copy(r.userData.base);});
+}
+function hit(x,y,col){
+  setLives(lives-1);
+  SFX.explode();
+  burst(x,y,col);
+  shake=1; flash=1;
+  ship.visible=false;
+  if(lives<=0){ return die(); }
+  invuln=1.5;                  // ~1.5s blinking invulnerability
+  // reset player toward center
+  px=0;py=0;vx=0;vy=0;
+}
+function frame(now){
+  if(!alive) return;
+  const dt=Math.min(0.05,(now-lastT)/1000||0.016); lastT=now;
+  // input → velocity (smooth)
+  const acc=42;
+  vx += (keyL?-acc:0)+(keyR?acc:0); vy += (keyU?acc:0)+(keyD?-acc:0);
+  vx*=0.86; vy*=0.86;
+  px+=vx*dt; py+=vy*dt;
+  const lim=R-0.7, rad=Math.hypot(px,py);
+  if(rad>lim){ px=px/rad*lim; py=py/rad*lim; vx*=0.3; vy*=0.3; }
+
+  // ship + banking
+  const bank=-vx*0.06;
+  ship.position.set(px,py,PZ); glowS.position.set(px,py,PZ);
+  ship.rotation.z=bank; glowS.rotation.z=bank;
+  ship.rotation.x=-Math.PI/2 + vy*0.03; glowS.rotation.x=ship.rotation.x;
+
+  // invuln blink
+  if(invuln>0){ invuln-=dt; ship.visible=(Math.floor(invuln*16)%2===0); if(invuln<=0){ship.visible=true; invuln=0;} }
+
+  // smooth camera follow + shake
+  let camX=px*0.5, camY=py*0.5;
+  if(shake>0){ shake-=dt*4; const m=Math.max(0,shake)*0.6; camX+=(Math.random()-0.5)*m; camY+=(Math.random()-0.5)*m; }
+  camera.position.set(camX,camY,8); camera.lookAt(px*0.7,py*0.7,-6);
+  camera.rotation.z+=bank*0.4;
+
+  speed += dt*0.7; const sp=speed*dt;     // gentler difficulty ramp
+  dist += sp; scoreEl.textContent=Math.floor(dist/3);
+  spdEl.textContent=(speed/22).toFixed(1);
+
+  // rushing stars
+  for(let i=0;i<STARN;i++){ starPos[i*3+2]+=sp*1.4; if(starPos[i*3+2]>9) seedStar(i,false); }
+  starGeo.attributes.position.needsUpdate=true;
+
+  // engine trail
+  for(let i=TRAILN-1;i>0;i--){ trailPos[i*3]=trailPos[(i-1)*3]; trailPos[i*3+1]=trailPos[(i-1)*3+1]; trailPos[i*3+2]=trailPos[(i-1)*3+2]; }
+  trailPos[0]=px; trailPos[1]=py; trailPos[2]=PZ+0.9; trailGeo.attributes.position.needsUpdate=true;
+
+  // debris animation
+  if(debLife>0){ debLife-=dt*1.3;
+    for(let i=0;i<DEBN;i++){ debPos[i*3]+=debVel[i*3]*dt; debPos[i*3+1]+=debVel[i*3+1]*dt; debPos[i*3+2]+=debVel[i*3+2]*dt; }
+    debGeo.attributes.position.needsUpdate=true; debris.material.opacity=Math.max(0,debLife);
+  }
+
+  // pop-ups float up + fade
+  for(const p of pops){ if(p.userData.life>0){ p.userData.life-=dt*1.6; p.position.z+=sp; p.position.y+=dt*1.5; p.material.opacity=Math.max(0,p.userData.life); } }
+
+  // rings scroll + subtle color pulse
+  const t=now*0.001;
+  rings.forEach((r,i)=>{ r.position.z+=sp; if(r.position.z>9) r.position.z-=RINGN*RGAP; r.rotation.z+=dt*0.3;
+    const pl=0.65+0.35*Math.sin(t*2+i*0.5); r.material.color.copy(r.userData.base).multiplyScalar(pl);
+  });
+
+  // obstacles
+  for(const o of obstacles){
+    if(!o.userData.active) continue;
+    const prevZ=o.position.z; o.position.z+=sp;
+    if(o.userData.kind==='block'){ o.userData.box.rotation.x+=dt*1.4; o.userData.box.rotation.y+=dt*1.1; }
+    else { o.userData.gate.rotation.z+=dt*0.8; }
+    const dx=o.position.x-px, dy=o.position.y-py, d=Math.hypot(dx,dy);
+
+    // crossed the ship plane?
+    if(prevZ<PZ && o.position.z>=PZ){
+      if(o.userData.kind==='block'){
+        const hr=o.userData.size*0.6+0.55;
+        if(d<hr){ if(invuln<=0) hit(px,py,o.userData.box.material.color.getHex()); }
+        else if(d<hr+1.0){ // near-miss
+          const b=Math.max(2,Math.floor(speed/8)); dist+=b*3; popText(px,py,'+'+b,'#acff3d'); SFX.tick();
+        }
+      } else { // ring gate: fly through the middle
+        const inner=o.userData.gateR-0.45, outer=o.userData.gateR+0.45;
+        if(d<inner){ const b=10; dist+=b*3; popText(px,py,'+'+b,'#36ffb0'); SFX.coin(); }
+        else if(d<outer){ if(invuln<=0) hit(px,py,0x36ffb0); } // clipped the ring edge
+        // d>outer: flew around it, harmless
+      }
+    }
+    if(o.position.z>10) placeObstacle(o, -160-Math.random()*40);
+  }
+
+  // red flash via CRT-style vignette pulse on canvas (no new overlay)
+  if(flash>0){ flash-=dt*3; cv.style.boxShadow='inset 0 0 80px rgba(255,46,151,'+Math.max(0,flash*0.9)+')'; }
+  else if(cv.style.boxShadow){ cv.style.boxShadow=''; }
+
+  renderer.render(scene,camera);
+  raf=requestAnimationFrame(frame);
+}
+function die(){
+  alive=false; cancelAnimationFrame(raf);
+  setTimeout(()=>SFX.gameover(),120);
+  const sc=Math.floor(dist/3);
+  if(sc>best){ best=sc; bestEl.textContent=best; localStorage.neondriftBest=best; statusEl.textContent='★ NEW BEST '+sc+' ★'; }
+  else statusEl.textContent='CRASHED · SCORE '+sc;
+  statusEl.style.color='var(--neon-pink)';
+  ship.visible=true; ship.material.color.set(0xff2e97);
+  camera.rotation.z=0;
+  renderer.render(scene,camera);
+  cv.style.boxShadow='';
+  startBtn.textContent='PLAY AGAIN'; startBtn.style.display='inline-block';
+}
+function begin(){
+  SFX.select(); ship.material.color.set(SHIP_COL);
+  camera.rotation.z=0;
+  reset(); startBtn.style.display='none';
+  statusEl.textContent='GO!'; statusEl.style.color='var(--neon-lime)';
+  cancelAnimationFrame(raf); lastT=performance.now(); raf=requestAnimationFrame(frame);
+}
+startBtn.onclick=begin;
+
+let keyL,keyR,keyU,keyD;
+function setk(e,v){ const k=e.key.toLowerCase();
+  if(k==='arrowleft'||k==='a'){keyL=v;e.preventDefault();}
+  else if(k==='arrowright'||k==='d'){keyR=v;e.preventDefault();}
+  else if(k==='arrowup'||k==='w'){keyU=v;e.preventDefault();}
+  else if(k==='arrowdown'||k==='s'){keyD=v;e.preventDefault();}
+}
+addEventListener('keydown',e=>setk(e,true));
+addEventListener('keyup',e=>setk(e,false));
+// drag to steer (mobile/mouse): move ship toward pointer
+let dragging=false;
+function pointAt(clientX,clientY){
+  const r=cv.getBoundingClientRect();
+  const nx=((clientX-r.left)/r.width)*2-1, ny=((clientY-r.top)/r.height)*2-1;
+  px=nx*(R-0.7); py=-ny*(R-0.7); vx=0; vy=0;
+}
+cv.addEventListener('pointerdown',e=>{dragging=true; if(alive) pointAt(e.clientX,e.clientY);});
+addEventListener('pointermove',e=>{ if(dragging&&alive) pointAt(e.clientX,e.clientY); });
+addEventListener('pointerup',()=>dragging=false);
+
+// initial idle render
+reset(); alive=false; camera.position.set(0,0,8); camera.lookAt(0,0,-6); renderer.render(scene,camera);
+</script>
+</body>
+</html>

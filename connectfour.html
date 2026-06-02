@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QUADDROP — Neon Arcade</title>
+<link rel="stylesheet" href="style.css">
+<script src="sfx.js"></script>
+<style>:root{ --accent: var(--neon-amber); }
+  .status{ font-family:'Press Start 2P',monospace; font-size:13px; text-align:center;
+           min-height:1.4em; margin-top:14px; color:var(--ink); letter-spacing:1px; }
+  .board{
+    --c: clamp(40px, 12.8vw, 64px);
+    display:grid; grid-template-columns:repeat(7, var(--c));
+    gap:6px; padding:14px; border-radius:10px;
+    background:linear-gradient(180deg,#140a2a,#0a0418);
+    border:3px solid var(--accent);
+    box-shadow:0 0 16px var(--accent), inset 0 0 40px rgba(0,0,0,.85);
+    touch-action:manipulation;
+  }
+  .col{ display:grid; grid-template-rows:repeat(6, var(--c)); gap:6px; cursor:pointer; }
+  .col:hover:not(.full) .cell.top-empty{ box-shadow:inset 0 0 0 2px rgba(255,211,25,.5); }
+  .cell{
+    width:var(--c); height:var(--c); border-radius:50%;
+    background:radial-gradient(circle at 38% 32%, #0c0620, #04020c);
+    box-shadow:inset 0 0 8px rgba(0,0,0,.9), inset 0 0 0 2px rgba(255,255,255,.04);
+    position:relative; overflow:hidden;
+  }
+  .disc{
+    position:absolute; inset:5%; border-radius:50%;
+    transform:translateY(-700%);
+    transition:transform .42s cubic-bezier(.45,.05,.6,1.1);
+  }
+  .disc.red{ background:radial-gradient(circle at 36% 30%, #ff7ab0, var(--pink) 55%, #b00a52);
+             box-shadow:0 0 10px var(--pink); }
+  .disc.yellow{ background:radial-gradient(circle at 36% 30%, #fff0a0, var(--amber) 55%, #b58c00);
+                box-shadow:0 0 10px var(--amber); }
+  .disc.drop{ transform:translateY(0); }
+  .disc.win{ animation:flash .55s ease-in-out infinite alternate; }
+  @keyframes flash{ to{ filter:brightness(1.7); box-shadow:0 0 22px #fff, 0 0 34px var(--accent); } }
+  .col.full{ cursor:not-allowed; }
+</style>
+</head>
+<body>
+  <div class="crt-on" aria-hidden="true"></div>
+  <div class="crt-lines" aria-hidden="true"></div>
+  <div class="crt-glass" aria-hidden="true"></div>
+
+  <nav class="gamebar">
+    <a class="back" href="index.html">‹ ARCADE</a>
+    <h1 class="game-title">QUADDROP</h1>
+    <span style="width:84px"></span>
+  </nav>
+
+  <div class="stage">
+    <div class="hud">
+      <span>WINS <b id="wins">0</b></span>
+      <span>LOSS <b id="loss">0</b></span>
+    </div>
+    <div class="board" id="board" aria-label="Connect Four board"></div>
+    <p class="status" id="status">Drop a red disc — click a column.</p>
+    <button class="btn" id="reset">NEW GAME</button>
+    <p class="hint">Click a <span class="key">column</span> to drop. You are red, CPU is yellow.</p>
+  </div>
+<script>
+const ROWS=6, COLS=7, HUMAN=1, CPU=2;
+const boardEl=document.getElementById('board');
+const statusEl=document.getElementById('status');
+const winsEl=document.getElementById('wins');
+const lossEl=document.getElementById('loss');
+let grid, busy, over;
+let cells=[]; // cells[c][r] DOM, r=0 top .. 5 bottom
+
+let wins=+(localStorage.getItem('cf_wins')||0);
+let loss=+(localStorage.getItem('cf_loss')||0);
+winsEl.textContent=wins; lossEl.textContent=loss;
+
+function buildDOM(){
+  boardEl.innerHTML=''; cells=[];
+  for(let c=0;c<COLS;c++){
+    const col=document.createElement('div');
+    col.className='col'; col.dataset.col=c;
+    cells[c]=[];
+    for(let r=0;r<ROWS;r++){
+      const cell=document.createElement('div'); cell.className='cell';
+      cells[c][r]=cell; col.appendChild(cell);
+    }
+    col.addEventListener('click',()=>play(c));
+    boardEl.appendChild(col);
+  }
+}
+
+function reset(){
+  grid=Array.from({length:COLS},()=>Array(ROWS).fill(0));
+  busy=false; over=false;
+  for(let c=0;c<COLS;c++){
+    boardEl.children[c].classList.remove('full');
+    for(let r=0;r<ROWS;r++) cells[c][r].innerHTML='';
+  }
+  statusEl.textContent='Drop a red disc — click a column.';
+  statusEl.style.color='var(--ink)';
+}
+
+function lowestEmpty(g,c){
+  for(let r=ROWS-1;r>=0;r--) if(g[c][r]===0) return r;
+  return -1;
+}
+
+function placeDisc(c,r,who){
+  const d=document.createElement('div');
+  d.className='disc '+(who===HUMAN?'red':'yellow');
+  cells[c][r].appendChild(d);
+  // trigger drop animation
+  requestAnimationFrame(()=>requestAnimationFrame(()=>d.classList.add('drop')));
+  if(lowestEmpty(grid,c)<0) boardEl.children[c].classList.add('full');
+  return d;
+}
+
+// returns array of [c,r] winning cells or null
+function findWin(g,who){
+  const dirs=[[1,0],[0,1],[1,1],[1,-1]];
+  for(let c=0;c<COLS;c++) for(let r=0;r<ROWS;r++){
+    if(g[c][r]!==who) continue;
+    for(const [dc,dr] of dirs){
+      const line=[[c,r]];
+      let cc=c,rr=r,ok=true;
+      for(let k=1;k<4;k++){
+        cc+=dc; rr+=dr;
+        if(cc<0||cc>=COLS||rr<0||rr>=ROWS||g[cc][rr]!==who){ ok=false; break; }
+        line.push([cc,rr]);
+      }
+      if(ok) return line;
+    }
+  }
+  return null;
+}
+
+function boardFull(g){
+  for(let c=0;c<COLS;c++) if(lowestEmpty(g,c)>=0) return false;
+  return true;
+}
+
+// would dropping `who` in column c create a win?
+function winsWith(g,c,who){
+  const r=lowestEmpty(g,c); if(r<0) return false;
+  g[c][r]=who;
+  const w=findWin(g,who);
+  g[c][r]=0;
+  return !!w;
+}
+
+function chooseCPU(){
+  const valid=[]; for(let c=0;c<COLS;c++) if(lowestEmpty(grid,c)>=0) valid.push(c);
+  // (a) win now
+  for(const c of valid) if(winsWith(grid,c,CPU)) return c;
+  // (b) block human win
+  for(const c of valid) if(winsWith(grid,c,HUMAN)) return c;
+  // (c) center-ish preference + avoid giving human immediate win, slight randomness
+  const weight={3:6,2:4,4:4,1:2,5:2,0:1,6:1};
+  const safe=[];
+  for(const c of valid){
+    const r=lowestEmpty(grid,c);
+    grid[c][r]=CPU;
+    const above=lowestEmpty(grid,c);
+    let gives=false;
+    if(above>=0 && winsWith(grid,c,HUMAN)) gives=true;
+    grid[c][r]=0;
+    if(!gives) safe.push(c);
+  }
+  const pool=safe.length?safe:valid;
+  // weighted random
+  let total=0; const w=pool.map(c=>{const x=weight[c]+Math.random()*1.5; total+=x; return x;});
+  let pick=Math.random()*total;
+  for(let i=0;i<pool.length;i++){ pick-=w[i]; if(pick<=0) return pool[i]; }
+  return pool[pool.length-1];
+}
+
+function highlight(line){
+  for(const [c,r] of line){
+    const d=cells[c][r].querySelector('.disc');
+    if(d) d.classList.add('win');
+  }
+}
+
+function endGame(result){
+  over=true; busy=false;
+  if(result==='win'){
+    statusEl.textContent='★ YOU WIN ★'; statusEl.style.color='var(--lime)';
+    wins++; localStorage.setItem('cf_wins',wins); winsEl.textContent=wins;
+    SFX.win();
+  } else if(result==='loss'){
+    statusEl.textContent='CPU WINS'; statusEl.style.color='var(--pink)';
+    loss++; localStorage.setItem('cf_loss',loss); lossEl.textContent=loss;
+    SFX.gameover();
+  } else {
+    statusEl.textContent='DRAW'; statusEl.style.color='var(--cyan)';
+    SFX.select();
+  }
+}
+
+function play(c){
+  if(busy||over) return;
+  const r=lowestEmpty(grid,c);
+  if(r<0) return;
+  busy=true;
+  grid[c][r]=HUMAN; placeDisc(c,r,HUMAN); SFX.place();
+  const w=findWin(grid,HUMAN);
+  if(w){ setTimeout(()=>{highlight(w); endGame('win');},430); return; }
+  if(boardFull(grid)){ setTimeout(()=>endGame('draw'),430); return; }
+  statusEl.textContent='CPU is thinking…'; statusEl.style.color='var(--amber)';
+  setTimeout(cpuMove,560);
+}
+
+function cpuMove(){
+  const c=chooseCPU();
+  const r=lowestEmpty(grid,c);
+  grid[c][r]=CPU; placeDisc(c,r,CPU); SFX.move();
+  const w=findWin(grid,CPU);
+  if(w){ setTimeout(()=>{highlight(w); endGame('loss');},430); return; }
+  if(boardFull(grid)){ setTimeout(()=>endGame('draw'),430); return; }
+  setTimeout(()=>{
+    statusEl.textContent='Your move — drop a red disc.';
+    statusEl.style.color='var(--ink)';
+    busy=false;
+  },430);
+}
+
+document.getElementById('reset').addEventListener('click',()=>{ SFX.select(); reset(); });
+buildDOM(); reset();
+</script>
+</body>
+</html>

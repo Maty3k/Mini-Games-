@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NEON ARCADE — Mini Games</title>
+<link rel="stylesheet" href="style.css">
+<script src="sfx.js"></script>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>👾</text></svg>">
+</head>
+<body>
+  <!-- OUTRUN SCENE -->
+  <div class="scene" aria-hidden="true">
+    <div class="sky"></div>
+    <div class="sun"></div>
+    <div class="horizon"></div>
+    <div class="grid"></div>
+  </div>
+
+  <!-- CRT OVERLAYS -->
+  <div class="crt-on" aria-hidden="true"></div>
+  <div class="crt-lines" aria-hidden="true"></div>
+  <div class="crt-glass" aria-hidden="true"></div>
+
+  <main class="wrap onepage">
+    <header class="marquee">
+      <div class="coin-slot">◉ CREDIT 01 ◉</div>
+      <h1 class="logo">NEON<span class="alt">ARCADE</span></h1>
+      <p class="tagline">▸ <span class="insert">INSERT COIN</span> TO PLAY <span class="blink">█</span></p>
+      <div class="tabs">
+        <button class="tab on" id="tab2d" type="button">2D ARCADE</button>
+        <button class="tab d3" id="tab3d" type="button">3D HOLODECK ▣</button>
+      </div>
+    </header>
+
+    <section class="belt" id="zone2d" aria-label="Game selection conveyor">
+      <div class="belt-head">SELECT YOUR GAME · <span id="count">10</span> CARTRIDGES LOADED</div>
+      <div class="belt-row r-right"><div class="track" id="rowTop"></div></div>
+      <div class="belt-row r-left"><div class="track" id="rowBot"></div></div>
+    </section>
+
+    <section class="zone3d" id="zone3d" aria-label="3D games" hidden>
+      <div class="d3-head">◢ 3D HOLODECK ◣</div>
+      <div class="d3-grid" id="grid3d"></div>
+      <div class="d3-note">REAL-TIME 3D · POWERED BY WEBGL / THREE.JS</div>
+    </section>
+
+    <footer class="foot">
+      <div class="ticker" id="ticker">★ HI-SCORE  AAA 142600 · RGB 098450 · CPU 076200 · VHS 051000 ★</div>
+      <div class="ticker">© 1986 NEON ARCADE SYSTEMS &nbsp;•&nbsp; HOVER TO STOP THE BELT · CLICK TO PLAY</div>
+    </footer>
+  </main>
+
+<script>
+const GAMES = [
+  { href:'snake.html',        cls:'c-lime',    ico:'🐍', name:'VIPER',        genre:'ARCADE',   yr:"'86", stars:4 },
+  { href:'breakout.html',     cls:'c-cyan',    ico:'🧱', name:'BRICKWAVE',     genre:'ARCADE',   yr:"'84", stars:4 },
+  { href:'pong.html',         cls:'c-pink',    ico:'🏓', name:'RALLY',         genre:'SPORT',    yr:"'72", stars:3 },
+  { href:'memory.html',       cls:'c-amber',   ico:'🃏', name:'FLASHBACK',       genre:'PUZZLE',   yr:"'85", stars:3 },
+  { href:'tictactoe.html',    cls:'c-violet',  ico:'⭕', name:'TRIGRID',  genre:'BRAIN',    yr:"'83", stars:3 },
+  { href:'twenty48.html',     cls:'c-orange',  ico:'🔢', name:'FUSION',         genre:'PUZZLE',   yr:"'14", stars:5 },
+  { href:'simon.html',        cls:'c-green',   ico:'🎶', name:'ECHO',        genre:'MEMORY',   yr:"'78", stars:4 },
+  { href:'whackamole.html',   cls:'c-magenta', ico:'🐹', name:'BONK', genre:'ACTION',   yr:"'76", stars:4 },
+  { href:'tetris.html',       cls:'c-cyan',    ico:'🟦', name:'BLOKFALL',       genre:'PUZZLE',   yr:"'84", stars:5 },
+  { href:'flappy.html',       cls:'c-amber',   ico:'🐤', name:'JETBIRD',       genre:'SKILL',    yr:"'13", stars:4 },
+  { href:'asteroids.html',    cls:'c-cyan',    ico:'🚀', name:'VECTOR',    genre:'ACTION',   yr:"'79", stars:5 },
+  { href:'stardefender.html', cls:'c-lime',    ico:'👾', name:'VANGUARD',genre:'SHOOTER',  yr:"'78", stars:5 },
+  { href:'minesweeper.html',  cls:'c-cyan',    ico:'💣', name:'BOOMGRID',  genre:'PUZZLE',   yr:"'89", stars:4 },
+  { href:'connectfour.html',  cls:'c-amber',   ico:'🔴', name:'QUADDROP', genre:'STRATEGY', yr:"'74", stars:4 },
+  { href:'sokoban.html',      cls:'c-orange',  ico:'📦', name:'PUSHBOT',      genre:'PUZZLE',   yr:"'82", stars:4 },
+  { href:'maze.html',         cls:'c-violet',  ico:'🧩', name:'GRIDLOCK',         genre:'MAZE',     yr:"'80", stars:3 },
+  { href:'roadhop.html',      cls:'c-green',   ico:'🐸', name:'CROSSWIRE',     genre:'ARCADE',   yr:"'81", stars:4 },
+  { href:'cyberrunner.html',  cls:'c-amber',   ico:'🏃', name:'DASHBOT', genre:'RUNNER',   yr:"'14", stars:4 },
+  { href:'lightsout.html',    cls:'c-green',   ico:'💡', name:'BLACKOUT',   genre:'PUZZLE',   yr:"'95", stars:3 },
+  { href:'slidepuzzle.html',  cls:'c-violet',  ico:'🔢', name:'TILESHIFT', genre:'PUZZLE',   yr:"'74", stars:3 },
+  { href:'hangman.html',      cls:'c-amber',   ico:'🔤', name:'WORDLOCK',      genre:'WORD',     yr:"'80", stars:3 },
+  { href:'rps.html',          cls:'c-pink',    ico:'✊', name:'TRIAD',   genre:'VERSUS',   yr:"'88", stars:2 },
+  { href:'reaction.html',     cls:'c-magenta', ico:'⚡', name:'QUICKDRAW',     genre:'SKILL',    yr:"'90", stars:3 },
+  { href:'colormatch.html',   cls:'c-lime',    ico:'🎨', name:'CHROMA',  genre:'BRAIN',    yr:"'35", stars:4 },
+];
+
+function stars(n){
+  let s=''; for(let i=0;i<5;i++) s += `<span class="${i<n?'on':'off'}">★</span>`;
+  return s;
+}
+function cardHTML(g){
+  return `<a class="card ${g.cls}" href="${g.href}" aria-label="${g.name}">
+    <div class="cart-top"><span class="tag">${g.genre}</span><span class="yr">${g.yr}</span></div>
+    <div class="screen"><div class="ico">${g.ico}</div></div>
+    <div class="cart-foot">
+      <div class="name">${g.name}</div>
+      <div class="stars">${stars(g.stars)}</div>
+    </div>
+    <span class="play">▶</span>
+  </a>`;
+}
+
+// Each row is two identical halves so the CSS marquee (translateX -> -50%)
+// loops with no seam. Split the catalogue across the two lanes.
+function buildRow(el, idx){
+  let half = idx.map(i => cardHTML(GAMES[i])).join('');
+  el.innerHTML = half + half;
+}
+
+const mid = Math.ceil(GAMES.length/2);
+const idxAll = GAMES.map((_,i)=>i);
+const topIdx = idxAll.slice(0, mid);
+const botIdx = idxAll.slice(mid);
+buildRow(document.getElementById('rowTop'), topIdx);
+buildRow(document.getElementById('rowBot'), botIdx);
+document.getElementById('count').textContent = GAMES.length;
+
+// ---- 3D HOLODECK ----
+const GAMES3D = [
+  { href:'australia.html', cls:'c-amber',  ico:'🏎️', name:'MELBOURNE',  genre:'3D RACE',  yr:"'25", stars:5 },
+  { href:'neondrift.html', cls:'c-cyan',   ico:'🛸', name:'NEONDRIFT', genre:'3D FLY',   yr:"'25", stars:5 },
+  { href:'gridrun.html',   cls:'c-violet', ico:'🏁', name:'GRIDRUN',   genre:'3D RUN',   yr:"'25", stars:4 },
+  { href:'starhawk.html',  cls:'c-pink',   ico:'🚀', name:'STARHAWK',  genre:'3D SHOOT', yr:"'25", stars:4 },
+];
+document.getElementById('grid3d').innerHTML = GAMES3D.map(cardHTML).join('');
+
+// arcade blip when any cartridge is selected (2D belt + 3D grid)
+document.querySelectorAll('.card').forEach(c => c.addEventListener('click', () => { try { SFX.select(); } catch (e) {} }));
+
+// 2D / 3D tab switching
+const zone2d = document.getElementById('zone2d'), zone3d = document.getElementById('zone3d');
+const tab2d = document.getElementById('tab2d'), tab3d = document.getElementById('tab3d');
+function showMode(is3d) {
+  zone2d.hidden = is3d;
+  zone3d.hidden = !is3d;
+  tab3d.classList.toggle('on', is3d);
+  tab2d.classList.toggle('on', !is3d);
+}
+tab2d.addEventListener('click', () => { location.hash = ''; showMode(false); try { SFX.select(); } catch (e) {} });
+tab3d.addEventListener('click', () => { location.hash = '3d'; showMode(true); try { SFX.select(); } catch (e) {} });
+showMode(location.hash === '#3d');
+
+// fire up the ambient synth hum on the first user gesture (browsers block audio until then)
+let humKicked = false;
+function kickHum() { if (humKicked) return; humKicked = true; try { SFX.startHum(); } catch (e) {} }
+['pointerdown', 'keydown', 'touchstart'].forEach(ev => addEventListener(ev, kickHum, { once: true }));
+</script>
+</body>
+</html>

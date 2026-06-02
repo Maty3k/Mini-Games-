@@ -1,0 +1,490 @@
+/* ============================================================
+   NEON ARCADE  —  authentic Outrun / CRT stylesheet
+   Refs: aleclownes CRT screen-door + chromatic aberration,
+         Outrun aesthetic (huge scan-lined sun, perspective
+         grid, chrome lettering, magenta/cyan on near-black)
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap');
+
+:root {
+  --bg:        #07020f;
+  --ink:       #f6ecff;
+  --pink:      #ff2e97;
+  --magenta:   #ff36d0;
+  --cyan:      #25f4ee;
+  --lime:      #acff3d;
+  --amber:     #ffd319;
+  --violet:    #b14bff;
+  --sun-top:   #ffd319;
+  --sun-mid:   #ff2975;
+  --sun-bot:   #8c1eff;
+  --glow-pink: 0 0 4px var(--pink), 0 0 14px var(--pink), 0 0 30px rgba(255,46,151,.5);
+  --glow-cyan: 0 0 4px var(--cyan), 0 0 14px var(--cyan), 0 0 30px rgba(37,244,238,.5);
+
+  /* legacy aliases used by the individual game pages */
+  --neon-pink: var(--pink);
+  --neon-cyan: var(--cyan);
+  --neon-lime: var(--lime);
+  --neon-amber: var(--amber);
+  --neon-violet: var(--violet);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+
+body {
+  font-family: 'VT323', monospace;
+  color: var(--ink);
+  background: var(--bg);
+  min-height: 100%;
+  overflow-x: hidden;
+  position: relative;
+  -webkit-font-smoothing: none;
+}
+
+/* ============================================================
+   OUTRUN SCENE  (rendered behind everything via .scene markup)
+   ============================================================ */
+.scene { position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
+
+/* night sky gradient + twinkling stars */
+.scene .sky {
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(1px 1px at 12% 18%, #fff 50%, transparent),
+    radial-gradient(1px 1px at 22% 8%,  #cfe 50%, transparent),
+    radial-gradient(1.5px 1.5px at 38% 24%, #fff 50%, transparent),
+    radial-gradient(1px 1px at 55% 12%, #fdf 50%, transparent),
+    radial-gradient(1px 1px at 68% 30%, #fff 50%, transparent),
+    radial-gradient(1.5px 1.5px at 82% 16%, #cff 50%, transparent),
+    radial-gradient(1px 1px at 90% 6%,  #fff 50%, transparent),
+    radial-gradient(1px 1px at 8% 40%,  #fff 50%, transparent),
+    radial-gradient(ellipse 120% 80% at 50% 78%, #2b0b54 0%, #150734 38%, #07020f 72%);
+  animation: twinkle 4s ease-in-out infinite;
+}
+@keyframes twinkle { 50% { opacity: .82; } }
+
+/* the iconic huge sun with horizontal scan-line gaps */
+.scene .sun {
+  position: absolute;
+  left: 50%; top: 15%;
+  width: 360px; height: 360px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: linear-gradient(to bottom,
+              var(--sun-top) 0%, #ff8a2a 34%, var(--sun-mid) 64%, var(--sun-bot) 100%);
+  /* single mask: solid upper half, slits that widen toward the bottom */
+  --slits: linear-gradient(to bottom,
+      #000 0 50%,
+      transparent 50% 52%, #000 52% 60%,
+      transparent 60% 63%, #000 63% 71%,
+      transparent 71% 75%, #000 75% 82%,
+      transparent 82% 87%, #000 87% 100%);
+  -webkit-mask-image: var(--slits);
+          mask-image: var(--slits);
+  filter: drop-shadow(0 0 70px rgba(255,90,150,.6));
+  opacity: .92;
+}
+/* sun bloom halo */
+.scene .sun::after {
+  content:""; position:absolute; inset:-40px; border-radius:50%; z-index:-1;
+  background: radial-gradient(circle, rgba(255,80,160,.35), transparent 65%);
+}
+
+/* perspective neon grid floor */
+.scene .grid {
+  position: absolute;
+  left: -50%; right: -50%; bottom: 0;
+  height: 46vh; margin: 0 auto; width: 200%;
+  background-image:
+    linear-gradient(to right,  rgba(37,244,238,.85) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255,54,208,.85) 1px, transparent 1px);
+  background-size: 56px 56px;
+  transform: perspective(340px) rotateX(74deg);
+  transform-origin: 50% 100%;
+  animation: grid-roll 1.4s linear infinite;
+  mask-image: linear-gradient(to bottom, transparent, #000 28%);
+}
+@keyframes grid-roll { to { background-position: 0 56px; } }
+
+/* glowing horizon line where grid meets sun */
+.scene .horizon {
+  position: absolute; left: 0; right: 0; bottom: 46vh; height: 2px;
+  background: var(--cyan);
+  box-shadow: 0 0 10px var(--cyan), 0 0 24px var(--cyan), 0 6px 40px rgba(37,244,238,.5);
+}
+
+/* ============================================================
+   GLOBAL CRT OVERLAY  (scanlines + RGB mask + flicker + glass)
+   ============================================================ */
+.crt-lines {
+  position: fixed; inset: 0; z-index: 90; pointer-events: none;
+  background:
+    linear-gradient(rgba(18,16,16,0) 50%, rgba(0,0,0,0.28) 50%),
+    linear-gradient(90deg, rgba(255,0,0,0.06), rgba(0,255,0,0.02), rgba(0,0,255,0.06));
+  background-size: 100% 3px, 4px 100%;
+}
+.crt-lines::after {           /* phosphor flicker */
+  content:""; position:absolute; inset:0;
+  background: rgba(18,16,16,0.10);
+  opacity: 0; animation: flicker .12s infinite;
+}
+@keyframes flicker {
+  0%{opacity:.10} 10%{opacity:.05} 20%{opacity:.18} 30%{opacity:.04}
+  40%{opacity:.14} 50%{opacity:.07} 60%{opacity:.20} 70%{opacity:.05}
+  80%{opacity:.12} 90%{opacity:.08} 100%{opacity:.15}
+}
+/* curved-glass vignette + bright moving sheen */
+.crt-glass {
+  position: fixed; inset: 0; z-index: 91; pointer-events: none;
+  border-radius: 22px;
+  box-shadow: inset 0 0 120px 24px rgba(0,0,0,.55),
+              inset 0 0 30px 4px rgba(0,0,0,.4);
+  background: radial-gradient(120% 120% at 50% 50%, transparent 60%, rgba(0,0,0,.45) 100%);
+}
+.crt-glass::before {
+  content:""; position:absolute; inset:0; border-radius:22px;
+  background: linear-gradient(125deg, transparent 40%, rgba(140,200,255,.05) 50%, transparent 60%);
+}
+/* one-time power-on sweep */
+.crt-on {
+  position: fixed; inset: 0; z-index: 95; pointer-events: none; background:#000;
+  animation: power-on 1.1s ease-out forwards;
+}
+@keyframes power-on {
+  0%   { transform: scaleY(.004) scaleX(1); background:#fff; opacity:1; }
+  10%  { transform: scaleY(.004) scaleX(1); background:#fff; opacity:1; }
+  35%  { transform: scaleY(1) scaleX(1); background:#fff; opacity:.85; }
+  60%  { background:#000; opacity:.5; }
+  100% { transform: scaleY(1); opacity:0; }
+}
+
+/* ============================================================
+   LAYOUT
+   ============================================================ */
+.wrap {
+  position: relative; z-index: 5;
+  max-width: 1000px; margin: 0 auto;
+  padding: clamp(28px,6vh,64px) 22px 90px;
+}
+
+/* ============================================================
+   ONE-PAGE LAYOUT  (no-scroll, belt centered)
+   ============================================================ */
+.wrap.onepage {
+  min-height: 100vh; min-height: 100dvh;
+  display: flex; flex-direction: column; justify-content: space-between;
+  padding-top: clamp(20px,4vh,40px); padding-bottom: clamp(16px,3vh,30px);
+  gap: clamp(12px,2.5vh,28px); overflow: hidden;
+}
+
+/* ---- conveyor belt ---- */
+.belt {
+  flex: 1; display: flex; flex-direction: column; justify-content: center;
+  gap: clamp(16px,3vh,30px); min-height: 0;
+}
+.belt-head {
+  text-align:center; font-family:'Press Start 2P',monospace; font-size:11px;
+  letter-spacing:3px; color: var(--violet); margin-bottom: 2px;
+}
+.belt-head::before, .belt-head::after { content:"◂ "; color:var(--cyan); }
+.belt-head::after { content:" ▸"; }
+
+.belt-row {
+  position: relative; overflow: hidden;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 7%, #000 93%, transparent);
+          mask-image: linear-gradient(90deg, transparent, #000 7%, #000 93%, transparent);
+}
+/* the moving belt surface (subtle ridges) behind the cards */
+.belt-row::before {
+  content:""; position:absolute; left:0; right:0; top:50%; height:78%;
+  transform: translateY(-50%);
+  background:
+    repeating-linear-gradient(90deg, rgba(177,75,255,.10) 0 22px, rgba(37,244,238,.06) 22px 44px);
+  border-top:1px solid rgba(37,244,238,.18); border-bottom:1px solid rgba(255,54,208,.18);
+  z-index:0; pointer-events:none;
+}
+.track {
+  display: flex; width: max-content; gap: 18px; padding: 8px 9px;
+  animation: marquee 60s linear infinite;
+  position: relative; z-index: 1;
+}
+.r-right .track { animation-direction: reverse; animation-duration: 66s; }
+.belt-row:hover .track { animation-play-state: paused; }
+@keyframes marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+
+/* belt card sizing (reuses .card design, fixed width) */
+.track .card { flex: 0 0 188px; width: 188px; }
+.track .card .screen { height: 92px; }
+.track .card .ico { font-size: 46px; }
+
+@media (max-height:680px){
+  .track .card .screen { height: 72px; }
+  .track .card .ico { font-size: 38px; }
+}
+
+/* slim one-page footer */
+.foot {
+  text-align:center; display:flex; flex-direction:column; gap:8px; align-items:center;
+}
+.foot .ticker {
+  font-family:'Press Start 2P',monospace; font-size:10px; letter-spacing:2px; color:#8a79b0;
+}
+.foot .ticker b { color: var(--amber); }
+
+/* ---- 2D / 3D mode tabs ---- */
+.tabs { display: flex; gap: 12px; justify-content: center; margin-top: 16px; }
+.tab {
+  font-family:'Press Start 2P',monospace; font-size: 10px; letter-spacing: 1px;
+  color:#9d8fb8; background: rgba(10,4,24,.5); border: 2px solid rgba(157,92,255,.4);
+  border-radius: 5px; padding: 10px 16px; cursor: pointer; transition: .15s;
+}
+.tab:hover { color: var(--ink); border-color: var(--cyan); }
+.tab.on { color:#04121a; background: var(--cyan); border-color: var(--cyan); box-shadow: var(--glow-cyan); }
+.tab.d3.on { color:#fff; background: var(--violet); border-color: var(--violet);
+  box-shadow: 0 0 6px var(--violet), 0 0 20px var(--violet); }
+
+/* ---- 3D holodeck zone ---- */
+[hidden] { display: none !important; }   /* ensure tab-hidden sections truly hide */
+.zone3d { flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 18px; min-height: 0; }
+.d3-head {
+  font-family:'Press Start 2P',monospace; font-size: 13px; letter-spacing: 2px;
+  color: var(--violet); text-shadow: 0 0 10px var(--violet); text-align: center;
+}
+.d3-grid { display: flex; flex-wrap: wrap; justify-content: center; gap: 22px; max-width: 700px; }
+.d3-grid .card { flex: 0 0 196px; width: 196px; }
+.d3-note {
+  font-family:'Press Start 2P',monospace; font-size: 9px; letter-spacing: 1px;
+  color: var(--violet); opacity: .75; text-align: center;
+}
+
+@media (max-height:620px){
+  .track .card .screen { height: 78px; }
+  .track .card .ico { font-size: 40px; }
+}
+
+/* ---- marquee header ---- */
+.marquee { text-align: center; margin-bottom: 10px; }
+.coin-slot {
+  font-family:'Press Start 2P',monospace; font-size:10px; letter-spacing:2px;
+  color: var(--cyan); opacity:.8; margin-bottom: 18px;
+}
+
+/* chrome + neon Outrun logo */
+.logo {
+  font-family:'Press Start 2P', monospace;
+  font-size: clamp(30px, 8vw, 76px);
+  line-height: 1.05; letter-spacing: 2px;
+  display: inline-block;
+  background: linear-gradient(#ffffff 6%, #b9ecff 26%, #2f8bff 47%,
+              #0a2350 50%, #ff52c8 60%, #ffd319 92%);
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-stroke: 2px rgba(10,5,25,.9);
+  color: transparent;
+  filter: drop-shadow(0 2px 0 #5b1a6e) drop-shadow(0 0 18px rgba(255,46,151,.55));
+}
+.logo .alt {
+  background: linear-gradient(#ffffff 6%, #c9fff6 26%, #25f4ee 50%,
+              #0a3a50 52%, #25f4ee 62%, #aaffff 92%);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+
+.tagline {
+  margin: 16px auto 0; font-size: clamp(18px,2.6vw,24px);
+  letter-spacing: 4px; color: var(--lime); text-shadow:0 0 8px rgba(172,255,61,.6);
+}
+.tagline .insert { color: var(--amber); }
+.blink { animation: blink 1.05s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+
+/* ============================================================
+   CABINET / CARD GRID
+   ============================================================ */
+.cabinet {
+  margin-top: clamp(28px,5vh,52px);
+  border: 1px solid rgba(177,75,255,.4);
+  border-radius: 10px;
+  padding: clamp(16px,3vw,30px);
+  background:
+    linear-gradient(180deg, rgba(20,8,42,.72), rgba(8,3,20,.72));
+  box-shadow: 0 0 0 1px rgba(37,244,238,.18) inset, 0 22px 60px rgba(0,0,0,.6);
+  backdrop-filter: blur(2px);
+}
+.cabinet-label {
+  font-family:'Press Start 2P',monospace; font-size:11px; letter-spacing:2px;
+  color: var(--violet); margin-bottom: 18px; display:flex; align-items:center; gap:10px;
+}
+.cabinet-label::before, .cabinet-label::after {
+  content:""; flex:1; height:1px;
+  background: linear-gradient(90deg, transparent, rgba(177,75,255,.6), transparent);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 20px;
+}
+
+/* ---- arcade CARTRIDGE ---- */
+.card {
+  position: relative; display: flex; flex-direction: column;
+  text-decoration: none; color: var(--ink);
+  background: linear-gradient(172deg, #1a0b33 0%, #0a0418 100%);
+  border: 2px solid var(--accent, var(--violet));
+  border-radius: 11px 11px 7px 7px; overflow: hidden;
+  transition: transform .18s ease, box-shadow .18s ease;
+  -webkit-box-reflect: below 5px linear-gradient(transparent 58%, rgba(150,210,255,.16));
+}
+.card:hover, .card:focus-visible {
+  transform: translateY(-9px) rotate(-.7deg) scale(1.025);
+  box-shadow: 0 0 18px var(--accent), 0 18px 42px rgba(0,0,0,.65);
+  outline: none; z-index: 4;
+}
+/* label header strip */
+.card .cart-top {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:6px 10px; font-family:'Press Start 2P',monospace; font-size:7px; letter-spacing:1px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 30%, transparent), transparent 80%);
+  border-bottom:1px solid color-mix(in srgb, var(--accent) 42%, transparent);
+}
+.card .tag { color: var(--accent); text-shadow:0 0 6px var(--accent); }
+.card .yr  { color:#8a79b0; }
+/* mini "screen" preview with scanlines + shine */
+.card .screen {
+  position: relative; height: 98px; display:flex; align-items:center; justify-content:center;
+  background:
+    radial-gradient(circle at 50% 36%, rgba(255,255,255,.08), transparent 62%),
+    linear-gradient(180deg, #06121f, #050109);
+  border-bottom:1px solid color-mix(in srgb, var(--accent) 32%, transparent);
+}
+.card .screen::after {
+  content:""; position:absolute; inset:0; z-index:2;
+  background: repeating-linear-gradient(to bottom, transparent 0 2px, rgba(0,0,0,.28) 2px 3px);
+  pointer-events:none;
+}
+.card .screen::before {
+  content:""; position:absolute; top:-50%; left:-130%; width:60%; height:200%; z-index:1;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.18), transparent);
+  transform: rotate(18deg); transition:left .55s ease;
+}
+.card:hover .screen::before { left:150%; }
+.card .ico {
+  font-size: 48px; line-height:1; position:relative; z-index:1;
+  filter: drop-shadow(0 0 10px var(--accent));
+  animation: bob 2.6s ease-in-out infinite;
+}
+@keyframes bob { 50% { transform: translateY(-5px); } }
+/* footer: name + stars */
+.card .cart-foot { padding:10px 11px 12px; display:flex; flex-direction:column; gap:8px; }
+.card .name {
+  font-family:'Press Start 2P',monospace; font-size:11px;
+  color: var(--accent, var(--violet)); text-shadow:0 0 8px var(--accent);
+}
+.card .stars { font-size:13px; letter-spacing:2px; line-height:1; }
+.card .stars .on  { color: var(--amber); text-shadow:0 0 6px rgba(255,211,25,.5); }
+.card .stars .off { color:#3a2d52; }
+.card .play {
+  position:absolute; top:6px; right:10px; z-index:3;
+  font-family:'Press Start 2P',monospace; font-size:7px; color: var(--accent);
+  opacity:0; transform: translateX(5px); transition:.18s;
+}
+.card:hover .play { opacity:1; transform:translateX(0); }
+/* coming-soon locked cartridge */
+.card.soon { filter:grayscale(.55) brightness(.8); }
+.card.soon .ico { animation:none; }
+.card.soon .name { color:#8a79b0; text-shadow:none; }
+
+.card.c-lime    { --accent: var(--lime); }
+.card.c-cyan    { --accent: var(--cyan); }
+.card.c-pink    { --accent: var(--pink); }
+.card.c-amber   { --accent: var(--amber); }
+.card.c-violet  { --accent: var(--violet); }
+.card.c-magenta { --accent: var(--magenta); }
+.card.c-orange  { --accent: #ff8a2a; }
+.card.c-green   { --accent: #3dff6e; }
+
+/* ============================================================
+   HIGH SCORE attract panel
+   ============================================================ */
+.hiscores {
+  margin-top: 26px; border:1px solid rgba(37,244,238,.35); border-radius:10px;
+  padding: clamp(16px,3vw,26px);
+  background: linear-gradient(180deg, rgba(6,18,31,.7), rgba(8,3,20,.7));
+}
+.hiscores h2 {
+  font-family:'Press Start 2P',monospace; font-size:14px; text-align:center;
+  color: var(--amber); text-shadow:0 0 10px rgba(255,211,25,.6); margin-bottom:18px;
+  letter-spacing:2px;
+}
+.score-row {
+  display:grid; grid-template-columns: 40px 1fr auto 1.4fr;
+  gap: 12px; align-items:center;
+  font-family:'Press Start 2P',monospace; font-size:12px;
+  padding: 9px 6px; border-bottom:1px dashed rgba(177,75,255,.22);
+}
+.score-row:last-child { border-bottom:0; }
+.score-row .rank { color: var(--cyan); }
+.score-row .who  { color: var(--ink); letter-spacing:1px; }
+.score-row .pts  { color: var(--lime); text-align:right; }
+.score-row .game { color:#8a79b0; font-size:9px; text-align:right; letter-spacing:1px; }
+.score-row.top .who { color: var(--amber); text-shadow:0 0 8px rgba(255,211,25,.5); }
+
+/* ---- footer ---- */
+.coin {
+  text-align:center; margin-top: 40px; font-size:18px; letter-spacing:2px; color:#8a79b0;
+}
+.coin b { color: var(--amber); }
+
+/* ============================================================
+   GAME PAGE shared bits
+   ============================================================ */
+.gamebar {
+  position:relative; z-index:5; max-width:760px; margin:0 auto;
+  padding:30px 20px 0; display:flex; align-items:center; justify-content:space-between; gap:16px;
+}
+.back {
+  font-family:'Press Start 2P',monospace; font-size:11px; text-decoration:none;
+  color: var(--cyan); border:2px solid var(--cyan); padding:10px 14px; border-radius:3px;
+  transition: all .15s ease;
+}
+.back:hover { background:var(--cyan); color:#04121a; box-shadow:var(--glow-cyan); }
+.game-title {
+  font-family:'Press Start 2P',monospace; font-size:clamp(14px,3.4vw,22px);
+  color: var(--accent,var(--pink)); text-shadow:0 0 10px var(--accent,var(--pink));
+}
+
+.stage {
+  position:relative; z-index:5; max-width:760px; margin:24px auto 0;
+  padding:0 20px; display:flex; flex-direction:column; align-items:center;
+}
+.hud {
+  width:100%; max-width:560px; display:flex; justify-content:space-between;
+  font-size:24px; letter-spacing:2px; margin-bottom:12px; color:var(--lime);
+}
+.hud span b { color: var(--amber); }
+
+canvas {
+  background:#050109;
+  border:3px solid var(--accent,var(--pink)); border-radius:6px;
+  box-shadow:0 0 16px var(--accent,var(--pink)), inset 0 0 40px rgba(0,0,0,.85);
+  image-rendering: pixelated; max-width:100%; touch-action:none;
+}
+.hint {
+  margin-top:18px; font-size:18px; color:#9d8fb8; text-align:center; letter-spacing:1px; line-height:1.5;
+}
+.key {
+  display:inline-block; border:1px solid #6b5a8a; border-radius:3px;
+  padding:1px 8px; margin:0 2px; color:var(--cyan);
+}
+.btn {
+  font-family:'Press Start 2P',monospace; font-size:12px; cursor:pointer;
+  color:#04121a; background:var(--lime); border:none; padding:13px 20px; border-radius:3px;
+  margin-top:18px; box-shadow:0 4px 0 #6f9e23; transition:transform .08s ease, box-shadow .08s ease;
+}
+.btn:active { transform:translateY(3px); box-shadow:0 1px 0 #6f9e23; }
+
+@media (max-width:520px){
+  .score-row { grid-template-columns: 32px 1fr auto; font-size:10px; }
+  .score-row .game { display:none; }
+}

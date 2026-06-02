@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CROSSWIRE — Neon Arcade</title>
+<link rel="stylesheet" href="style.css">
+<script src="sfx.js"></script>
+<style>:root{ --accent: #3dff6e; }</style>
+</head>
+<body>
+  <div class="crt-on" aria-hidden="true"></div>
+  <div class="crt-lines" aria-hidden="true"></div>
+  <div class="crt-glass" aria-hidden="true"></div>
+
+  <nav class="gamebar">
+    <a class="back" href="index.html">‹ ARCADE</a>
+    <h1 class="game-title">CROSSWIRE</h1>
+    <span style="width:84px"></span>
+  </nav>
+
+  <div class="stage">
+    <div class="hud">
+      <span>SCORE <b id="score">0</b></span>
+      <span>LIVES <b id="lives">3</b></span>
+      <span>BEST <b id="best">0</b></span>
+    </div>
+    <canvas id="c" width="440" height="480"></canvas>
+    <button class="btn" id="start">PRESS START</button>
+    <p class="hint">
+      <span class="key">↑</span><span class="key">↓</span><span class="key">←</span><span class="key">→</span>
+      hop &nbsp; or SWIPE. Reach the top!
+    </p>
+  </div>
+
+<script>
+(function(){
+  const cv = document.getElementById('c');
+  const ctx = cv.getContext('2d');
+  const W = cv.width, H = cv.height;
+  const scoreEl = document.getElementById('score');
+  const livesEl = document.getElementById('lives');
+  const bestEl  = document.getElementById('best');
+  const startBtn= document.getElementById('start');
+  const BEST_KEY= 'roadhop_best';
+
+  const ACCENT = '#3dff6e';
+  const CELL = 40;                 // grid hop size
+  const COLS = Math.floor(W/CELL); // 11
+  // Layout: row 0 (top) = safe goal, rows 1..9 = road lanes, row 10..11 = start zone
+  const ROWS = Math.floor(H/CELL); // 12
+  const GOAL_ROW = 0;
+  const START_ROW = ROWS - 1;      // 11
+
+  let best = parseInt(localStorage.getItem(BEST_KEY)||'0',10);
+  bestEl.textContent = best;
+
+  let rafId = null, running = false, gameOver = false;
+  let score, lives, lanes, player, diff, flash;
+
+  // lane definitions occupy rows 1..ROWS-3 (rows just above the start row group)
+  function buildLanes(){
+    lanes = [];
+    const colors = ['#25f4ee','#ff2e97','#ffd319','#b14bff','#ff36d0','#acff3d'];
+    const firstLane = 1;
+    const lastLane = ROWS - 3;   // leave row ROWS-2 and ROWS-1 as safe-ish start grass
+    for(let r = firstLane; r <= lastLane; r++){
+      const dir = (r % 2 === 0) ? 1 : -1;
+      const baseSpeed = 0.9 + Math.random()*1.1 + diff*0.25;
+      const speed = dir * baseSpeed;
+      const wide = Math.random() < 0.4;
+      const vw = wide ? CELL*2 : CELL*1.4;       // truck vs car
+      const color = colors[(r) % colors.length];
+      // create vehicles spaced across the lane
+      const gap = 120 + Math.random()*80;
+      const cars = [];
+      let x = Math.random()*gap;
+      while(x < W + vw){
+        cars.push({x:x, w:vw});
+        x += vw + gap;
+      }
+      lanes.push({row:r, speed:speed, color:color, h:CELL-10, cars:cars, vw:vw, gap:gap});
+    }
+  }
+
+  function resetPlayer(){
+    player = {col: Math.floor(COLS/2), row: START_ROW};
+  }
+
+  function reset(){
+    score = 0; lives = 3; diff = 0; flash = 0;
+    gameOver = false;
+    buildLanes();
+    resetPlayer();
+    scoreEl.textContent = score;
+    livesEl.textContent = lives;
+  }
+
+  function nextLevel(){
+    SFX.coin();
+    score += 1;
+    diff += 1;
+    scoreEl.textContent = score;
+    buildLanes();
+    resetPlayer();
+    if(score > best){ best = score; localStorage.setItem(BEST_KEY, best); bestEl.textContent = best; }
+  }
+
+  function loseLife(){
+    SFX.explode();
+    lives -= 1;
+    livesEl.textContent = Math.max(0,lives);
+    flash = 18;
+    if(lives <= 0){ endGame(); }
+    else { resetPlayer(); }
+  }
+
+  function move(dc, dr){
+    if(!running || gameOver) return;
+    const nc = player.col + dc;
+    const nr = player.row + dr;
+    if(nc < 0 || nc >= COLS) return;
+    if(nr < 0 || nr >= ROWS) return;
+    player.col = nc; player.row = nr;
+    if(player.row === GOAL_ROW){ nextLevel(); }
+    else { SFX.move(); }
+  }
+
+  function update(){
+    if(flash > 0) flash--;
+    for(const ln of lanes){
+      for(const car of ln.cars){
+        car.x += ln.speed;
+      }
+      // wrap
+      const total = W + ln.vw + 40;
+      for(const car of ln.cars){
+        if(ln.speed > 0 && car.x > W + ln.vw){ car.x -= total; }
+        else if(ln.speed < 0 && car.x < -ln.vw){ car.x += total; }
+      }
+    }
+    // collision: player overlaps any car on its lane
+    const px = player.col*CELL + 6;
+    const pw = CELL - 12;
+    for(const ln of lanes){
+      if(ln.row === player.row){
+        const py = ln.row*CELL;
+        for(const car of ln.cars){
+          if(px < car.x + car.w && px + pw > car.x){
+            loseLife();
+            return;
+          }
+        }
+      }
+    }
+  }
+
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+    ctx.fillStyle = '#050109';
+    ctx.fillRect(0,0,W,H);
+
+    // goal zone (top)
+    ctx.save();
+    ctx.fillStyle = 'rgba(61,255,110,0.12)';
+    ctx.fillRect(0,0,W,CELL);
+    ctx.strokeStyle = ACCENT; ctx.shadowColor = ACCENT; ctx.shadowBlur = 10;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(1, 1, W-2, CELL-2);
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = ACCENT;
+    ctx.font = '12px "Press Start 2P", monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('SAFE', W/2, CELL/2 + 6);
+    ctx.restore();
+
+    // road background for lane rows
+    const firstLane = lanes.length? lanes[0].row : 1;
+    const lastLane  = lanes.length? lanes[lanes.length-1].row : 1;
+    ctx.fillStyle = 'rgba(20,8,42,0.6)';
+    ctx.fillRect(0, firstLane*CELL, W, (lastLane-firstLane+1)*CELL);
+
+    // lane dividers (dashed)
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255,211,25,0.5)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([10,10]);
+    for(let r = firstLane; r <= lastLane+1; r++){
+      ctx.beginPath(); ctx.moveTo(0, r*CELL); ctx.lineTo(W, r*CELL); ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    ctx.restore();
+
+    // start zone (bottom grass rows)
+    ctx.fillStyle = 'rgba(61,255,110,0.08)';
+    ctx.fillRect(0, (lastLane+1)*CELL, W, H-(lastLane+1)*CELL);
+
+    // vehicles
+    for(const ln of lanes){
+      const y = ln.row*CELL + 5;
+      for(const car of ln.cars){
+        ctx.save();
+        ctx.fillStyle = ln.color;
+        ctx.shadowColor = ln.color; ctx.shadowBlur = 10;
+        roundRect(car.x, y, car.w, ln.h, 5);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        // windows
+        ctx.fillStyle = 'rgba(5,1,9,0.55)';
+        ctx.fillRect(car.x + 6, y + 5, car.w - 12, ln.h - 10);
+        ctx.restore();
+      }
+    }
+
+    // player frog
+    const px = player.col*CELL;
+    const py = player.row*CELL;
+    ctx.save();
+    const pc = (flash>0 && Math.floor(flash/3)%2===0) ? '#ff2e97' : ACCENT;
+    ctx.fillStyle = pc;
+    ctx.shadowColor = pc; ctx.shadowBlur = 14;
+    roundRect(px+7, py+7, CELL-14, CELL-14, 7);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    // eyes
+    ctx.fillStyle = '#050109';
+    ctx.fillRect(px+13, py+13, 5, 5);
+    ctx.fillRect(px+CELL-18, py+13, 5, 5);
+    ctx.restore();
+
+    if(gameOver) drawOverlay();
+  }
+
+  function roundRect(x,y,w,h,r){
+    ctx.beginPath();
+    ctx.moveTo(x+r,y);
+    ctx.arcTo(x+w,y,x+w,y+h,r);
+    ctx.arcTo(x+w,y+h,x,y+h,r);
+    ctx.arcTo(x,y+h,x,y,r);
+    ctx.arcTo(x,y,x+w,y,r);
+    ctx.closePath();
+  }
+
+  function drawOverlay(){
+    ctx.save();
+    ctx.fillStyle = 'rgba(5,1,9,0.8)';
+    ctx.fillRect(0,0,W,H);
+    ctx.textAlign='center';
+    ctx.fillStyle = '#ff2e97';
+    ctx.shadowColor = '#ff2e97'; ctx.shadowBlur = 14;
+    ctx.font = '20px "Press Start 2P", monospace';
+    ctx.fillText('GAME OVER', W/2, H/2 - 14);
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = ACCENT;
+    ctx.font = '12px "Press Start 2P", monospace';
+    ctx.fillText('SCORE ' + score, W/2, H/2 + 18);
+    ctx.restore();
+  }
+
+  function loop(){
+    if(!running) return;
+    update();
+    if(!running) return;
+    draw();
+    rafId = requestAnimationFrame(loop);
+  }
+
+  function startGame(){
+    SFX.select();
+    if(rafId) cancelAnimationFrame(rafId);
+    reset();
+    running = true;
+    startBtn.textContent = 'PLAY AGAIN';
+    rafId = requestAnimationFrame(loop);
+  }
+
+  function endGame(){
+    running = false;
+    gameOver = true;
+    SFX.gameover();
+    if(rafId) cancelAnimationFrame(rafId);
+    draw();
+  }
+
+  startBtn.addEventListener('click', startGame);
+
+  document.addEventListener('keydown', function(e){
+    if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code)){
+      e.preventDefault();
+      if(!running){ startGame(); return; }
+      if(e.code==='ArrowUp')    move(0,-1);
+      if(e.code==='ArrowDown')  move(0, 1);
+      if(e.code==='ArrowLeft')  move(-1,0);
+      if(e.code==='ArrowRight') move( 1,0);
+    }
+  });
+
+  // touch swipe
+  let tsx=0, tsy=0, tracking=false;
+  cv.addEventListener('touchstart', function(e){
+    e.preventDefault();
+    if(!running){ startGame(); return; }
+    const t = e.touches[0];
+    tsx = t.clientX; tsy = t.clientY; tracking = true;
+  }, {passive:false});
+  cv.addEventListener('touchend', function(e){
+    e.preventDefault();
+    if(!tracking) return;
+    tracking = false;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - tsx, dy = t.clientY - tsy;
+    if(Math.abs(dx) < 18 && Math.abs(dy) < 18){
+      move(0,-1);   // tap = hop forward
+      return;
+    }
+    if(Math.abs(dx) > Math.abs(dy)){
+      move(dx>0?1:-1, 0);
+    } else {
+      move(0, dy>0?1:-1);
+    }
+  }, {passive:false});
+
+  reset();
+  draw();
+})();
+</script>
+</body>
+</html>

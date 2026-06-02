@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JETBIRD — Neon Arcade</title>
+<link rel="stylesheet" href="style.css">
+<script src="sfx.js"></script>
+<style>:root{ --accent: var(--neon-amber); }</style>
+</head>
+<body>
+  <div class="crt-on" aria-hidden="true"></div>
+  <div class="crt-lines" aria-hidden="true"></div>
+  <div class="crt-glass" aria-hidden="true"></div>
+
+  <nav class="gamebar">
+    <a class="back" href="index.html">‹ ARCADE</a>
+    <h1 class="game-title">JETBIRD</h1>
+    <span style="width:84px"></span>
+  </nav>
+
+  <div class="stage">
+    <div class="hud">
+      <span>SCORE <b id="score">0</b></span>
+      <span>BEST <b id="best">0</b></span>
+    </div>
+    <canvas id="c" width="400" height="500"></canvas>
+    <button class="btn" id="start">PRESS START</button>
+    <p class="hint"><span class="key">SPACE</span> / <span class="key">click</span> / <span class="key">tap</span> to flap through the gates</p>
+  </div>
+
+<script>
+const cv=document.getElementById('c'), ctx=cv.getContext('2d');
+const W=cv.width,H=cv.height;
+const scoreEl=document.getElementById('score'), bestEl=document.getElementById('best'), startBtn=document.getElementById('start');
+const GRAV=0.42, FLAP=-7, GAP=140, PIPE_W=58, SPEED=2.6;
+let bird, pipes, score, best=+(localStorage.flappyBest||0), running, raf, frame;
+bestEl.textContent=best;
+
+function reset(){
+  bird={x:96,y:H/2,v:0,r:13};
+  pipes=[]; score=0; frame=0; scoreEl.textContent=0;
+}
+function addPipe(){
+  const top=60+Math.random()*(H-GAP-160);
+  pipes.push({x:W, top, scored:false});
+}
+function flap(){ if(running){ bird.v=FLAP; SFX.jump(); } }
+function step(){
+  frame++;
+  if(frame%95===0) addPipe();
+  bird.v+=GRAV; bird.y+=bird.v;
+  pipes.forEach(p=>p.x-=SPEED);
+  pipes=pipes.filter(p=>p.x+PIPE_W>0);
+  // score + collision
+  for(const p of pipes){
+    if(!p.scored && p.x+PIPE_W<bird.x-bird.r){ p.scored=true; score++; scoreEl.textContent=score; SFX.coin(); }
+    if(bird.x+bird.r>p.x && bird.x-bird.r<p.x+PIPE_W &&
+       (bird.y-bird.r<p.top || bird.y+bird.r>p.top+GAP)) return end();
+  }
+  if(bird.y+bird.r>H || bird.y-bird.r<0) return end();
+  draw(); raf=requestAnimationFrame(step);
+}
+function draw(){
+  ctx.fillStyle='#050109'; ctx.fillRect(0,0,W,H);
+  // parallax grid floor glow
+  ctx.strokeStyle='rgba(37,244,238,.12)';
+  for(let y=H-1;y>H-90;y-=12){ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
+  // pipes
+  pipes.forEach(p=>{
+    ctx.fillStyle='#acff3d'; ctx.shadowColor='#acff3d'; ctx.shadowBlur=12;
+    ctx.fillRect(p.x,0,PIPE_W,p.top);
+    ctx.fillRect(p.x,p.top+GAP,PIPE_W,H-(p.top+GAP));
+    ctx.shadowBlur=0; ctx.fillStyle='rgba(255,255,255,.25)';
+    ctx.fillRect(p.x,p.top-10,PIPE_W,10); ctx.fillRect(p.x,p.top+GAP,PIPE_W,10);
+  });
+  // bird
+  ctx.save(); ctx.translate(bird.x,bird.y); ctx.rotate(Math.max(-0.5,Math.min(1.2,bird.v/12)));
+  ctx.fillStyle='#ffd319'; ctx.shadowColor='#ffd319'; ctx.shadowBlur=14;
+  ctx.beginPath(); ctx.arc(0,0,bird.r,0,7); ctx.fill();
+  ctx.shadowBlur=0; ctx.fillStyle='#06121f'; ctx.beginPath(); ctx.arc(5,-4,3,0,7); ctx.fill();
+  ctx.fillStyle='#ff8a2a'; ctx.beginPath(); ctx.moveTo(bird.r-2,0); ctx.lineTo(bird.r+8,3); ctx.lineTo(bird.r-2,6); ctx.fill();
+  ctx.restore();
+}
+function end(){
+  running=false; cancelAnimationFrame(raf); SFX.explode(); SFX.gameover(); draw();
+  if(score>best){ best=score; bestEl.textContent=best; localStorage.flappyBest=best; }
+  ctx.fillStyle='rgba(5,1,9,.82)'; ctx.fillRect(0,0,W,H); ctx.textAlign='center';
+  ctx.fillStyle='#ff2e97'; ctx.font='22px "Press Start 2P", monospace'; ctx.fillText('GAME OVER',W/2,H/2-10);
+  ctx.fillStyle='#ffd319'; ctx.font='12px "Press Start 2P", monospace'; ctx.fillText('SCORE '+score,W/2,H/2+24);
+  startBtn.textContent='PLAY AGAIN'; startBtn.style.display='inline-block';
+}
+function begin(){ SFX.select(); reset(); running=true; startBtn.style.display='none'; bird.v=FLAP; cancelAnimationFrame(raf); step(); }
+startBtn.onclick=begin;
+addEventListener('keydown',e=>{ if(e.key===' '){ e.preventDefault(); flap(); } });
+cv.addEventListener('mousedown',flap);
+cv.addEventListener('touchstart',e=>{ e.preventDefault(); flap(); },{passive:false});
+reset(); draw();
+</script>
+</body>
+</html>

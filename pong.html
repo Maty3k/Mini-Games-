@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RALLY — Neon Arcade</title>
+<link rel="stylesheet" href="style.css">
+<script src="sfx.js"></script>
+<style>:root{ --accent: var(--neon-pink); }</style>
+</head>
+<body>
+  <div class="crt-on" aria-hidden="true"></div>
+  <div class="crt-lines" aria-hidden="true"></div>
+  <div class="crt-glass" aria-hidden="true"></div>
+
+  <nav class="gamebar">
+    <a class="back" href="index.html">‹ ARCADE</a>
+    <h1 class="game-title">RALLY</h1>
+    <span style="width:84px"></span>
+  </nav>
+
+  <div class="stage">
+    <div class="hud">
+      <span>YOU <b id="you">0</b></span>
+      <span>CPU <b id="cpu">0</b></span>
+    </div>
+    <canvas id="c" width="560" height="360"></canvas>
+    <button class="btn" id="start">PRESS START</button>
+    <p class="hint">
+      <span class="key">↑ ↓</span> / <span class="key">W S</span> or move mouse · first to <b style="color:var(--neon-amber)">7</b> wins
+    </p>
+  </div>
+
+<script>
+const cv=document.getElementById('c'), ctx=cv.getContext('2d');
+const W=cv.width,H=cv.height, PW=10,PH=64,WIN=7;
+const youEl=document.getElementById('you'), cpuEl=document.getElementById('cpu'), startBtn=document.getElementById('start');
+let p,ai,ball,sYou,sCpu,running,raf,over;
+
+function reset(){
+  p={y:H/2-PH/2}; ai={y:H/2-PH/2};
+  sYou=0; sCpu=0; youEl.textContent=0; cpuEl.textContent=0; over=false;
+  serve(Math.random()<.5?1:-1);
+}
+function serve(dir){ ball={x:W/2,y:H/2,vx:4.2*dir,vy:(Math.random()*4-2),r:7}; }
+
+function draw(){
+  ctx.fillStyle='#050109'; ctx.fillRect(0,0,W,H);
+  // net
+  ctx.strokeStyle='rgba(157,92,255,.4)'; ctx.lineWidth=3; ctx.setLineDash([10,12]);
+  ctx.beginPath(); ctx.moveTo(W/2,0); ctx.lineTo(W/2,H); ctx.stroke(); ctx.setLineDash([]);
+  // paddles
+  ctx.shadowBlur=12;
+  ctx.fillStyle='#21f3ff'; ctx.shadowColor='#21f3ff'; ctx.fillRect(14,p.y,PW,PH);
+  ctx.fillStyle='#ff2e88'; ctx.shadowColor='#ff2e88'; ctx.fillRect(W-14-PW,ai.y,PW,PH);
+  // ball
+  ctx.fillStyle='#fff'; ctx.shadowColor='#fff'; ctx.beginPath(); ctx.arc(ball.x,ball.y,ball.r,0,7); ctx.fill();
+  ctx.shadowBlur=0;
+}
+function step(){
+  ball.x+=ball.vx; ball.y+=ball.vy;
+  if(ball.y<ball.r||ball.y>H-ball.r){ ball.vy*=-1; SFX.tick(); }
+  // player paddle
+  if(ball.x-ball.r<24+PW && ball.x>14 && ball.y>p.y && ball.y<p.y+PH && ball.vx<0){
+    ball.vx=Math.abs(ball.vx)*1.05; ball.vy+=((ball.y-(p.y+PH/2))/(PH/2))*3; SFX.bounce();
+  }
+  // ai paddle
+  if(ball.x+ball.r>W-24-PW && ball.x<W-14 && ball.y>ai.y && ball.y<ai.y+PH && ball.vx>0){
+    ball.vx=-Math.abs(ball.vx)*1.05; ball.vy+=((ball.y-(ai.y+PH/2))/(PH/2))*3; SFX.bounce();
+  }
+  // ai tracking (imperfect)
+  const target=ball.y-PH/2; ai.y+=Math.max(-4.4,Math.min(4.4,(target-ai.y)*0.09));
+  ai.y=Math.max(0,Math.min(H-PH,ai.y));
+  // score
+  if(ball.x<-20){ sCpu++; cpuEl.textContent=sCpu; SFX.score(); point(-1); return; }
+  if(ball.x>W+20){ sYou++; youEl.textContent=sYou; SFX.score(); point(1); return; }
+  draw(); raf=requestAnimationFrame(step);
+}
+function point(dir){
+  if(sYou>=WIN||sCpu>=WIN) return end(sYou>=WIN?'YOU WIN!':'CPU WINS');
+  serve(dir); draw(); raf=requestAnimationFrame(step);
+}
+function end(msg){
+  running=false; over=true; cancelAnimationFrame(raf); draw();
+  if(msg==='YOU WIN!') SFX.win(); else SFX.gameover();
+  ctx.fillStyle='rgba(5,1,9,.82)'; ctx.fillRect(0,0,W,H); ctx.textAlign='center';
+  ctx.fillStyle= msg==='YOU WIN!'?'#b6ff3d':'#ff2e88';
+  ctx.font='26px "Press Start 2P", monospace'; ctx.fillText(msg,W/2,H/2+6);
+  startBtn.textContent='PLAY AGAIN'; startBtn.style.display='inline-block';
+}
+function begin(){ reset(); startBtn.style.display='none'; running=true; cancelAnimationFrame(raf); step(); }
+startBtn.onclick=()=>{ SFX.select(); begin(); };
+
+let up=false,down=false;
+addEventListener('keydown',e=>{const k=e.key.toLowerCase();
+  if(k==='arrowup'||k==='w'){up=true;e.preventDefault();} if(k==='arrowdown'||k==='s'){down=true;e.preventDefault();}});
+addEventListener('keyup',e=>{const k=e.key.toLowerCase();
+  if(k==='arrowup'||k==='w')up=false; if(k==='arrowdown'||k==='s')down=false;});
+function moveP(){ if(running){ if(up)p.y-=6; if(down)p.y+=6; p.y=Math.max(0,Math.min(H-PH,p.y)); }
+  requestAnimationFrame(moveP); }
+moveP();
+function pointTo(clientY){ const r=cv.getBoundingClientRect();
+  p.y=Math.max(0,Math.min(H-PH,(clientY-r.top)*(H/r.height)-PH/2)); }
+cv.addEventListener('mousemove',e=>pointTo(e.clientY));
+cv.addEventListener('touchmove',e=>{pointTo(e.touches[0].clientY);e.preventDefault();},{passive:false});
+
+reset(); draw();
+</script>
+</body>
+</html>

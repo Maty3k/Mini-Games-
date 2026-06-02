@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CHROMA — Neon Arcade</title>
+<link rel="stylesheet" href="style.css">
+<script src="sfx.js"></script>
+<style>:root{ --accent: var(--neon-lime); }
+  .status{ font-family:'Press Start 2P',monospace; font-size:13px; text-align:center;
+           min-height:1.4em; margin-top:14px; color:var(--ink); letter-spacing:1px; }
+  .panel{
+    width:100%; max-width:440px; padding:30px 18px 24px; border-radius:12px;
+    background:linear-gradient(180deg,#0a0418,#050109);
+    border:3px solid var(--accent);
+    box-shadow:0 0 16px var(--accent), inset 0 0 40px rgba(0,0,0,.85);
+    text-align:center;
+  }
+  .ask{ font-family:'Press Start 2P',monospace; font-size:10px; color:#9d8fb8;
+        letter-spacing:1px; margin-bottom:18px; line-height:1.6; }
+  .ask b{ color:var(--amber); }
+  .word{
+    font-family:'Press Start 2P',monospace;
+    font-size:clamp(30px,11vw,52px); letter-spacing:2px;
+    margin:8px 0 26px; min-height:1.2em; line-height:1.2;
+    text-shadow:0 0 14px currentColor, 0 0 28px currentColor;
+  }
+  .bar-track{
+    height:14px; border-radius:8px; background:rgba(255,255,255,.06);
+    border:1px solid rgba(177,75,255,.4); overflow:hidden; margin-bottom:24px;
+  }
+  .bar-fill{ height:100%; width:100%; background:linear-gradient(90deg,var(--lime),var(--amber),var(--pink));
+             border-radius:8px; transform-origin:left; }
+  .choices{ display:flex; gap:14px; justify-content:center; }
+  .choice{
+    font-family:'Press Start 2P',monospace; font-size:13px; cursor:pointer;
+    flex:1; max-width:170px; padding:16px 0; border-radius:6px; border:2px solid;
+    background:transparent; transition:transform .08s ease;
+  }
+  .choice:active{ transform:translateY(2px); }
+  .choice.yes{ color:var(--lime); border-color:var(--lime); }
+  .choice.yes:hover{ background:var(--lime); color:#04121a; box-shadow:0 0 14px var(--lime); }
+  .choice.no{ color:var(--pink); border-color:var(--pink); }
+  .choice.no:hover{ background:var(--pink); color:#120410; box-shadow:0 0 14px var(--pink); }
+  .choice:disabled{ opacity:.4; cursor:default; }
+</style>
+</head>
+<body>
+  <div class="crt-on" aria-hidden="true"></div>
+  <div class="crt-lines" aria-hidden="true"></div>
+  <div class="crt-glass" aria-hidden="true"></div>
+
+  <nav class="gamebar">
+    <a class="back" href="index.html">‹ ARCADE</a>
+    <h1 class="game-title">CHROMA</h1>
+    <span style="width:84px"></span>
+  </nav>
+
+  <div class="stage">
+    <div class="hud">
+      <span>SCORE <b id="score">0</b></span>
+      <span>BEST <b id="best">0</b></span>
+    </div>
+    <div class="panel">
+      <p class="ask">Does the <b>TEXT</b> match its <b>INK COLOR</b>?</p>
+      <div class="word" id="word">READY?</div>
+      <div class="bar-track"><div class="bar-fill" id="bar"></div></div>
+      <div class="choices">
+        <button class="choice yes" id="yes" disabled>MATCH ✓</button>
+        <button class="choice no" id="no" disabled>NO ✗</button>
+      </div>
+    </div>
+    <p class="status" id="status">Press NEW GAME to start.</p>
+    <button class="btn" id="reset">NEW GAME</button>
+    <p class="hint"><span class="key">←</span>/<span class="key">A</span> = MATCH &nbsp; <span class="key">→</span>/<span class="key">L</span> = NO</p>
+  </div>
+<script>
+const COLORS=[
+  {name:'PINK',   css:'#ff2e97'},
+  {name:'CYAN',   css:'#25f4ee'},
+  {name:'LIME',   css:'#acff3d'},
+  {name:'AMBER',  css:'#ffd319'},
+  {name:'VIOLET', css:'#b14bff'},
+  {name:'MAGENTA',css:'#ff36d0'},
+];
+const wordEl=document.getElementById('word');
+const barEl=document.getElementById('bar');
+const statusEl=document.getElementById('status');
+const scoreEl=document.getElementById('score');
+const bestEl=document.getElementById('best');
+const yesBtn=document.getElementById('yes');
+const noBtn=document.getElementById('no');
+
+let best=+(localStorage.getItem('cm_best')||0);
+bestEl.textContent=best;
+
+let score, isMatch, playing, raf, roundStart, duration;
+
+function roundDuration(){ return Math.max(900, 2200 - score*90); }
+
+function newRound(){
+  const text=COLORS[Math.floor(Math.random()*COLORS.length)];
+  // ~50% chance of a true match
+  let ink;
+  if(Math.random()<0.5){ ink=text; isMatch=true; }
+  else{
+    do{ ink=COLORS[Math.floor(Math.random()*COLORS.length)]; }while(ink.name===text.name);
+    isMatch=false;
+  }
+  wordEl.textContent=text.name;
+  wordEl.style.color=ink.css;
+  duration=roundDuration();
+  roundStart=performance.now();
+  barEl.style.background='linear-gradient(90deg,var(--lime),var(--amber),var(--pink))';
+  tick();
+}
+
+function tick(){
+  const elapsed=performance.now()-roundStart;
+  const frac=Math.max(0, 1-elapsed/duration);
+  barEl.style.transform='scaleX('+frac+')';
+  if(frac<=0){ gameOver('TIME UP'); return; }
+  raf=requestAnimationFrame(tick);
+}
+
+function answer(said){ // said=true means user pressed MATCH
+  if(!playing) return;
+  cancelAnimationFrame(raf);
+  if(said===isMatch){
+    score++; scoreEl.textContent=score;
+    SFX.coin();
+    statusEl.textContent='Nice! Keep going…';
+    statusEl.style.color='var(--lime)';
+    newRound();
+  } else {
+    SFX.hit();
+    gameOver('WRONG');
+  }
+}
+
+function gameOver(reason){
+  cancelAnimationFrame(raf);
+  playing=false;
+  yesBtn.disabled=true; noBtn.disabled=true;
+  barEl.style.transform='scaleX(0)';
+  if(score>best){ best=score; localStorage.setItem('cm_best',best); bestEl.textContent=best; SFX.powerup(); }
+  else { SFX.gameover(); }
+  statusEl.textContent='★ GAME OVER ★  '+reason+' — SCORE '+score;
+  statusEl.style.color='var(--pink)';
+}
+
+function start(){
+  cancelAnimationFrame(raf);
+  score=0; scoreEl.textContent=0; playing=true;
+  yesBtn.disabled=false; noBtn.disabled=false;
+  statusEl.textContent='GO!'; statusEl.style.color='var(--ink)';
+  newRound();
+}
+
+yesBtn.addEventListener('click',()=>answer(true));
+noBtn.addEventListener('click',()=>answer(false));
+document.getElementById('reset').addEventListener('click',()=>{ SFX.select(); start(); });
+
+window.addEventListener('keydown',e=>{
+  const k=e.key.toLowerCase();
+  if(k==='arrowleft'||k==='a'){ e.preventDefault(); answer(true); }
+  else if(k==='arrowright'||k==='l'){ e.preventDefault(); answer(false); }
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WORDLOCK — Neon Arcade</title>
+<link rel="stylesheet" href="style.css">
+<script src="sfx.js"></script>
+<style>:root{ --accent: var(--neon-amber); }
+  .panel{ width:100%; max-width:440px; display:flex; flex-direction:column; align-items:center; gap:18px; }
+  .gallows{ display:flex; gap:10px; }
+  .seg{ width:30px; height:30px; border-radius:50%; display:flex; align-items:center;
+        justify-content:center; font-size:20px; border:2px solid #3a2d52; color:#3a2d52;
+        background:#0a0418; transition:all .18s ease; }
+  .seg.lost{ border-color:var(--pink); color:var(--pink);
+             text-shadow:0 0 8px var(--pink); box-shadow:0 0 10px rgba(255,46,151,.5); }
+  .word{ display:flex; flex-wrap:wrap; gap:8px; justify-content:center; }
+  .slot{ font-family:'Press Start 2P',monospace; font-size:22px; color:var(--accent);
+         min-width:22px; text-align:center; border-bottom:3px solid var(--accent);
+         padding-bottom:6px; text-shadow:0 0 8px var(--accent); }
+  .slot.blank{ color:transparent; text-shadow:none; }
+  .slot.miss{ color:var(--pink); border-color:var(--pink); text-shadow:0 0 8px var(--pink); }
+  .keys{ display:grid; grid-template-columns:repeat(7,1fr); gap:6px; width:100%; }
+  .kbtn{ font-family:'Press Start 2P',monospace; font-size:11px; cursor:pointer;
+         color:var(--cyan); background:#120826; border:2px solid #5a4a7a; border-radius:4px;
+         padding:9px 0; transition:all .12s ease; }
+  .kbtn:hover:not(:disabled){ border-color:var(--cyan); box-shadow:var(--glow-cyan); }
+  .kbtn:disabled{ cursor:default; opacity:.85; }
+  .kbtn.good{ color:#04121a; background:var(--lime); border-color:var(--lime); }
+  .kbtn.bad{ color:#fff; background:#3a0a1f; border-color:var(--pink); }
+  .status{ font-family:'Press Start 2P',monospace; font-size:13px; text-align:center;
+           min-height:20px; letter-spacing:1px; line-height:1.6; color:var(--amber); }
+  .status.win{ color:var(--lime); text-shadow:0 0 10px var(--lime); }
+  .status.lose{ color:var(--pink); text-shadow:0 0 10px var(--pink); }
+</style>
+</head>
+<body>
+  <div class="crt-on" aria-hidden="true"></div>
+  <div class="crt-lines" aria-hidden="true"></div>
+  <div class="crt-glass" aria-hidden="true"></div>
+
+  <nav class="gamebar">
+    <a class="back" href="index.html">‹ ARCADE</a>
+    <h1 class="game-title">WORDLOCK</h1>
+    <span style="width:84px"></span>
+  </nav>
+
+  <div class="stage">
+    <div class="hud" style="max-width:440px">
+      <span>STREAK <b id="streak">0</b></span>
+      <span>BEST <b id="best">0</b></span>
+    </div>
+    <div class="panel">
+      <div class="gallows" id="gallows" aria-label="misses"></div>
+      <div class="word" id="word"></div>
+      <p class="status" id="status">GUESS THE WORD</p>
+      <div class="keys" id="keys"></div>
+    </div>
+    <button class="btn" id="reset">NEW GAME</button>
+    <p class="hint">Type <span class="key">A</span>–<span class="key">Z</span> or tap the letters. 6 misses allowed.</p>
+  </div>
+<script>
+(function(){
+  const WORDS = ["ARCADE","JOYSTICK","PIXEL","NEON","CARTRIDGE","ASTEROID","GALAXY",
+    "SYNTH","LASER","ROBOT","CONSOLE","SPRITE","RETRO","GLITCH","CIRCUIT","COMET",
+    "NEBULA","ORBIT","ROCKET","METEOR","PLASMA","VECTOR","ANDROID","CYBORG","MATRIX",
+    "PADDLE","SCORE","TOKEN","SHMUP","BOSS","LEVEL","COMBO","PHOTON","QUASAR","CRYSTAL",
+    "HOLOGRAM","STARSHIP","WARP","BLASTER","TURBO","COCKPIT","SATELLITE","COSMOS","PULSAR"];
+  const KEY="hangman.bestStreak";
+  const MAX=6;
+  const SEGS=["G","A","L","L","O","W"]; // decorative skull letters fill on miss
+  const SKULL="☠";
+
+  const gallowsEl=document.getElementById('gallows');
+  const wordEl=document.getElementById('word');
+  const keysEl=document.getElementById('keys');
+  const statusEl=document.getElementById('status');
+  const streakEl=document.getElementById('streak');
+  const bestEl=document.getElementById('best');
+
+  let word="", guessed=new Set(), misses=0, over=false;
+  let streak=0;
+  let best=parseInt(localStorage.getItem(KEY)||"0",10)||0;
+  bestEl.textContent=best;
+
+  // build gallows segments
+  for(let i=0;i<MAX;i++){
+    const s=document.createElement('div');
+    s.className='seg'; s.textContent=SKULL;
+    gallowsEl.appendChild(s);
+  }
+  const segEls=[...gallowsEl.children];
+
+  // build A-Z keyboard
+  const keyBtns={};
+  for(let c=65;c<=90;c++){
+    const L=String.fromCharCode(c);
+    const b=document.createElement('button');
+    b.className='kbtn'; b.textContent=L; b.dataset.letter=L;
+    b.addEventListener('click',()=>guess(L));
+    keysEl.appendChild(b);
+    keyBtns[L]=b;
+  }
+
+  function renderWord(){
+    wordEl.innerHTML="";
+    for(const ch of word){
+      const s=document.createElement('span');
+      s.className='slot';
+      if(guessed.has(ch)){ s.textContent=ch; }
+      else if(over){ s.textContent=ch; s.classList.add('miss'); }
+      else { s.textContent="_"; s.classList.add('blank'); }
+      wordEl.appendChild(s);
+    }
+  }
+  function renderGallows(){
+    segEls.forEach((el,i)=>el.classList.toggle('lost', i<misses));
+  }
+
+  function newGame(){
+    word=WORDS[Math.floor(Math.random()*WORDS.length)];
+    guessed=new Set(); misses=0; over=false;
+    for(const L in keyBtns){ const b=keyBtns[L]; b.disabled=false; b.className='kbtn'; }
+    statusEl.textContent="GUESS THE WORD"; statusEl.className="status";
+    renderWord(); renderGallows();
+  }
+
+  function isWon(){ return [...word].every(c=>guessed.has(c)); }
+
+  function guess(L){
+    if(over) return;
+    if(guessed.has(L)||(keyBtns[L]&&keyBtns[L].disabled)) return;
+    const b=keyBtns[L]; if(b) b.disabled=true;
+    if(word.includes(L)){
+      guessed.add(L);
+      SFX.coin();
+      if(b) b.classList.add('good');
+      renderWord();
+      if(isWon()){
+        over=true;
+        streak++; streakEl.textContent=streak;
+        if(streak>best){ best=streak; bestEl.textContent=best; localStorage.setItem(KEY,best); }
+        statusEl.textContent="★ YOU GOT IT ★";
+        statusEl.className="status win";
+        SFX.win();
+      }
+    } else {
+      misses++;
+      SFX.hit();
+      if(b) b.classList.add('bad');
+      renderGallows();
+      if(misses>=MAX){
+        over=true;
+        streak=0; streakEl.textContent=streak;
+        statusEl.textContent="GAME OVER — "+word;
+        statusEl.className="status lose";
+        renderWord();
+        SFX.gameover();
+      } else {
+        statusEl.textContent="MISSES "+misses+"/"+MAX;
+        statusEl.className="status";
+      }
+    }
+  }
+
+  document.addEventListener('keydown',e=>{
+    const k=e.key.toUpperCase();
+    if(k.length===1 && k>="A" && k<="Z"){ guess(k); }
+  });
+  document.getElementById('reset').addEventListener('click',()=>{ SFX.select(); newGame(); });
+
+  newGame();
+})();
+</script>
+</body>
+</html>

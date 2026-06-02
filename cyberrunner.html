@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DASHBOT — Neon Arcade</title>
+<link rel="stylesheet" href="style.css">
+<script src="sfx.js"></script>
+<style>:root{ --accent: var(--neon-amber); }</style>
+</head>
+<body>
+  <div class="crt-on" aria-hidden="true"></div>
+  <div class="crt-lines" aria-hidden="true"></div>
+  <div class="crt-glass" aria-hidden="true"></div>
+
+  <nav class="gamebar">
+    <a class="back" href="index.html">‹ ARCADE</a>
+    <h1 class="game-title">DASHBOT</h1>
+    <span style="width:84px"></span>
+  </nav>
+
+  <div class="stage">
+    <div class="hud"><span>SCORE <b id="score">0</b></span><span>BEST <b id="best">0</b></span></div>
+    <canvas id="c" width="460" height="300"></canvas>
+    <button class="btn" id="start">PRESS START</button>
+    <p class="hint">
+      <span class="key">SPACE</span> / <span class="key">↑</span> jump &nbsp;
+      <span class="key">↓</span> duck &nbsp; or TAP to jump
+    </p>
+  </div>
+
+<script>
+(function(){
+  const cv = document.getElementById('c');
+  const ctx = cv.getContext('2d');
+  const W = cv.width, H = cv.height;
+  const scoreEl = document.getElementById('score');
+  const bestEl  = document.getElementById('best');
+  const startBtn= document.getElementById('start');
+  const BEST_KEY= 'cyberrunner_best';
+
+  const GROUND_Y = H - 48;          // top of ground line
+  const ACCENT = '#ffd319';
+  let best = parseInt(localStorage.getItem(BEST_KEY)||'0',10);
+  bestEl.textContent = best;
+
+  let rafId = null, running = false, gameOver = false;
+  let speed, spawnTimer, score, gridOffset, groundOffset, obstacles;
+
+  const player = {
+    x: 60, y: GROUND_Y, w: 26, h: 34,
+    vy: 0, onGround: true, ducking: false
+  };
+  const GRAV = 0.7;
+  const JUMP_V = -12.2;
+
+  function reset(){
+    speed = 4.2;
+    spawnTimer = 60;
+    score = 0;
+    gridOffset = 0;
+    groundOffset = 0;
+    obstacles = [];
+    player.y = GROUND_Y; player.vy = 0; player.onGround = true; player.ducking = false;
+    gameOver = false;
+  }
+
+  function spawnObstacle(){
+    // type: 0 ground block (jump), 1 tall block, 2 high bar (duck under)
+    const r = Math.random();
+    let o;
+    if(r < 0.25){
+      // high bar to duck under
+      const h = 12;
+      o = {x: W+10, w: 30+Math.random()*18, h: h, y: GROUND_Y - 32, type:2, color:'#ff36d0'};
+    } else {
+      const h = 24 + Math.random()*36;
+      const w = 16 + Math.random()*22;
+      o = {x: W+10, w: w, h: h, y: GROUND_Y - h, type:0, color:'#25f4ee'};
+    }
+    obstacles.push(o);
+  }
+
+  function playerRect(){
+    if(player.ducking && player.onGround){
+      return {x: player.x, y: GROUND_Y - 18, w: player.w+8, h: 18};
+    }
+    return {x: player.x, y: player.y - player.h, w: player.w, h: player.h};
+  }
+
+  function hit(a,b){
+    return a.x < b.x+b.w && a.x+a.w > b.x && a.y < b.y+b.h && a.y+a.h > b.y;
+  }
+
+  function jump(){
+    if(player.onGround && !gameOver){
+      SFX.jump();
+      player.vy = JUMP_V;
+      player.onGround = false;
+      player.ducking = false;
+    }
+  }
+  function setDuck(d){
+    player.ducking = d;
+  }
+
+  function update(){
+    score += speed * 0.12;
+    speed += 0.0016;                 // gradual speedup
+    gridOffset = (gridOffset + speed*0.5) % 40;
+    groundOffset = (groundOffset + speed) % 24;
+
+    // physics
+    player.vy += GRAV;
+    player.y += player.vy;
+    if(player.y >= GROUND_Y){
+      player.y = GROUND_Y; player.vy = 0; player.onGround = true;
+    }
+    // duck makes you fall faster
+    if(player.ducking && !player.onGround && player.vy < 0){
+      player.vy += 0.5;
+    }
+
+    // spawn
+    spawnTimer -= 1;
+    if(spawnTimer <= 0){
+      spawnObstacle();
+      const base = 75 - Math.min(35, speed*3);
+      spawnTimer = base + Math.random()*55;
+    }
+
+    // move obstacles
+    const pr = playerRect();
+    for(let i=obstacles.length-1;i>=0;i--){
+      const o = obstacles[i];
+      o.x -= speed;
+      if(hit(pr, o)){ endGame(); return; }
+      if(o.x + o.w < -20) obstacles.splice(i,1);
+    }
+    scoreEl.textContent = Math.floor(score);
+  }
+
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+    // bg
+    ctx.fillStyle = '#050109';
+    ctx.fillRect(0,0,W,H);
+
+    // parallax grid (perspective-ish vertical lines below horizon)
+    ctx.save();
+    ctx.strokeStyle = 'rgba(177,75,255,0.25)';
+    ctx.lineWidth = 1;
+    for(let x = -gridOffset; x < W; x += 40){
+      ctx.beginPath(); ctx.moveTo(x, GROUND_Y); ctx.lineTo(x, H); ctx.stroke();
+    }
+    for(let y = GROUND_Y+6; y < H; y += 12){
+      ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke();
+    }
+    ctx.restore();
+
+    // ground line (neon, scrolling dashes)
+    ctx.save();
+    ctx.strokeStyle = ACCENT;
+    ctx.shadowColor = ACCENT; ctx.shadowBlur = 12;
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(0,GROUND_Y); ctx.lineTo(W,GROUND_Y); ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = 'rgba(255,211,25,0.5)';
+    for(let x=-groundOffset;x<W;x+=24){
+      ctx.beginPath(); ctx.moveTo(x,GROUND_Y+4); ctx.lineTo(x+10,GROUND_Y+4); ctx.stroke();
+    }
+    ctx.restore();
+
+    // obstacles
+    for(const o of obstacles){
+      ctx.save();
+      ctx.fillStyle = o.color;
+      ctx.shadowColor = o.color; ctx.shadowBlur = 12;
+      ctx.fillRect(o.x, o.y, o.w, o.h);
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = 'rgba(0,0,0,0.35)';
+      ctx.fillRect(o.x+3, o.y+3, Math.max(2,o.w-6), Math.max(2,o.h-6));
+      ctx.restore();
+    }
+
+    // player
+    const pr = playerRect();
+    ctx.save();
+    ctx.fillStyle = ACCENT;
+    ctx.shadowColor = ACCENT; ctx.shadowBlur = 14;
+    ctx.fillRect(pr.x, pr.y, pr.w, pr.h);
+    ctx.shadowBlur = 0;
+    // simple face/eye
+    ctx.fillStyle = '#050109';
+    ctx.fillRect(pr.x + pr.w - 9, pr.y + 5, 4, 4);
+    // legs animation
+    if(player.onGround && !gameOver){
+      const f = (Math.floor(score/4)%2===0);
+      ctx.fillStyle = ACCENT;
+      ctx.fillRect(pr.x+2, pr.y+pr.h, 6, f?6:2);
+      ctx.fillRect(pr.x+pr.w-8, pr.y+pr.h, 6, f?2:6);
+    }
+    ctx.restore();
+
+    if(gameOver) drawOverlay();
+  }
+
+  function drawOverlay(){
+    ctx.save();
+    ctx.fillStyle = 'rgba(5,1,9,0.78)';
+    ctx.fillRect(0,0,W,H);
+    ctx.textAlign='center';
+    ctx.fillStyle = '#ff2e97';
+    ctx.shadowColor = '#ff2e97'; ctx.shadowBlur = 14;
+    ctx.font = '20px "Press Start 2P", monospace';
+    ctx.fillText('GAME OVER', W/2, H/2 - 14);
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = ACCENT;
+    ctx.font = '12px "Press Start 2P", monospace';
+    ctx.fillText('SCORE ' + Math.floor(score), W/2, H/2 + 18);
+    ctx.restore();
+  }
+
+  function loop(){
+    if(!running) return;
+    update();
+    if(!running) return;     // endGame may stop it
+    draw();
+    rafId = requestAnimationFrame(loop);
+  }
+
+  function startGame(){
+    SFX.select();
+    if(rafId) cancelAnimationFrame(rafId);
+    reset();
+    running = true;
+    startBtn.textContent = 'PLAY AGAIN';
+    rafId = requestAnimationFrame(loop);
+  }
+
+  function endGame(){
+    running = false;
+    gameOver = true;
+    SFX.explode();
+    SFX.gameover();
+    if(rafId) cancelAnimationFrame(rafId);
+    const s = Math.floor(score);
+    if(s > best){ best = s; localStorage.setItem(BEST_KEY, best); bestEl.textContent = best; }
+    draw();
+  }
+
+  startBtn.addEventListener('click', startGame);
+
+  document.addEventListener('keydown', function(e){
+    if(e.code==='Space' || e.code==='ArrowUp'){
+      e.preventDefault();
+      if(!running){ startGame(); return; }
+      jump();
+    } else if(e.code==='ArrowDown'){
+      e.preventDefault();
+      setDuck(true);
+    }
+  });
+  document.addEventListener('keyup', function(e){
+    if(e.code==='ArrowDown'){ e.preventDefault(); setDuck(false); }
+  });
+
+  // touch: tap upper area jump, hold lower area duck
+  cv.addEventListener('touchstart', function(e){
+    e.preventDefault();
+    if(!running){ startGame(); return; }
+    const t = e.touches[0];
+    const rect = cv.getBoundingClientRect();
+    const ry = (t.clientY - rect.top) / rect.height;
+    if(ry > 0.6){ setDuck(true); } else { jump(); }
+  }, {passive:false});
+  cv.addEventListener('touchend', function(e){ e.preventDefault(); setDuck(false); }, {passive:false});
+
+  // initial frame
+  reset();
+  draw();
+})();
+</script>
+</body>
+</html>

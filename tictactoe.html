@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TRIGRID — Neon Arcade</title>
+<link rel="stylesheet" href="style.css">
+<script src="sfx.js"></script>
+<style>
+  :root{ --accent: var(--neon-violet); }
+  .ttt{ display:grid; grid-template-columns:repeat(3,1fr); gap:10px; width:100%; max-width:340px; }
+  .cell{
+    aspect-ratio:1; background:#0a0418; border:2px solid var(--neon-violet); border-radius:6px;
+    font-family:'Press Start 2P',monospace; font-size:clamp(34px,12vw,52px); cursor:pointer;
+    color:#fff; display:flex; align-items:center; justify-content:center;
+    box-shadow:inset 0 0 18px rgba(177,75,255,.25); transition:.12s;
+  }
+  .cell:hover:not(.taken){ background:#160a2c; box-shadow:inset 0 0 22px rgba(177,75,255,.5); }
+  .cell.x{ color:var(--neon-cyan); text-shadow:0 0 12px var(--neon-cyan); }
+  .cell.o{ color:var(--neon-pink); text-shadow:0 0 12px var(--neon-pink); }
+  .cell.win{ background:#1d0b3a; border-color:var(--neon-lime); box-shadow:0 0 16px var(--neon-lime); }
+  .status{ font-family:'Press Start 2P',monospace; font-size:14px; color:var(--neon-lime);
+    text-align:center; min-height:18px; margin-top:18px; text-shadow:0 0 8px var(--neon-lime); }
+</style>
+</head>
+<body>
+  <div class="crt-on" aria-hidden="true"></div>
+  <div class="crt-lines" aria-hidden="true"></div>
+  <div class="crt-glass" aria-hidden="true"></div>
+
+  <nav class="gamebar">
+    <a class="back" href="index.html">‹ ARCADE</a>
+    <h1 class="game-title">TRIGRID</h1>
+    <span style="width:84px"></span>
+  </nav>
+
+  <div class="stage">
+    <div class="hud">
+      <span>WINS <b id="w">0</b></span>
+      <span>DRAW <b id="d">0</b></span>
+      <span>LOSS <b id="l">0</b></span>
+    </div>
+    <div class="ttt" id="board"></div>
+    <p class="status" id="status">YOU ARE X · YOUR MOVE</p>
+    <button class="btn" id="reset">NEW ROUND</button>
+    <p class="hint">Beat the CPU — it plays to win. <span class="key">click</span> a square</p>
+  </div>
+
+<script>
+const HUMAN='X', CPU='O';
+const LINES=[[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
+const boardEl=document.getElementById('board'), statusEl=document.getElementById('status');
+const wEl=document.getElementById('w'), dEl=document.getElementById('d'), lEl=document.getElementById('l');
+let cells, board, locked, score={w:0,d:0,l:0};
+
+function init(){
+  board=Array(9).fill('');
+  boardEl.innerHTML=''; cells=[];
+  for(let i=0;i<9;i++){
+    const c=document.createElement('button'); c.className='cell'; c.dataset.i=i;
+    c.onclick=()=>play(i); boardEl.appendChild(c); cells.push(c);
+  }
+  locked=false; statusEl.textContent='YOUR MOVE'; statusEl.style.color='var(--neon-lime)';
+}
+function winner(b){
+  for(const [a,c,d] of LINES) if(b[a]&&b[a]===b[c]&&b[a]===b[d]) return {p:b[a],line:[a,c,d]};
+  return b.every(Boolean) ? {p:'draw'} : null;
+}
+function play(i){
+  if(locked||board[i]) return;
+  mark(i,HUMAN); SFX.place();
+  let r=winner(board); if(r) return finish(r);
+  locked=true; statusEl.textContent='CPU THINKING...';
+  setTimeout(()=>{ const m=best(board); mark(m,CPU); SFX.move();
+    let r2=winner(board); if(r2) return finish(r2);
+    locked=false; statusEl.textContent='YOUR MOVE';
+  },360);
+}
+function mark(i,p){ board[i]=p; cells[i].textContent=p; cells[i].classList.add('taken', p.toLowerCase()); }
+function finish(r){
+  locked=true;
+  if(r.p==='draw'){ score.d++; dEl.textContent=score.d; statusEl.textContent='DRAW GAME'; statusEl.style.color='var(--neon-amber)'; SFX.select(); }
+  else {
+    r.line.forEach(i=>cells[i].classList.add('win'));
+    if(r.p===HUMAN){ score.w++; wEl.textContent=score.w; statusEl.textContent='★ YOU WIN ★'; statusEl.style.color='var(--neon-lime)'; SFX.win(); }
+    else { score.l++; lEl.textContent=score.l; statusEl.textContent='CPU WINS'; statusEl.style.color='var(--neon-pink)'; SFX.gameover(); }
+  }
+}
+// minimax
+function best(b){
+  let bestScore=-Infinity, move=-1;
+  for(let i=0;i<9;i++) if(!b[i]){
+    b[i]=CPU; const s=minimax(b,0,false); b[i]='';
+    if(s>bestScore){ bestScore=s; move=i; }
+  }
+  return move;
+}
+function minimax(b,depth,isMax){
+  const r=winner(b);
+  if(r){ if(r.p===CPU) return 10-depth; if(r.p===HUMAN) return depth-10; return 0; }
+  if(isMax){
+    let best=-Infinity;
+    for(let i=0;i<9;i++) if(!b[i]){ b[i]=CPU; best=Math.max(best,minimax(b,depth+1,false)); b[i]=''; }
+    return best;
+  } else {
+    let best=Infinity;
+    for(let i=0;i<9;i++) if(!b[i]){ b[i]=HUMAN; best=Math.min(best,minimax(b,depth+1,true)); b[i]=''; }
+    return best;
+  }
+}
+document.getElementById('reset').onclick=()=>{ SFX.select(); init(); };
+init();
+</script>
+</body>
+</html>

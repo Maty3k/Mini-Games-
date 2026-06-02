@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TILESHIFT — Neon Arcade</title>
+<link rel="stylesheet" href="style.css">
+<script src="sfx.js"></script>
+<style>:root{ --accent: var(--neon-violet); }
+  .status{
+    font-family:'Press Start 2P',monospace; font-size:13px; text-align:center;
+    min-height:20px; margin-top:16px; letter-spacing:1px; color:var(--accent);
+    text-shadow:0 0 8px var(--accent);
+  }
+  .board{
+    display:grid; grid-template-columns:repeat(4,1fr); gap:8px;
+    width:100%; max-width:400px; padding:12px; margin-top:4px;
+    background:#0a0418; border:3px solid var(--accent); border-radius:8px;
+    box-shadow:0 0 16px var(--accent), inset 0 0 40px rgba(0,0,0,.85);
+    touch-action:manipulation; user-select:none; aspect-ratio:1/1;
+  }
+  .tile{
+    display:flex; align-items:center; justify-content:center;
+    font-family:'Press Start 2P',monospace; font-size:clamp(14px,5vw,24px);
+    color:var(--ink); background:#2a1252; border:2px solid var(--accent);
+    border-radius:6px; cursor:pointer; padding:0;
+    box-shadow:0 0 10px rgba(177,75,255,.45), inset 0 0 12px rgba(177,75,255,.25);
+    text-shadow:0 0 8px var(--accent); transition:background .08s ease;
+  }
+  .tile:hover{ background:#3a1a6e; }
+  .tile.blank{
+    background:transparent; border:2px dashed #2a1252; cursor:default;
+    box-shadow:none; text-shadow:none;
+  }
+</style>
+</head>
+<body>
+  <div class="crt-on" aria-hidden="true"></div>
+  <div class="crt-lines" aria-hidden="true"></div>
+  <div class="crt-glass" aria-hidden="true"></div>
+
+  <nav class="gamebar">
+    <a class="back" href="index.html">‹ ARCADE</a>
+    <h1 class="game-title">TILESHIFT</h1>
+    <span style="width:84px"></span>
+  </nav>
+
+  <div class="stage">
+    <div class="hud">
+      <span>MOVES <b id="moves">0</b></span>
+      <span>TIME <b id="time">0</b></span>
+      <span>BEST <b id="best">--</b></span>
+    </div>
+    <div class="board" id="board"></div>
+    <p class="status" id="status">SLIDE TILES INTO ORDER</p>
+    <button class="btn" id="reset">NEW GAME</button>
+    <p class="hint">
+      Click a tile by the gap, or use
+      <span class="key">↑</span><span class="key">↓</span><span class="key">←</span><span class="key">→</span>
+      to slide. Order 1–15 with the gap last.
+    </p>
+  </div>
+
+<script>
+(function(){
+  const N=4;
+  const boardEl=document.getElementById('board');
+  const movesEl=document.getElementById('moves');
+  const timeEl=document.getElementById('time');
+  const bestEl=document.getElementById('best');
+  const statusEl=document.getElementById('status');
+  const resetBtn=document.getElementById('reset');
+  const KEY='neon_slidepuzzle_best';
+
+  // board: array of 16, value 0 = blank. Solved = [1..15,0]
+  let board=[];
+  let blank=15;
+  let moves=0;
+  let won=false;
+  let started=false;
+  let timer=null, seconds=0;
+
+  function loadBest(){
+    const v=localStorage.getItem(KEY);
+    bestEl.textContent=v?v:'--';
+  }
+  function saveBest(m){
+    const v=localStorage.getItem(KEY);
+    if(v===null||m<parseInt(v,10)){
+      localStorage.setItem(KEY,String(m));
+      bestEl.textContent=m;
+    }
+  }
+
+  const tiles=[];
+  function build(){
+    boardEl.innerHTML=''; tiles.length=0;
+    for(let i=0;i<16;i++){
+      const el=document.createElement('button');
+      el.className='tile'; el.dataset.pos=i;
+      boardEl.appendChild(el); tiles.push(el);
+    }
+  }
+
+  function render(){
+    for(let i=0;i<16;i++){
+      const v=board[i];
+      const el=tiles[i];
+      if(v===0){ el.textContent=''; el.classList.add('blank'); }
+      else{ el.textContent=v; el.classList.remove('blank'); }
+    }
+  }
+
+  function rc(i){ return [Math.floor(i/N), i%N]; }
+
+  // adjacency between two positions
+  function adjacent(a,b){
+    const [ar,ac]=rc(a), [br,bc]=rc(b);
+    return (ar===br&&Math.abs(ac-bc)===1)||(ac===bc&&Math.abs(ar-br)===1);
+  }
+
+  function startTimer(){
+    seconds=0; timeEl.textContent=0;
+    timer=setInterval(()=>{ seconds++; timeEl.textContent=seconds; },1000);
+  }
+  function stopTimer(){ if(timer){clearInterval(timer);timer=null;} }
+
+  // slide the tile at position p into the blank (must be adjacent)
+  function slideTile(p){
+    if(won)return;
+    if(!adjacent(p,blank))return;
+    if(!started){ started=true; startTimer(); }
+    board[blank]=board[p];
+    board[p]=0;
+    blank=p;
+    moves++; movesEl.textContent=moves;
+    SFX.move();
+    render();
+    checkWin();
+  }
+
+  function checkWin(){
+    for(let i=0;i<15;i++) if(board[i]!==i+1) return;
+    if(board[15]!==0) return;
+    won=true; stopTimer();
+    statusEl.textContent='★ SOLVED ★';
+    SFX.win();
+    saveBest(moves);
+  }
+
+  // For arrow keys: arrow direction = which way a tile moves into the blank.
+  // Right arrow -> tile on the LEFT of blank slides right into blank.
+  function moveByDir(dir){
+    const [br,bc]=rc(blank);
+    let sr=br, sc=bc;
+    if(dir==='left')  sc=bc+1; // tile to the right slides left
+    if(dir==='right') sc=bc-1; // tile to the left slides right
+    if(dir==='up')    sr=br+1; // tile below slides up
+    if(dir==='down')  sr=br-1; // tile above slides down
+    if(sr<0||sr>=N||sc<0||sc>=N) return;
+    slideTile(sr*N+sc);
+  }
+
+  // valid solvable shuffle: random valid moves from solved state
+  function shuffle(){
+    board=[]; for(let i=1;i<=15;i++)board.push(i); board.push(0);
+    blank=15;
+    let prev=-1;
+    for(let k=0;k<120;k++){
+      const [br,bc]=rc(blank);
+      const cands=[];
+      if(br>0)cands.push(blank-N);
+      if(br<N-1)cands.push(blank+N);
+      if(bc>0)cands.push(blank-1);
+      if(bc<N-1)cands.push(blank+1);
+      // avoid immediately undoing the last move
+      const filtered=cands.filter(p=>p!==prev);
+      const pool=filtered.length?filtered:cands;
+      const pick=pool[Math.floor(Math.random()*pool.length)];
+      prev=blank;
+      board[blank]=board[pick]; board[pick]=0; blank=pick;
+    }
+    // ensure not already solved
+    let solved=true;
+    for(let i=0;i<15;i++) if(board[i]!==i+1){solved=false;break;}
+    if(solved&&board[15]===0){
+      // do one more legal swap
+      const swapWith=blank>0?blank-1:blank+1;
+      board[blank]=board[swapWith]; board[swapWith]=0; blank=swapWith;
+    }
+  }
+
+  boardEl.addEventListener('click',e=>{
+    const t=e.target.closest('.tile'); if(!t)return;
+    const p=+t.dataset.pos;
+    if(board[p]===0)return;
+    slideTile(p);
+  });
+
+  window.addEventListener('keydown',e=>{
+    const map={ArrowLeft:'left',ArrowRight:'right',ArrowUp:'up',ArrowDown:'down'};
+    if(map[e.key]){
+      e.preventDefault();
+      moveByDir(map[e.key]);
+    }
+  });
+
+  function newGame(){
+    stopTimer();
+    won=false; started=false; moves=0; seconds=0;
+    movesEl.textContent=0; timeEl.textContent=0;
+    statusEl.textContent='SLIDE TILES INTO ORDER';
+    shuffle(); render();
+  }
+
+  resetBtn.addEventListener('click',()=>{ SFX.select(); newGame(); });
+  loadBest();
+  build();
+  newGame();
+})();
+</script>
+</body>
+</html>

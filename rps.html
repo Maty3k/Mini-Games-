@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TRIAD — Neon Arcade</title>
+<link rel="stylesheet" href="style.css">
+<script src="sfx.js"></script>
+<style>:root{ --accent: var(--neon-pink); }
+  .panel{ width:100%; max-width:440px; display:flex; flex-direction:column; align-items:center; gap:20px; }
+  .arena{ display:flex; align-items:center; justify-content:space-around; width:100%; gap:10px; }
+  .side{ display:flex; flex-direction:column; align-items:center; gap:8px; flex:1; }
+  .label{ font-family:'Press Start 2P',monospace; font-size:9px; letter-spacing:1px; }
+  .label.you{ color:var(--cyan); } .label.cpu{ color:var(--pink); }
+  .reveal{ font-size:60px; line-height:1; filter:drop-shadow(0 0 12px var(--accent)); }
+  .reveal.shake{ animation:shake .12s ease-in-out 3; }
+  @keyframes shake{ 25%{transform:translateY(-10px)} 75%{transform:translateY(8px)} }
+  .vs{ font-family:'Press Start 2P',monospace; font-size:14px; color:var(--amber);
+       text-shadow:0 0 8px var(--amber); }
+  .choices{ display:flex; gap:14px; width:100%; justify-content:center; }
+  .choice{ font-size:44px; cursor:pointer; background:#120826; border:3px solid #5a4a7a;
+           border-radius:12px; padding:14px 18px; transition:all .12s ease; line-height:1; }
+  .choice:hover{ border-color:var(--accent); box-shadow:0 0 16px var(--accent); transform:translateY(-4px); }
+  .choice:active{ transform:translateY(0); }
+  .choice .num{ display:block; font-family:'Press Start 2P',monospace; font-size:9px;
+                color:#8a79b0; margin-top:6px; }
+  .status{ font-family:'Press Start 2P',monospace; font-size:14px; text-align:center;
+           min-height:22px; letter-spacing:1px; color:var(--amber); }
+  .status.win{ color:var(--lime); text-shadow:0 0 10px var(--lime); }
+  .status.lose{ color:var(--pink); text-shadow:0 0 10px var(--pink); }
+  .status.draw{ color:var(--amber); text-shadow:0 0 10px var(--amber); }
+</style>
+</head>
+<body>
+  <div class="crt-on" aria-hidden="true"></div>
+  <div class="crt-lines" aria-hidden="true"></div>
+  <div class="crt-glass" aria-hidden="true"></div>
+
+  <nav class="gamebar">
+    <a class="back" href="index.html">‹ ARCADE</a>
+    <h1 class="game-title">TRIAD</h1>
+    <span style="width:84px"></span>
+  </nav>
+
+  <div class="stage">
+    <div class="hud" style="max-width:440px">
+      <span>WINS <b id="wins">0</b></span>
+      <span>LOSS <b id="loss">0</b></span>
+      <span>DRAW <b id="draw">0</b></span>
+    </div>
+    <div class="hud" style="max-width:440px; margin-top:-4px">
+      <span>STREAK <b id="streak">0</b></span>
+      <span>BEST <b id="best">0</b></span>
+    </div>
+    <div class="panel">
+      <div class="arena">
+        <div class="side">
+          <span class="label you">YOU</span>
+          <span class="reveal" id="youHand">✊</span>
+        </div>
+        <span class="vs">VS</span>
+        <div class="side">
+          <span class="label cpu">CPU</span>
+          <span class="reveal" id="cpuHand">✊</span>
+        </div>
+      </div>
+      <p class="status" id="status">CHOOSE YOUR WEAPON</p>
+      <div class="choices">
+        <button class="choice" data-c="0">✊<span class="num">1</span></button>
+        <button class="choice" data-c="1">✋<span class="num">2</span></button>
+        <button class="choice" data-c="2">✌<span class="num">3</span></button>
+      </div>
+    </div>
+    <button class="btn" id="reset">RESET</button>
+    <p class="hint">Tap a weapon or press <span class="key">1</span> <span class="key">2</span> <span class="key">3</span>.</p>
+  </div>
+<script>
+(function(){
+  const HANDS=["✊","✋","✌"];          // rock, paper, scissors
+  const NAMES=["ROCK","PAPER","SCISSORS"];
+  const KEY="rps.bestStreak";
+
+  const youEl=document.getElementById('youHand');
+  const cpuEl=document.getElementById('cpuHand');
+  const statusEl=document.getElementById('status');
+  const winsEl=document.getElementById('wins');
+  const lossEl=document.getElementById('loss');
+  const drawEl=document.getElementById('draw');
+  const streakEl=document.getElementById('streak');
+  const bestEl=document.getElementById('best');
+
+  let wins=0,loss=0,draw=0,streak=0;
+  let best=parseInt(localStorage.getItem(KEY)||"0",10)||0;
+  let busy=false;
+  bestEl.textContent=best;
+
+  function play(you){
+    if(busy) return;
+    busy=true;
+    SFX.select();
+    const cpu=Math.floor(Math.random()*3);
+    // shake animation while "deciding"
+    youEl.textContent="✊"; cpuEl.textContent="✊";
+    youEl.classList.add('shake'); cpuEl.classList.add('shake');
+    statusEl.textContent="..."; statusEl.className="status";
+    setTimeout(()=>{
+      youEl.classList.remove('shake'); cpuEl.classList.remove('shake');
+      youEl.textContent=HANDS[you];
+      cpuEl.textContent=HANDS[cpu];
+      // result: you beats (you+1)%3
+      let res;
+      if(you===cpu) res="draw";
+      else if((you+2)%3===cpu) res="win"; // you beats cpu (rock>scissors, paper>rock, scissors>paper)
+      else res="lose";
+
+      if(res==="win"){
+        wins++; streak++;
+        if(streak>best){ best=streak; localStorage.setItem(KEY,best); bestEl.textContent=best; SFX.powerup(); }
+        else { SFX.coin(); }
+        statusEl.textContent=NAMES[you]+" BEATS "+NAMES[cpu]+" — WIN!";
+        statusEl.className="status win";
+      } else if(res==="lose"){
+        loss++; streak=0;
+        SFX.hit();
+        statusEl.textContent=NAMES[cpu]+" BEATS "+NAMES[you]+" — LOSE";
+        statusEl.className="status lose";
+      } else {
+        draw++;
+        SFX.tick();
+        statusEl.textContent="BOTH "+NAMES[you]+" — DRAW";
+        statusEl.className="status draw";
+      }
+      winsEl.textContent=wins; lossEl.textContent=loss; drawEl.textContent=draw;
+      streakEl.textContent=streak;
+      busy=false;
+    },450);
+  }
+
+  document.querySelectorAll('.choice').forEach(b=>{
+    b.addEventListener('click',()=>play(parseInt(b.dataset.c,10)));
+  });
+  document.addEventListener('keydown',e=>{
+    if(e.key==="1") play(0);
+    else if(e.key==="2") play(1);
+    else if(e.key==="3") play(2);
+  });
+  document.getElementById('reset').addEventListener('click',()=>{
+    SFX.select();
+    wins=loss=draw=streak=0;
+    winsEl.textContent=0; lossEl.textContent=0; drawEl.textContent=0; streakEl.textContent=0;
+    youEl.textContent="✊"; cpuEl.textContent="✊";
+    statusEl.textContent="CHOOSE YOUR WEAPON"; statusEl.className="status";
+  });
+})();
+</script>
+</body>
+</html>

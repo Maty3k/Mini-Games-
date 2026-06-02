@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GRIDRUN — Neon Arcade</title>
+<link rel="stylesheet" href="style.css">
+<script src="sfx.js"></script>
+<script src="three.min.js"></script>
+<style>:root{ --accent: var(--neon-violet); }
+  .status{ font-family:'Press Start 2P',monospace; font-size:13px; color:var(--neon-pink);
+    text-align:center; min-height:16px; margin-top:14px; }
+  .d3-badge{ font-family:'Press Start 2P',monospace; font-size:9px; color:var(--neon-violet);
+    border:1px solid var(--neon-violet); border-radius:3px; padding:3px 6px; letter-spacing:1px; }
+</style>
+</head>
+<body>
+  <div class="crt-on" aria-hidden="true"></div>
+  <div class="crt-lines" aria-hidden="true"></div>
+  <div class="crt-glass" aria-hidden="true"></div>
+
+  <nav class="gamebar">
+    <a class="back" href="index.html">‹ ARCADE</a>
+    <h1 class="game-title">GRIDRUN</h1>
+    <span class="d3-badge">▣ 3D</span>
+  </nav>
+
+  <div class="stage">
+    <div class="hud">
+      <span>SCORE <b id="score">0</b></span>
+      <span>LIVES <b id="lives">♥♥♥</b></span>
+      <span>SPEED <b id="spd">1.0</b></span>
+      <span>BEST <b id="best">0</b></span>
+    </div>
+    <canvas id="c" width="480" height="480"></canvas>
+    <p class="status" id="status">Run the neon grid. Dodge & jump the blocks.</p>
+    <button class="btn" id="start">PRESS START</button>
+    <p class="hint"><span class="key">← →</span> strafe · <span class="key">SPACE</span>/<span class="key">↑</span> jump · tap sides / swipe up on mobile</p>
+  </div>
+
+<script>
+const cv=document.getElementById('c');
+const scoreEl=document.getElementById('score'), spdEl=document.getElementById('spd'),
+      bestEl=document.getElementById('best'), livesEl=document.getElementById('lives'),
+      statusEl=document.getElementById('status'), startBtn=document.getElementById('start');
+let best=+(localStorage.gridrunBest||0); bestEl.textContent=best;
+
+const LANE=6.5;     // half-width of the run
+const renderer=new THREE.WebGLRenderer({canvas:cv, antialias:true});
+renderer.setSize(480,480,false);
+const scene=new THREE.Scene();
+scene.fog=new THREE.FogExp2(0x07020f, 0.012);
+const camera=new THREE.PerspectiveCamera(74,1,0.1,400);
+const camBase=new THREE.Vector3(0,4.2,10);
+camera.position.copy(camBase); camera.lookAt(0,1.2,-14);
+
+// synthwave sun backdrop (with shimmering scanline overlay rings)
+const sun=new THREE.Mesh(new THREE.CircleGeometry(18,40),
+  new THREE.MeshBasicMaterial({color:0xff2975}));
+sun.position.set(0,6,-150); scene.add(sun);
+const sunBands=[];
+for(let i=0;i<5;i++){
+  const w=30-i*2;
+  const b=new THREE.Mesh(new THREE.PlaneGeometry(w,0.9),
+    new THREE.MeshBasicMaterial({color:0x07020f,transparent:true,opacity:0.9}));
+  b.position.set(0,2.2+i*1.7,-149.5); scene.add(b); sunBands.push(b);
+}
+
+// scrolling neon grid floor (two grids leap-frogging for seamless scroll)
+const CELL=4, GRIDSPAN=240;
+function makeGrid(){
+  const g=new THREE.GridHelper(GRIDSPAN, GRIDSPAN/CELL, 0x25f4ee, 0xb14bff);
+  g.material.transparent=true; g.material.opacity=0.55; return g;
+}
+const grids=[makeGrid(),makeGrid()];
+grids[0].position.z=0; grids[1].position.z=-GRIDSPAN; grids.forEach(g=>scene.add(g));
+// bright near-player floor accent that fades with distance
+const nearGrid=new THREE.GridHelper(40, 10, 0x9bffff, 0x6cf);
+nearGrid.material.transparent=true; nearGrid.material.opacity=0.5; nearGrid.position.set(0,0.01,2); scene.add(nearGrid);
+
+// side walls (rails) for depth
+[-1,1].forEach(s=>{
+  const pts=[new THREE.Vector3(s*LANE,0,30),new THREE.Vector3(s*LANE,0,-GRIDSPAN)];
+  const l=new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),
+    new THREE.LineBasicMaterial({color:0x25f4ee})); scene.add(l);
+  const pts2=[new THREE.Vector3(s*LANE,3,30),new THREE.Vector3(s*LANE,3,-GRIDSPAN)];
+  scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts2),
+    new THREE.LineBasicMaterial({color:0xff36d0})));
+});
+
+// passing pylons / buildings for SPEED FEEL (scroll & recycle alongside the rails)
+const PYN=20, pylons=[], pyColors=[0xb14bff,0x25f4ee,0xff36d0];
+for(let i=0;i<PYN;i++){
+  const side=i%2?1:-1, h=4+Math.random()*10;
+  const m=new THREE.Mesh(new THREE.BoxGeometry(1.1,h,1.1),
+    new THREE.MeshBasicMaterial({color:pyColors[i%3],wireframe:true}));
+  m.position.set(side*(LANE+1.8+Math.random()*2.5), h/2, -i*12-10);
+  m.userData={h}; scene.add(m); pylons.push(m);
+}
+
+// player
+const player=new THREE.Mesh(new THREE.BoxGeometry(1,1,1),
+  new THREE.MeshBasicMaterial({color:0xacff3d,wireframe:true}));
+scene.add(player);
+const pglow=new THREE.Mesh(new THREE.BoxGeometry(1.25,1.25,1.25),
+  new THREE.MeshBasicMaterial({color:0xacff3d,transparent:true,opacity:0.22}));
+scene.add(pglow);
+// player trail (fading ghost cubes left behind)
+const TRN=10, trail=[];
+for(let i=0;i<TRN;i++){
+  const t=new THREE.Mesh(new THREE.BoxGeometry(0.9,0.9,0.9),
+    new THREE.MeshBasicMaterial({color:0xacff3d,transparent:true,opacity:0}));
+  scene.add(t); trail.push(t);
+}
+let trailIdx=0, trailT=0;
+
+// red damage flash overlay (big plane locked in front of camera)
+const flash=new THREE.Mesh(new THREE.PlaneGeometry(2,2),
+  new THREE.MeshBasicMaterial({color:0xff1133,transparent:true,opacity:0,depthTest:false}));
+flash.renderOrder=999; camera.add(flash); flash.position.set(0,0,-0.3); scene.add(camera);
+let flashT=0;
+
+// particle pool (shared for dust / debris / coin bursts)
+const PN=90, parts=[];
+for(let i=0;i<PN;i++){
+  const p=new THREE.Mesh(new THREE.BoxGeometry(0.22,0.22,0.22),
+    new THREE.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:0}));
+  p.visible=false; scene.add(p);
+  p.userData={vx:0,vy:0,vz:0,life:0}; parts.push(p);
+}
+let partIdx=0;
+function burst(x,y,z,color,n,spread,up){
+  for(let i=0;i<n;i++){
+    const p=parts[partIdx]; partIdx=(partIdx+1)%PN;
+    p.position.set(x,y,z); p.material.color.set(color); p.material.opacity=1;
+    p.visible=true; p.scale.setScalar(0.6+Math.random());
+    p.userData.vx=(Math.random()-0.5)*spread;
+    p.userData.vy=up+(Math.random()-0.5)*spread*0.6;
+    p.userData.vz=(Math.random()-0.5)*spread;
+    p.userData.life=0.5+Math.random()*0.4;
+  }
+}
+
+// obstacles — variety: single / wall-with-gap / tall
+const OBN=14, obstacles=[];
+const obColors=[0xff2e97,0xffd319,0x25f4ee,0xb14bff,0xff36d0];
+for(let i=0;i<OBN;i++){
+  const o=new THREE.Mesh(new THREE.BoxGeometry(1,1,1),
+    new THREE.MeshBasicMaterial({color:obColors[i%5],wireframe:true}));
+  // telegraph marker — a thin bright pad on the floor at the same lane
+  const tel=new THREE.Mesh(new THREE.PlaneGeometry(1.8,1.8),
+    new THREE.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:0.0,side:THREE.DoubleSide}));
+  tel.rotation.x=-Math.PI/2; tel.position.y=0.02; scene.add(tel);
+  o.userData={kind:'single',h:1,active:false,scored:false,tel}; scene.add(o); obstacles.push(o);
+}
+
+// collectible orbs
+const ORN=8, orbs=[];
+for(let i=0;i<ORN;i++){
+  const o=new THREE.Mesh(new THREE.OctahedronGeometry(0.55,0),
+    new THREE.MeshBasicMaterial({color:0xffe75e,wireframe:true}));
+  const halo=new THREE.Mesh(new THREE.OctahedronGeometry(0.85,0),
+    new THREE.MeshBasicMaterial({color:0xffe75e,transparent:true,opacity:0.2}));
+  o.add(halo);
+  o.userData={active:false,taken:false}; scene.add(o); orbs.push(o);
+}
+
+let px,vx,py,vyy,onGround, dist,speed,alive,raf,lastT;
+let lives,inv,squash,shake,slow,score;
+
+function setLives(n){ lives=n; livesEl.textContent='♥'.repeat(Math.max(0,n))||'—'; }
+
+function placeOb(o,z){
+  const r=Math.random();
+  const lane=(Math.floor(Math.random()*5)-2); // -2..2
+  o.userData.scored=false;
+  if(r<0.55){                      // single block
+    o.userData.kind='single'; o.userData.h=1;
+    o.scale.set(1.6,1,1.6); o.position.set(lane*2.4,0.5,z);
+  } else if(r<0.8){                 // tall block — must jump
+    o.userData.kind='tall'; o.userData.h=2.2;
+    o.scale.set(1.6,2.2,1.6); o.position.set(lane*2.4,1.1,z);
+  } else {                          // 2-wide wall with a strafe gap
+    o.userData.kind='wall'; o.userData.h=1.4;
+    const gap=Math.floor(Math.random()*5)-2; o.userData.gap=gap;
+    o.scale.set(LANE*2,1.4,1.2); o.position.set(0,0.7,z);
+  }
+  o.userData.active=true;
+  const t=o.userData.tel; t.position.set(o.position.x,0.02,z); t.scale.set(o.scale.x,o.scale.z,1);
+  t.material.color.set(o.userData.kind==='tall'?0xffd319:0xff2e97);
+}
+function placeOrb(o,z){
+  const lane=(Math.floor(Math.random()*5)-2);
+  o.position.set(lane*2.4, 1.0+Math.random()*1.4, z);
+  o.userData.active=true; o.userData.taken=false;
+  o.visible=true; o.material.opacity=1; o.children[0].material.opacity=0.2;
+}
+
+function reset(){
+  px=0;vx=0;py=0;vyy=0;onGround=true; dist=0; speed=26; alive=true;
+  score=0; inv=0; squash=0; shake=0; slow=0; setLives(3);
+  scoreEl.textContent=0; spdEl.textContent='1.0';
+  obstacles.forEach((o,i)=>placeOb(o,-50-i*18));
+  orbs.forEach((o,i)=>placeOrb(o,-90-i*30));
+  parts.forEach(p=>{p.visible=false;p.material.opacity=0;p.userData.life=0;});
+  trail.forEach(t=>t.material.opacity=0);
+  grids[0].position.z=0; grids[1].position.z=-GRIDSPAN;
+  player.material.color.set(0xacff3d); player.visible=true;
+  flash.material.opacity=0;
+}
+
+function hit(){
+  inv=1.2; slow=0.6; shake=0.7; flashT=0.35;
+  SFX.explode();
+  burst(player.position.x,player.position.y,2,0xff2e97,16,9,5);
+  setLives(lives-1);
+  if(lives<=0){ return die(); }
+  statusEl.textContent='HIT! '+lives+' LEFT'; statusEl.style.color='var(--neon-pink)';
+}
+
+function frame(now){
+  if(!alive) return;
+  let dt=Math.min(0.05,(now-lastT)/1000||0.016); lastT=now;
+  const tsec=now/1000;
+
+  // strafe
+  const acc=60;
+  vx += (keyL?-acc:0)+(keyR?acc:0); vx*=0.82; px+=vx*dt;
+  px=Math.max(-LANE+0.6,Math.min(LANE-0.6,px));
+  // jump
+  if((keyJ)&&onGround){ vyy=11; onGround=false; SFX.jump(); }
+  const wasAir=!onGround;
+  vyy-=34*dt; py+=vyy*dt;
+  if(py<=0){
+    if(wasAir){ // landed
+      squash=0.25; SFX.tick&&SFX.tick();
+      burst(px,0.1,2,0x9bffff,8,5,2.5);
+    }
+    py=0;vyy=0;onGround=true;
+  }
+
+  // squash & stretch + invuln blink
+  squash=Math.max(0,squash-dt*1.6);
+  const sq=1-squash, st=1+squash*0.7;
+  if(inv>0){ inv-=dt; player.visible=(Math.floor(now/70)%2)===0; }
+  else player.visible=true;
+  player.position.set(px,py+0.5,2);
+  player.scale.set(st,sq,st);
+  pglow.position.copy(player.position); pglow.scale.copy(player.scale);
+  player.rotation.x+=dt*4; player.rotation.z=-vx*0.03;
+  pglow.rotation.copy(player.rotation);
+
+  // trail
+  trailT+=dt;
+  if(trailT>0.05){ trailT=0;
+    const t=trail[trailIdx]; trailIdx=(trailIdx+1)%TRN;
+    t.position.copy(player.position); t.material.opacity=0.4;
+  }
+  trail.forEach(t=>{ if(t.material.opacity>0){ t.material.opacity-=dt*1.4; t.position.z+=0; } });
+
+  // smoothed camera follow + shake
+  shake=Math.max(0,shake-dt*2.4);
+  const targetX=px*0.35;
+  camera.position.x+=(targetX-camera.position.x)*Math.min(1,dt*7);
+  camera.position.x+=(Math.random()-0.5)*shake*0.9;
+  camera.position.y=camBase.y+(Math.random()-0.5)*shake*0.7;
+
+  // flash decay
+  if(flashT>0){ flashT-=dt; flash.material.opacity=Math.max(0,flashT*1.2); }
+
+  // sun shimmer
+  sun.material.color.setHSL(0.92+Math.sin(tsec*0.5)*0.02,1,0.5+Math.sin(tsec*2)*0.04);
+  sunBands.forEach((b,i)=>{ b.position.y=2.2+i*1.7+Math.sin(tsec*1.5+i)*0.12; });
+
+  // speed (eased ramp; gentle start) and optional slowdown after a hit
+  speed+=dt*0.9; slow=Math.max(0,slow-dt);
+  const eff=speed*(slow>0?0.55:1); const sp=eff*dt;
+  dist+=sp; spdEl.textContent=(speed/26).toFixed(1);
+  grids.forEach(g=>{ g.position.z+=sp; if(g.position.z>GRIDSPAN/2) g.position.z-=GRIDSPAN; });
+
+  // pylons scroll
+  for(const m of pylons){
+    m.position.z+=sp;
+    if(m.position.z>16){ m.position.z-=PYN/2*12; }
+  }
+
+  // obstacles
+  for(const o of obstacles){
+    if(!o.userData.active) continue;
+    const prev=o.position.z; o.position.z+=sp; o.rotation.y+=dt*0.8;
+    const t=o.userData.tel; t.position.z=o.position.z;
+    // telegraph: pulse pad when approaching
+    const near=Math.max(0,1-Math.abs(o.position.z+30)/40);
+    t.material.opacity=near*(0.25+0.15*Math.sin(tsec*9));
+    if(prev<2 && o.position.z>=2 && inv<=0){
+      let crash=false;
+      if(o.userData.kind==='wall'){
+        const gapX=o.userData.gap*2.4;
+        crash = Math.abs(px-gapX)>1.6 && py<o.userData.h-0.1;
+      } else {
+        const dx=Math.abs(o.position.x-px);
+        const clearedByJump = py > o.userData.h-0.15;
+        crash = dx<1.3 && !clearedByJump;
+      }
+      if(crash){ if(prev<2&&o.position.z>=2){o.userData.active=false; t.material.opacity=0;} hit(); }
+    }
+    if(o.position.z>12){ placeOb(o,-150-Math.random()*70); }
+  }
+
+  // collectible orbs
+  for(const o of orbs){
+    if(!o.userData.active) continue;
+    o.position.z+=sp; o.rotation.y+=dt*2.4; o.rotation.x+=dt*1.3;
+    o.position.y+= Math.sin(tsec*3+o.position.x)*dt*0.5;
+    if(!o.userData.taken){
+      const dx=o.position.x-px, dy=o.position.y-(py+0.5), dz=o.position.z-2;
+      if(dx*dx+dy*dy+dz*dz<1.6){
+        o.userData.taken=true; o.visible=false;
+        score+=10; SFX.coin&&SFX.coin();
+        burst(o.position.x,o.position.y,o.position.z,0xffe75e,12,7,3);
+      }
+    }
+    if(o.position.z>12){ placeOrb(o,-160-Math.random()*90); }
+  }
+
+  // particles update
+  for(const p of parts){
+    if(p.userData.life<=0) continue;
+    p.userData.life-=dt;
+    p.userData.vy-=18*dt;
+    p.position.x+=p.userData.vx*dt;
+    p.position.y+=p.userData.vy*dt;
+    p.position.z+=(p.userData.vz+eff)*dt;
+    p.rotation.x+=dt*6; p.rotation.y+=dt*5;
+    p.material.opacity=Math.max(0,p.userData.life*1.8);
+    if(p.userData.life<=0||p.position.y<0){ p.visible=false; p.material.opacity=0; p.position.y=Math.max(0,p.position.y); }
+  }
+
+  score+=sp*0.25; scoreEl.textContent=Math.floor(score);
+
+  renderer.render(scene,camera);
+  raf=requestAnimationFrame(frame);
+}
+function die(){
+  alive=false; cancelAnimationFrame(raf);
+  shake=1; flashT=0.5;
+  burst(player.position.x,player.position.y,2,0xff2e97,24,12,6);
+  setTimeout(()=>SFX.gameover(),140);
+  const sc=Math.floor(score);
+  if(sc>best){ best=sc; bestEl.textContent=best; localStorage.gridrunBest=best; statusEl.textContent='★ NEW BEST '+sc+' ★'; }
+  else statusEl.textContent='WIPEOUT · SCORE '+sc;
+  statusEl.style.color='var(--neon-pink)';
+  player.material.color.set(0xff2e97); player.visible=true; renderer.render(scene,camera);
+  startBtn.textContent='PLAY AGAIN'; startBtn.style.display='inline-block';
+}
+function begin(){
+  SFX.select(); reset(); startBtn.style.display='none';
+  statusEl.textContent='GO!'; statusEl.style.color='var(--neon-lime)';
+  cancelAnimationFrame(raf); lastT=performance.now(); raf=requestAnimationFrame(frame);
+}
+startBtn.onclick=begin;
+
+let keyL,keyR,keyJ;
+function setk(e,v){ const k=e.key.toLowerCase();
+  if(k==='arrowleft'||k==='a'){keyL=v;e.preventDefault();}
+  else if(k==='arrowright'||k==='d'){keyR=v;e.preventDefault();}
+  else if(k===' '||k==='arrowup'||k==='w'){keyJ=v;e.preventDefault();}
+}
+addEventListener('keydown',e=>setk(e,true));
+addEventListener('keyup',e=>setk(e,false));
+// touch: tap upper area = jump; lower-left = strafe left; lower-right = strafe right
+let touchStrafe=0;
+cv.addEventListener('pointerdown',e=>{
+  const r=cv.getBoundingClientRect(); const x=(e.clientX-r.left)/r.width, y=(e.clientY-r.top)/r.height;
+  if(y<0.4){ if(alive&&onGround){vyy=11;onGround=false;SFX.jump();} }
+  else { touchStrafe = x<0.5?-1:1; keyL=touchStrafe<0; keyR=touchStrafe>0; }
+});
+addEventListener('pointerup',()=>{ keyL=keyR=false; touchStrafe=0; });
+
+// idle render
+reset(); alive=false; renderer.render(scene,camera);
+</script>
+</body>
+</html>

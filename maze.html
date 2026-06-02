@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GRIDLOCK — Neon Arcade</title>
+<link rel="stylesheet" href="style.css">
+<script src="sfx.js"></script>
+<style>:root{ --accent: var(--neon-violet); }</style>
+</head>
+<body>
+  <div class="crt-on" aria-hidden="true"></div>
+  <div class="crt-lines" aria-hidden="true"></div>
+  <div class="crt-glass" aria-hidden="true"></div>
+
+  <nav class="gamebar">
+    <a class="back" href="index.html">‹ ARCADE</a>
+    <h1 class="game-title">GRIDLOCK</h1>
+    <span style="width:84px"></span>
+  </nav>
+
+  <div class="stage">
+    <div class="hud">
+      <span>LEVEL <b id="level">1</b></span>
+      <span>TIME <b id="time">0</b></span>
+      <span>BEST <b id="best">0</b></span>
+    </div>
+    <canvas id="c" width="440" height="440"></canvas>
+    <button class="btn" id="start">PRESS START</button>
+    <p class="hint">
+      <span class="key">↑</span><span class="key">↓</span><span class="key">←</span><span class="key">→</span>
+      / <span class="key">WASD</span> &nbsp; or SWIPE. Reach the exit!
+    </p>
+  </div>
+
+<script>
+(function(){
+  const cv = document.getElementById('c');
+  const ctx = cv.getContext('2d');
+  const W = cv.width, H = cv.height;
+  const levelEl = document.getElementById('level');
+  const timeEl  = document.getElementById('time');
+  const bestEl  = document.getElementById('best');
+  const startBtn= document.getElementById('start');
+  const BEST_KEY= 'maze_best_level';
+
+  const ACCENT = '#b14bff';
+  let best = parseInt(localStorage.getItem(BEST_KEY)||'0',10);
+  bestEl.textContent = best;
+
+  let rafId = null, running = false, gameOver = false;
+  let level, cols, rows, cellSize, grid, player, startTime, elapsed, ox, oy;
+
+  // each cell: walls {N,E,S,W} true=wall present
+  function genMaze(c, r){
+    const cells = new Array(c*r);
+    for(let i=0;i<c*r;i++) cells[i] = {N:true,E:true,S:true,W:true,v:false};
+    const idx = (x,y)=> y*c + x;
+    const stack = [];
+    let cx=0, cy=0;
+    cells[idx(0,0)].v = true;
+    stack.push([0,0]);
+    while(stack.length){
+      [cx,cy] = stack[stack.length-1];
+      const nb = [];
+      if(cy>0   && !cells[idx(cx,cy-1)].v) nb.push([cx,cy-1,'N']);
+      if(cx<c-1 && !cells[idx(cx+1,cy)].v) nb.push([cx+1,cy,'E']);
+      if(cy<r-1 && !cells[idx(cx,cy+1)].v) nb.push([cx,cy+1,'S']);
+      if(cx>0   && !cells[idx(cx-1,cy)].v) nb.push([cx-1,cy,'W']);
+      if(nb.length===0){ stack.pop(); continue; }
+      const [nx,ny,dir] = nb[Math.floor(Math.random()*nb.length)];
+      // knock down walls between current and neighbor
+      if(dir==='N'){ cells[idx(cx,cy)].N=false; cells[idx(nx,ny)].S=false; }
+      if(dir==='E'){ cells[idx(cx,cy)].E=false; cells[idx(nx,ny)].W=false; }
+      if(dir==='S'){ cells[idx(cx,cy)].S=false; cells[idx(nx,ny)].N=false; }
+      if(dir==='W'){ cells[idx(cx,cy)].W=false; cells[idx(nx,ny)].E=false; }
+      cells[idx(nx,ny)].v = true;
+      stack.push([nx,ny]);
+    }
+    return cells;
+  }
+
+  function setupLevel(){
+    cols = 6 + level;            // level 1 -> 7x7
+    rows = cols;
+    grid = genMaze(cols, rows);
+    cellSize = Math.floor(Math.min(W, H) / (cols + 1));
+    const mazeW = cellSize*cols, mazeH = cellSize*rows;
+    ox = Math.floor((W - mazeW)/2);
+    oy = Math.floor((H - mazeH)/2);
+    player = {x:0, y:0};
+    startTime = performance.now();
+  }
+
+  function reset(){
+    level = 1;
+    gameOver = false;
+    setupLevel();
+    levelEl.textContent = level;
+    timeEl.textContent = '0';
+  }
+
+  function cellAt(x,y){ return grid[y*cols + x]; }
+
+  function move(dx,dy){
+    if(!running || gameOver) return;
+    const c = cellAt(player.x, player.y);
+    const px0 = player.x, py0 = player.y;
+    if(dx===1 && !c.E){ player.x++; }
+    else if(dx===-1 && !c.W){ player.x--; }
+    else if(dy===1 && !c.S){ player.y++; }
+    else if(dy===-1 && !c.N){ player.y--; }
+    if(player.x !== px0 || player.y !== py0) SFX.move();
+    // reached exit?
+    if(player.x === cols-1 && player.y === rows-1){
+      level++;
+      levelEl.textContent = level;
+      if(level-1 > best){ best = level-1; localStorage.setItem(BEST_KEY, best); bestEl.textContent = best; }
+      SFX.win();
+      setupLevel();
+    }
+  }
+
+  function update(){
+    elapsed = (performance.now() - startTime)/1000;
+    timeEl.textContent = elapsed.toFixed(1);
+  }
+
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+    ctx.fillStyle = '#050109';
+    ctx.fillRect(0,0,W,H);
+
+    const cs = cellSize;
+    // exit glow cell (bottom-right)
+    const ex = ox + (cols-1)*cs, ey = oy + (rows-1)*cs;
+    ctx.save();
+    const pulse = 0.4 + 0.3*Math.sin(performance.now()/250);
+    ctx.fillStyle = 'rgba(61,255,110,'+pulse.toFixed(3)+')';
+    ctx.shadowColor = '#3dff6e'; ctx.shadowBlur = 18;
+    ctx.fillRect(ex+2, ey+2, cs-4, cs-4);
+    ctx.restore();
+
+    // walls
+    ctx.save();
+    ctx.strokeStyle = ACCENT;
+    ctx.shadowColor = ACCENT; ctx.shadowBlur = 8;
+    ctx.lineWidth = 2;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    for(let y=0;y<rows;y++){
+      for(let x=0;x<cols;x++){
+        const c = grid[y*cols+x];
+        const px = ox + x*cs, py = oy + y*cs;
+        if(c.N){ ctx.moveTo(px,py); ctx.lineTo(px+cs,py); }
+        if(c.W){ ctx.moveTo(px,py); ctx.lineTo(px,py+cs); }
+        if(c.E){ ctx.moveTo(px+cs,py); ctx.lineTo(px+cs,py+cs); }
+        if(c.S){ ctx.moveTo(px,py+cs); ctx.lineTo(px+cs,py+cs); }
+      }
+    }
+    ctx.stroke();
+    ctx.restore();
+
+    // player dot
+    const cx = ox + player.x*cs + cs/2;
+    const cy = oy + player.y*cs + cs/2;
+    ctx.save();
+    ctx.fillStyle = '#25f4ee';
+    ctx.shadowColor = '#25f4ee'; ctx.shadowBlur = 16;
+    ctx.beginPath();
+    ctx.arc(cx, cy, Math.max(4, cs*0.28), 0, Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+
+    if(gameOver) drawOverlay();
+  }
+
+  function drawOverlay(){
+    ctx.save();
+    ctx.fillStyle = 'rgba(5,1,9,0.8)';
+    ctx.fillRect(0,0,W,H);
+    ctx.textAlign='center';
+    ctx.fillStyle = '#ff2e97';
+    ctx.shadowColor = '#ff2e97'; ctx.shadowBlur = 14;
+    ctx.font = '20px "Press Start 2P", monospace';
+    ctx.fillText('GAME OVER', W/2, H/2 - 14);
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = ACCENT;
+    ctx.font = '12px "Press Start 2P", monospace';
+    ctx.fillText('LEVEL ' + level, W/2, H/2 + 18);
+    ctx.restore();
+  }
+
+  function loop(){
+    if(!running) return;
+    update();
+    draw();
+    rafId = requestAnimationFrame(loop);
+  }
+
+  function startGame(){
+    SFX.select();
+    if(rafId) cancelAnimationFrame(rafId);
+    reset();
+    running = true;
+    gameOver = false;
+    startBtn.textContent = 'PLAY AGAIN';
+    rafId = requestAnimationFrame(loop);
+  }
+
+  startBtn.addEventListener('click', startGame);
+
+  document.addEventListener('keydown', function(e){
+    const k = e.code;
+    const map = {
+      'ArrowUp':[0,-1],'KeyW':[0,-1],
+      'ArrowDown':[0,1],'KeyS':[0,1],
+      'ArrowLeft':[-1,0],'KeyA':[-1,0],
+      'ArrowRight':[1,0],'KeyD':[1,0]
+    };
+    if(map[k]){
+      if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(k)) e.preventDefault();
+      if(!running){ startGame(); return; }
+      move(map[k][0], map[k][1]);
+    }
+  });
+
+  // touch swipe
+  let tsx=0, tsy=0, tracking=false;
+  cv.addEventListener('touchstart', function(e){
+    e.preventDefault();
+    if(!running){ startGame(); return; }
+    const t = e.touches[0];
+    tsx = t.clientX; tsy = t.clientY; tracking = true;
+  }, {passive:false});
+  cv.addEventListener('touchend', function(e){
+    e.preventDefault();
+    if(!tracking) return;
+    tracking = false;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - tsx, dy = t.clientY - tsy;
+    if(Math.abs(dx) < 16 && Math.abs(dy) < 16) return;
+    if(Math.abs(dx) > Math.abs(dy)) move(dx>0?1:-1, 0);
+    else move(0, dy>0?1:-1);
+  }, {passive:false});
+
+  reset();
+  draw();
+})();
+</script>
+</body>
+</html>
