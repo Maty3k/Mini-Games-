@@ -70,7 +70,7 @@ Tab **3D HOLODECK** — built on Three.js.
 
 | Game | What it is |
 |------|------------|
-| **MELBOURNE** | 3D racer on the real **Albert Park (Melbourne GP)** circuit — GLTF Ferrari, HDRI sky + reflections, soft shadows, bloom; **1–7 named AI rivals**, selectable **laps** and **difficulty**, a 3-2-1 start, live **standings with gap/interval timing**, floating colour-coded name tags, **DRS zones** (for you *and* the AI), and a finish screen. |
+| **GRAND PRIX** | 3D racer on **5 real circuits** — Melbourne, Monza, Silverstone, Suzuka, Spa (real survey data, accurate lengths). GLTF Ferrari, HDRI sky + reflections, soft shadows, bloom, continuous Armco barriers and crowd grandstands; **1–7 named AI rivals**, selectable **track / laps / difficulty**, a 3-2-1 start, live **standings with gap/interval timing**, floating colour-coded name tags, **DRS zones** (for you *and* the AI), and a finish screen. |
 | **NEONDRIFT** | First-person neon tunnel flyer — dodge blocks and fly through ring gates. |
 | **GRIDRUN** | Synthwave ground runner — strafe and jump over obstacles, grab orbs. |
 | **STARHAWK** | First-person space shooter — wave-based, multiple enemy types. |
@@ -88,8 +88,8 @@ index.html          hub (2D belt + 3D holodeck tabs)
 style.css           shared CRT/Outrun theme
 sfx.js              Web-Audio SFX library + mute toggle + ambient hum
 *.html              one file per 2D game
-neondrift / gridrun / starhawk / australia .html   3D games
-albertpark-track.js Albert Park centreline data
+neondrift / gridrun / starhawk / australia .html   3D games (australia = GRAND PRIX racer)
+tracks.js           5 real circuit centrelines (Melbourne, Monza, Silverstone, Suzuka, Spa)
 lib/                vendored Three.js r128 addons (loaders, post-processing, sky)
 assets/             ferrari.glb, venice_sunset_1k.hdr
 three.min.js        vendored Three.js r128
