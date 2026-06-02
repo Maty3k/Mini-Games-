@@ -214,7 +214,9 @@ function wall(offFn,h){ const pos=[],uv=[],idx=[],L=SAMP/6;
   const geo=new THREE.BufferGeometry(); geo.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));
   geo.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2)); geo.setIndex(idx); geo.computeVertexNormals();
   const m=new THREE.Mesh(geo,wallMat); m.castShadow=true; m.receiveShadow=true; return m; }
-function buildTrack(data){
+function buildTrack(tr){
+  const rev = (tr.rev!==false);   // TUMFTM order drives reversed in-game; reverse to the real racing direction (set a track's rev:false to keep original)
+  const data = rev ? tr.data.slice().reverse().map(p=>[p[0],p[1],p[3],p[2]]) : tr.data;
   disposeGroup(trackGroup);
   const curve=new THREE.CatmullRomCurve3(data.map(p=>new THREE.Vector3(p[0],0,p[1])),true,'centripetal');
   TLEN=curve.getLength(); SPM=SAMP/TLEN;
@@ -239,10 +241,10 @@ function buildTrack(data){
     [1,-1].forEach(s=>{ const post=new THREE.Mesh(new THREE.BoxGeometry(0.6,8,0.6),gantryMat); post.position.set(p.x+n.x*(wid/2+1)*s,4,p.z+n.z*(wid/2+1)*s); post.castShadow=true; trackGroup.add(post); });
     const beam=new THREE.Mesh(new THREE.BoxGeometry(wid+3,1.2,0.8),gantryMat); beam.position.set(p.x,8,p.z); beam.rotation.y=Math.atan2(n.x,n.z); beam.castShadow=true; trackGroup.add(beam); }
   // pit lane — from per-track pit data {from,to,side}
-  { const pit=TRACKS[cfg.track].pit;
-    if(pit){ const side=pit.side, w0=(i)=> side<0 ? WR[i] : WL[i];
+  { const pit=tr.pit;
+    if(pit){ const side=(rev?-pit.side:pit.side), pfrom=(rev?(1-pit.to+1)%1:pit.from), pto=(rev?(1-pit.from+1)%1:pit.to), w0=(i)=> side<0 ? WR[i] : WL[i];
       // build wrapping index list from `from`..`to` (fractions of a lap)
-      const i0=Math.floor(pit.from*SAMP)%SAMP, i1=Math.floor(pit.to*SAMP)%SAMP, idxs=[];
+      const i0=Math.floor(pfrom*SAMP)%SAMP, i1=Math.floor(pto*SAMP)%SAMP, idxs=[];
       { let i=i0, guard=0; while(guard++<SAMP){ idxs.push(i); if(i===i1) break; i=(i+1)%SAMP; } }
       const PW=9;                       // pit road width
       // pit road: flat asphalt strip; inner edge ~3m outside track edge, centre offset = side*(W+7.5)
@@ -270,10 +272,10 @@ function buildTrack(data){
         const p=P[i], n=Nn[i], W=w0(i), off=side*(W+3+PW+3.2), ang=Math.atan2(T[i].x,T[i].z);
         const box=new THREE.Mesh(new THREE.BoxGeometry(4,3,6),garageMat); box.position.set(p.x+n.x*off,1.5,p.z+n.z*off); box.rotation.y=ang; box.castShadow=true; box.receiveShadow=true; trackGroup.add(box); } } }
   // grandstands (crowd) + roofs — from per-track stands data
-  (TRACKS[cfg.track].stands||[]).forEach(s=>{ const i=Math.floor(s.at*SAMP)%SAMP, p=P[i], n=Nn[i], ang=Math.atan2(T[i].x,T[i].z);
-    const off = s.side<0 ? -(WR[i]+13) : (WL[i]+13);
-    const st=new THREE.Mesh(new THREE.BoxGeometry(s.len,11,8),standMat); st.position.set(p.x+n.x*off,5.5,p.z+n.z*off); st.rotation.y=ang; st.castShadow=true; st.receiveShadow=true; trackGroup.add(st);
-    const roof=new THREE.Mesh(new THREE.BoxGeometry(s.len+2,0.6,9),gantryMat); roof.position.set(p.x+n.x*off,11.3,p.z+n.z*off); roof.rotation.y=ang; trackGroup.add(roof); });
+  (tr.stands||[]).forEach(s=>{ const at=(rev?(1-s.at+1)%1:s.at), sside=(rev?-s.side:s.side); const i=Math.floor(at*SAMP)%SAMP, p=P[i], n=Nn[i], ang=Math.atan2(T[i].x,T[i].z);
+    const off = sside<0 ? -(WR[i]+14) : (WL[i]+14);                          // beside the track, not across it
+    const st=new THREE.Mesh(new THREE.BoxGeometry(8,11,s.len),standMat); st.position.set(p.x+n.x*off,5.5,p.z+n.z*off); st.rotation.y=ang; st.castShadow=true; st.receiveShadow=true; trackGroup.add(st);
+    const roof=new THREE.Mesh(new THREE.BoxGeometry(9,0.6,s.len+2),gantryMat); roof.position.set(p.x+n.x*off,11.6,p.z+n.z*off); roof.rotation.y=ang; trackGroup.add(roof); });
   // trees
   for(let i=0;i<SAMP;i+=9){ if(Math.random()<0.55) continue; const p=P[i],n=Nn[i],s=Math.random()<0.5?1:-1,off=(WL[i]+20+Math.random()*90)*s,h=6+Math.random()*8;
     const x=p.x+n.x*off,z=p.z+n.z*off; const tr=new THREE.Mesh(new THREE.CylinderGeometry(0.5,0.7,h,6),trunkM); tr.position.set(x,h/2,z); tr.castShadow=true; trackGroup.add(tr);
@@ -495,7 +497,7 @@ settingsEl.addEventListener('click',e=>{ const b=e.target.closest('button'); if(
   else if(a==='fov-1') cfg.fov=Math.max(50,cfg.fov-3); else if(a==='fov+1') cfg.fov=Math.min(95,cfg.fov+3);
   else if(a==='cam-1'||a==='cam+1'){ cfg.camPreset=Math.max(0,Math.min(2,cfg.camPreset+(a==='cam+1'?1:-1))); const cp=CAM_PRESETS[cfg.camPreset]; cfg.camDist=cp.dist; cfg.camHeight=cp.height; }
   else if(b.dataset.diff) cfg.diff=b.dataset.diff;
-  if(trkChanged){ buildTrack(TRACKS[cfg.track].data); loadBest(); gtitle.textContent=TRACKS[cfg.track].name; }
+  if(trkChanged){ buildTrack(TRACKS[cfg.track]); loadBest(); gtitle.textContent=TRACKS[cfg.track].name; }
   refreshSettings(); try{SFX.select();}catch(_){}
   if(hdrReady&&carReady) setupRace(); });
 function setk(e,v){ const k=e.key.toLowerCase();
@@ -509,7 +511,7 @@ function maybeReady(){
   if(hdrReady&&carReady){ setupRace(); refreshSettings(); settingsEl.style.display=''; startBtn.disabled=false; startBtn.textContent='PRESS START'; statusEl.textContent='Pick a circuit · set up your race'; statusEl.style.color='var(--neon-pink)'; }
   else { placeAtStart(); snapCam(); composer.render(); drawMap(); } }
 // ---- init ----
-buildTrack(TRACKS[cfg.track].data); loadBest(); gtitle.textContent=TRACKS[cfg.track].name;
+buildTrack(TRACKS[cfg.track]); loadBest(); gtitle.textContent=TRACKS[cfg.track].name;
 placeAtStart(); snapCam(); composer.render(); drawMap();
 </script>
 </body>
