@@ -70,7 +70,7 @@ Tab **3D HOLODECK** — built on Three.js.
 
 | Game | What it is |
 |------|------------|
-| **GRAND PRIX** | 3D racer on **5 real circuits** — Melbourne, Monza, Silverstone, Suzuka, Spa (real survey data, accurate lengths). GLTF Ferrari, HDRI sky + reflections, soft shadows, bloom, continuous Armco barriers and crowd grandstands; **1–7 named AI rivals**, selectable **track / laps / difficulty**, a 3-2-1 start, live **standings with gap/interval timing**, floating colour-coded name tags, **DRS zones** (for you *and* the AI), and a finish screen. |
+| **GRAND PRIX** | 3D racer on **5 real circuits** (Melbourne, Monza, Silverstone, Suzuka, Spa — real survey data, accurate lengths & racing direction). GLTF Ferrari + **downloaded PBR road/grass textures**, HDRI sky + reflections, soft shadows, bloom; **pit lanes**, continuous Armco barriers, grandstands at real positions; **1–7 named AI rivals**, selectable **track / laps / difficulty / FOV / camera**, a 3-2-1 start, live **standings with gap/interval timing**, colour-coded name tags, **DRS zones** (for you *and* the AI), an **FPS counter**, an **RPM + gear gauge**, and a finish screen. |
 | **NEONDRIFT** | First-person neon tunnel flyer — dodge blocks and fly through ring gates. |
 | **GRIDRUN** | Synthwave ground runner — strafe and jump over obstacles, grab orbs. |
 | **STARHAWK** | First-person space shooter — wave-based, multiple enemy types. |

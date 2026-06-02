@@ -65,6 +65,15 @@
   .d3-badge{ font-family:'Press Start 2P',monospace; font-size:9px; color:var(--neon-violet);
     border:1px solid var(--neon-violet); border-radius:3px; padding:3px 6px; letter-spacing:1px; }
   .status{ font-family:'Press Start 2P',monospace; font-size:12px; color:var(--neon-pink); text-align:center; min-height:14px; margin-top:12px; }
+  .fps{ position:absolute; left:12px; top:64px; font-family:'Press Start 2P',monospace; font-size:9px;
+    color:#7af6ff; text-shadow:0 0 6px #000,0 0 10px rgba(37,244,238,.6); pointer-events:none; letter-spacing:1px; }
+  .tacho{ position:absolute; left:90px; bottom:12px; pointer-events:none; }
+  .tacho .rpmbar{ width:120px; height:8px; background:rgba(6,2,16,.7); border:1px solid var(--neon-cyan);
+    border-radius:4px; box-shadow:0 0 6px rgba(37,244,238,.5); overflow:hidden; }
+  .tacho .rpmbar i{ display:block; height:100%; width:0%; background:#18ff5a; transition:width .05s linear; }
+  .tacho .tnums{ font-family:'Press Start 2P',monospace; font-size:9px; color:#cdbfe0; margin-top:5px;
+    text-shadow:0 0 6px #000; letter-spacing:1px; }
+  .tacho .tnums b{ color:var(--neon-amber); }
 </style>
 </head>
 <body>
@@ -82,6 +91,8 @@
       <div class="standings" id="standings"></div>
       <div class="speedo"><b id="kmh">0</b><br><span>KM/H</span></div>
       <div class="drs" id="drs">DRS</div>
+      <div class="fps" id="fps">FPS 0</div>
+      <div class="tacho" id="tacho"><div class="rpmbar"><i id="rpmfill"></i></div><div class="tnums">GEAR <b id="gear">N</b> · <b id="rpm">0</b> RPM</div></div>
       <div class="flag" id="flag"></div>
       <div class="touchctl">
         <button class="tbtn l" id="tL">◀</button><button class="tbtn r" id="tR">▶</button>
@@ -93,6 +104,8 @@
       <div class="setrow"><span class="lbl">RIVALS</span><button class="sbtn" data-act="ai-1">−</button><b id="setAi">3</b><button class="sbtn" data-act="ai+1">+</button></div>
       <div class="setrow"><span class="lbl">LAPS</span><button class="sbtn" data-act="lap-1">−</button><b id="setLap">3</b><button class="sbtn" data-act="lap+1">+</button></div>
       <div class="setrow"><span class="lbl">LEVEL</span><button class="dbtn" data-diff="EASY">EASY</button><button class="dbtn on" data-diff="NORMAL">NORMAL</button><button class="dbtn" data-diff="HARD">HARD</button></div>
+      <div class="setrow"><span class="lbl">FOV</span><button class="sbtn" data-act="fov-1">−</button><b id="setFov">66</b><button class="sbtn" data-act="fov+1">+</button></div>
+      <div class="setrow"><span class="lbl">CAM</span><button class="sbtn" data-act="cam-1">−</button><b id="setCam" style="min-width:64px">CLOSE</b><button class="sbtn" data-act="cam+1">+</button></div>
     </div>
     <p class="status" id="status">Loading circuit & car…</p>
     <button class="btn" id="start" disabled>LOADING…</button>
@@ -103,7 +116,8 @@
 const cv=document.getElementById('c'); const W=700,H=438;
 const lapEl=document.getElementById('lap'), curEl=document.getElementById('cur'), posEl=document.getElementById('pos'), standEl=document.getElementById('standings'),
       kmhEl=document.getElementById('kmh'), drsEl=document.getElementById('drs'), settingsEl=document.getElementById('settings'), statusEl=document.getElementById('status'), startBtn=document.getElementById('start'),
-      flagEl=document.getElementById('flag'), gtitle=document.getElementById('gtitle');
+      flagEl=document.getElementById('flag'), gtitle=document.getElementById('gtitle'),
+      fpsEl=document.getElementById('fps'), gearEl=document.getElementById('gear'), rpmEl=document.getElementById('rpm'), rpmFillEl=document.getElementById('rpmfill');
 const mapc=document.getElementById('map'), mapx=mapc.getContext('2d');
 let bestLap=0;
 const fmt=ms=>{ if(!ms) return '--'; return (ms/1000).toFixed(3); };
@@ -172,6 +186,15 @@ const standMat=new THREE.MeshStandardMaterial({map:standTex(),roughness:0.9});
 const startMat=new THREE.MeshStandardMaterial({map:checkerTex(),roughness:0.6});
 const trunkM=new THREE.MeshStandardMaterial({color:0x553a23,roughness:1}), leafM=new THREE.MeshStandardMaterial({color:0x356a2c,roughness:1});
 
+// ---- high-quality downloaded textures (assets/textures/) applied over the procedural defaults ----
+const texL=new THREE.TextureLoader();
+texL.load('assets/textures/asphalt_nor.jpg', tx=>{ tx.wrapS=tx.wrapT=THREE.RepeatWrapping; tx.repeat.set(2,120); tx.anisotropy=8;
+  roadMat.normalMap=tx; roadMat.normalScale=new THREE.Vector2(0.6,0.6); roadMat.needsUpdate=true; });
+texL.load('assets/textures/grass_diff.jpg', tx=>{ tx.wrapS=tx.wrapT=THREE.RepeatWrapping; tx.repeat.set(120,120); tx.encoding=THREE.sRGBEncoding; tx.anisotropy=8;
+  grass.material.map=tx; grass.material.color.set(0xffffff); grass.material.needsUpdate=true; });
+texL.load('assets/textures/gravel_diff.jpg', tx=>{ tx.wrapS=tx.wrapT=THREE.RepeatWrapping; tx.repeat.set(2,60); tx.encoding=THREE.sRGBEncoding; tx.anisotropy=8;
+  gravelMat.map=tx; gravelMat.color.set(0xffffff); gravelMat.needsUpdate=true; });
+
 // ---- track state (rebuilt per circuit) ----
 const SAMP=900;
 let P=[],T=[],Nn=[],WL=[],WR=[],cornerF=[],drsZone=[],TLEN=1,SPM=1,mb={a:0,b:1,c:0,d:1};
@@ -215,10 +238,42 @@ function buildTrack(data){
     const sf=new THREE.Mesh(new THREE.PlaneGeometry(wid,5),startMat); sf.rotation.x=-Math.PI/2; sf.rotation.z=Math.atan2(n.x,n.z); sf.position.set(p.x,0.05,p.z); sf.receiveShadow=true; trackGroup.add(sf);
     [1,-1].forEach(s=>{ const post=new THREE.Mesh(new THREE.BoxGeometry(0.6,8,0.6),gantryMat); post.position.set(p.x+n.x*(wid/2+1)*s,4,p.z+n.z*(wid/2+1)*s); post.castShadow=true; trackGroup.add(post); });
     const beam=new THREE.Mesh(new THREE.BoxGeometry(wid+3,1.2,0.8),gantryMat); beam.position.set(p.x,8,p.z); beam.rotation.y=Math.atan2(n.x,n.z); beam.castShadow=true; trackGroup.add(beam); }
-  // grandstands (crowd) + roofs
-  [2,Math.floor(SAMP*0.22),Math.floor(SAMP*0.46),Math.floor(SAMP*0.71)].forEach(i=>{ const p=P[i],n=Nn[i],ang=Math.atan2(T[i].x,T[i].z),off=WL[i]+13;
-    const st=new THREE.Mesh(new THREE.BoxGeometry(34,11,8),standMat); st.position.set(p.x+n.x*off,5.5,p.z+n.z*off); st.rotation.y=ang; st.castShadow=true; st.receiveShadow=true; trackGroup.add(st);
-    const roof=new THREE.Mesh(new THREE.BoxGeometry(36,0.6,9),gantryMat); roof.position.set(p.x+n.x*off,11.3,p.z+n.z*off); roof.rotation.y=ang; trackGroup.add(roof); });
+  // pit lane — from per-track pit data {from,to,side}
+  { const pit=TRACKS[cfg.track].pit;
+    if(pit){ const side=pit.side, w0=(i)=> side<0 ? WR[i] : WL[i];
+      // build wrapping index list from `from`..`to` (fractions of a lap)
+      const i0=Math.floor(pit.from*SAMP)%SAMP, i1=Math.floor(pit.to*SAMP)%SAMP, idxs=[];
+      { let i=i0, guard=0; while(guard++<SAMP){ idxs.push(i); if(i===i1) break; i=(i+1)%SAMP; } }
+      const PW=9;                       // pit road width
+      // pit road: flat asphalt strip; inner edge ~3m outside track edge, centre offset = side*(W+7.5)
+      if(idxs.length>1){ const pos=[],uvs=[],idx=[];
+        for(let k=0;k<idxs.length;k++){ const i=idxs[k], p=P[i], n=Nn[i], W=w0(i);
+          const inner=side*(W+3), outer=side*(W+3+PW);
+          pos.push(p.x+n.x*inner,0.03,p.z+n.z*inner); pos.push(p.x+n.x*outer,0.03,p.z+n.z*outer);
+          uvs.push(0,k/6); uvs.push(1,k/6); }
+        for(let k=0;k<idxs.length-1;k++){ const a=k*2,b=k*2+1,c=(k+1)*2,d=(k+1)*2+1; idx.push(a,b,c,b,d,c); }
+        const geo=new THREE.BufferGeometry(); geo.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));
+        geo.setAttribute('uv',new THREE.Float32BufferAttribute(uvs,2)); geo.setIndex(idx); geo.computeVertexNormals();
+        const pr=new THREE.Mesh(geo,roadMat); pr.receiveShadow=true; trackGroup.add(pr); }
+      // pit wall: low continuous wall between track and pit road
+      if(idxs.length>1){ const pos=[],uv=[],idx=[],PH=1;
+        for(let k=0;k<idxs.length;k++){ const i=idxs[k], p=P[i], n=Nn[i], o=side*(w0(i)+3), x=p.x+n.x*o, z=p.z+n.z*o;
+          pos.push(x,0.1,z); pos.push(x,PH,z); uv.push(k/6,0); uv.push(k/6,1); }
+        for(let k=0;k<idxs.length-1;k++){ const a=k*2,b=k*2+1,c=(k+1)*2,d=(k+1)*2+1; idx.push(a,b,c,b,d,c); }
+        const geo=new THREE.BufferGeometry(); geo.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));
+        geo.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2)); geo.setIndex(idx); geo.computeVertexNormals();
+        const pw=new THREE.Mesh(geo,wallMat); pw.castShadow=true; pw.receiveShadow=true; trackGroup.add(pw); }
+      // garage boxes along the outer side of the pit road, facing it
+      const garageMat=new THREE.MeshStandardMaterial({color:0x33363d,metalness:0.4,roughness:0.6});
+      const NG=8;
+      for(let g=0;g<NG;g++){ const k=Math.floor((g+0.5)/NG*(idxs.length-1)); const i=idxs[Math.max(0,Math.min(idxs.length-1,k))];
+        const p=P[i], n=Nn[i], W=w0(i), off=side*(W+3+PW+3.2), ang=Math.atan2(T[i].x,T[i].z);
+        const box=new THREE.Mesh(new THREE.BoxGeometry(4,3,6),garageMat); box.position.set(p.x+n.x*off,1.5,p.z+n.z*off); box.rotation.y=ang; box.castShadow=true; box.receiveShadow=true; trackGroup.add(box); } } }
+  // grandstands (crowd) + roofs — from per-track stands data
+  (TRACKS[cfg.track].stands||[]).forEach(s=>{ const i=Math.floor(s.at*SAMP)%SAMP, p=P[i], n=Nn[i], ang=Math.atan2(T[i].x,T[i].z);
+    const off = s.side<0 ? -(WR[i]+13) : (WL[i]+13);
+    const st=new THREE.Mesh(new THREE.BoxGeometry(s.len,11,8),standMat); st.position.set(p.x+n.x*off,5.5,p.z+n.z*off); st.rotation.y=ang; st.castShadow=true; st.receiveShadow=true; trackGroup.add(st);
+    const roof=new THREE.Mesh(new THREE.BoxGeometry(s.len+2,0.6,9),gantryMat); roof.position.set(p.x+n.x*off,11.3,p.z+n.z*off); roof.rotation.y=ang; trackGroup.add(roof); });
   // trees
   for(let i=0;i<SAMP;i+=9){ if(Math.random()<0.55) continue; const p=P[i],n=Nn[i],s=Math.random()<0.5?1:-1,off=(WL[i]+20+Math.random()*90)*s,h=6+Math.random()*8;
     const x=p.x+n.x*off,z=p.z+n.z*off; const tr=new THREE.Mesh(new THREE.CylinderGeometry(0.5,0.7,h,6),trunkM); tr.position.set(x,h/2,z); tr.castShadow=true; trackGroup.add(tr);
@@ -278,7 +333,7 @@ function drawMap(){ mapx.clearRect(0,0,144,144); mapx.strokeStyle='#25f4ee'; map
 
 // ---- AI opponents + race ----
 let TOTAL_LAPS=3;
-const cfg={track:0,ai:3,laps:3,diff:'NORMAL'};
+const cfg={track:0,ai:3,laps:3,diff:'NORMAL',fov:66,camDist:4.8,camHeight:2.0,camPreset:0};
 const aiNames=['FROST','BOLT','VIPER','ASH','NOVA','ROOK','ZEN'];
 const diffBase={EASY:50,NORMAL:60,HARD:70};
 let gapAhead=99, prevDrs=false, playerDrs=false;
@@ -338,6 +393,8 @@ function renderStandings(){ const list=orderList(); const myi=list.findIndex(s=>
 
 // ---- physics / loop ----
 let speed,heading,carIdx,lateral,lap,pLap,lapStart,running,raf,lastT,prevIdx,countdown,armed,raceOver;
+let fpsSmooth=60, lastFpsUpd=0;
+const gearTops=[12,24,38,54,70,95];
 function placeAtStart(){ const gs=gridSlot(cfg.ai), i0=((Math.floor(gs.idx))%SAMP+SAMP)%SAMP;
   car.position.set(P[i0].x+Nn[i0].x*gs.lane,0,P[i0].z+Nn[i0].z*gs.lane);
   heading=Math.atan2(T[i0].x,T[i0].z);
@@ -347,14 +404,14 @@ function updateIdx(){ let bi=carIdx,bd=1e9;
   prevIdx=carIdx; carIdx=bi; lateral=(car.position.x-P[carIdx].x)*Nn[carIdx].x+(car.position.z-P[carIdx].z)*Nn[carIdx].z; }
 let keyL,keyR,keyG,keyB;
 function sunFollow(){ sun.position.set(car.position.x+sunDir.x*160,sunDir.y*160,car.position.z+sunDir.z*160); sun.target.position.copy(car.position); sun.target.updateMatrixWorld(); }
-const CB=4.8, CU=2.0, CA=11, CLY=1.2, CF=66;
+const CA=11, CLY=1.2;
 function snapCam(){ const fx=Math.sin(heading),fz=Math.cos(heading);
-  camera.position.set(car.position.x-fx*CB,CU,car.position.z-fz*CB); camera.lookAt(car.position.x+fx*CA,CLY,car.position.z+fz*CA);
-  camera.fov=CF; camera.updateProjectionMatrix(); sunFollow(); }
+  camera.position.set(car.position.x-fx*cfg.camDist,cfg.camHeight,car.position.z-fz*cfg.camDist); camera.lookAt(car.position.x+fx*CA,CLY,car.position.z+fz*CA);
+  camera.fov=cfg.fov; camera.updateProjectionMatrix(); sunFollow(); }
 function followCam(sp){ const fx=Math.sin(heading),fz=Math.cos(heading);
-  camera.position.lerp(new THREE.Vector3(car.position.x-fx*CB,CU,car.position.z-fz*CB),0.15);
+  camera.position.lerp(new THREE.Vector3(car.position.x-fx*cfg.camDist,cfg.camHeight,car.position.z-fz*cfg.camDist),0.15);
   camera.lookAt(car.position.x+fx*CA,CLY,car.position.z+fz*CA);
-  camera.fov=CF; camera.updateProjectionMatrix(); sunFollow(); }
+  camera.fov=cfg.fov; camera.updateProjectionMatrix(); sunFollow(); }
 function frame(now){ if(!running) return; const dt=Math.min(0.05,(now-lastT)/1000||0.016); lastT=now;
   if(countdown>0){ countdown-=dt; flagEl.textContent=countdown>2.1?'3':countdown>1.05?'2':countdown>0.05?'1':'GO!'; flagEl.style.opacity=1;
     if(countdown<=0){ setTimeout(()=>flagEl.style.opacity=0,650); lapStart=now; SFX.coin(); } followCam(0); composer.render(); drawMap(); raf=requestAnimationFrame(frame); return; }
@@ -384,6 +441,21 @@ function frame(now){ if(!running) return; const dt=Math.min(0.05,(now-lastT)/100
     lapEl.textContent=Math.min(lap+1,TOTAL_LAPS); }
   if(lap>0) curEl.textContent=((now-lapStart)/1000).toFixed(3);
   kmhEl.textContent=Math.round(Math.abs(speed)*3.6);
+  // FPS counter (smoothed, throttled to ~4x/sec)
+  fpsSmooth += ((1/Math.max(dt,1e-3)) - fpsSmooth)*0.1;
+  if(now-lastFpsUpd>250){ lastFpsUpd=now; fpsEl.textContent='FPS '+Math.round(fpsSmooth); }
+  // RPM gauge + gear (simulated from speed)
+  { const sp=Math.abs(speed);
+    if(speed<-1){ gearEl.textContent='R'; }
+    else if(sp<0.5){ gearEl.textContent='N'; }
+    let gi=gearTops.findIndex(t=>sp<=t); if(gi<0) gi=gearTops.length-1;
+    const prevTop=gi>0?gearTops[gi-1]:0, top=gearTops[gi];
+    let rpm=1200; if(sp>=0.5){ rpm=1200+(sp-prevTop)/Math.max(0.001,top-prevTop)*(9500-1200); }
+    rpm=Math.max(1200,Math.min(9500,rpm));
+    if(speed>=-1&&sp>=0.5) gearEl.textContent=(gi+1);
+    rpmEl.textContent=Math.round(rpm/100)*100;
+    const pct=rpm/9500*100; rpmFillEl.style.width=pct.toFixed(0)+'%';
+    rpmFillEl.style.background = pct<70 ? '#18ff5a' : (pct<90 ? '#ffb020' : '#ff2e3a'); }
   playerDrs=drsOn; drsEl.className='drs'+(drsOn?' on':(drsZone[carIdx]?' avail':''));
   if(drsOn&&!prevDrs) SFX.coin(); prevDrs=drsOn;
   followCam(speed); composer.render(); drawMap(); raf=requestAnimationFrame(frame); }
@@ -408,8 +480,11 @@ function begin(){ if(startBtn.disabled) return; SFX.select(); raceOver=false; se
 startBtn.onclick=begin;
 // ---- options menu ----
 function loadBest(){ bestLap=+(localStorage['neonBest_'+TRACKS[cfg.track].name]||0); }
+const CAM_PRESETS=[{dist:4.8,height:2.0},{dist:8,height:3.2},{dist:12,height:4.5}];
+const CAM_NAMES=['CLOSE','MID','FAR'];
 function refreshSettings(){ document.getElementById('setAi').textContent=cfg.ai; document.getElementById('setLap').textContent=cfg.laps;
   document.getElementById('setTrk').textContent=TRACKS[cfg.track].name;
+  document.getElementById('setFov').textContent=cfg.fov; document.getElementById('setCam').textContent=CAM_NAMES[cfg.camPreset];
   document.querySelectorAll('.dbtn').forEach(b=>b.classList.toggle('on', b.dataset.diff===cfg.diff)); }
 settingsEl.addEventListener('click',e=>{ const b=e.target.closest('button'); if(!b||running) return;
   const a=b.dataset.act; let trkChanged=false;
@@ -417,6 +492,8 @@ settingsEl.addEventListener('click',e=>{ const b=e.target.closest('button'); if(
   else if(a==='lap-1') cfg.laps=Math.max(1,cfg.laps-1); else if(a==='lap+1') cfg.laps=Math.min(15,cfg.laps+1);
   else if(a==='trk-1'){ cfg.track=(cfg.track-1+TRACKS.length)%TRACKS.length; trkChanged=true; }
   else if(a==='trk+1'){ cfg.track=(cfg.track+1)%TRACKS.length; trkChanged=true; }
+  else if(a==='fov-1') cfg.fov=Math.max(50,cfg.fov-3); else if(a==='fov+1') cfg.fov=Math.min(95,cfg.fov+3);
+  else if(a==='cam-1'||a==='cam+1'){ cfg.camPreset=Math.max(0,Math.min(2,cfg.camPreset+(a==='cam+1'?1:-1))); const cp=CAM_PRESETS[cfg.camPreset]; cfg.camDist=cp.dist; cfg.camHeight=cp.height; }
   else if(b.dataset.diff) cfg.diff=b.dataset.diff;
   if(trkChanged){ buildTrack(TRACKS[cfg.track].data); loadBest(); gtitle.textContent=TRACKS[cfg.track].name; }
   refreshSettings(); try{SFX.select();}catch(_){}
