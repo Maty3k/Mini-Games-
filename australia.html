@@ -151,7 +151,7 @@ sun.shadow.mapSize.set(2048,2048); sun.shadow.camera.near=1; sun.shadow.camera.f
 const SH=120; sun.shadow.camera.left=-SH; sun.shadow.camera.right=SH; sun.shadow.camera.top=SH; sun.shadow.camera.bottom=-SH; sun.shadow.bias=-0.0005;
 scene.add(sun, sun.target);
 // permanent grass ground
-const grass=new THREE.Mesh(new THREE.PlaneGeometry(14000,14000),new THREE.MeshStandardMaterial({color:0x4a7a39,roughness:1}));
+const grass=new THREE.Mesh(new THREE.PlaneGeometry(14000,14000),new THREE.MeshStandardMaterial({color:0x4a7a39,roughness:1,side:THREE.DoubleSide}));
 grass.rotation.x=-Math.PI/2; grass.position.y=-0.06; grass.receiveShadow=true; scene.add(grass);
 
 // ---- shared textures / materials (created once, reused on every track) ----
@@ -177,9 +177,9 @@ function standTex(){ const c=document.createElement('canvas'); c.width=128;c.hei
   const tx=new THREE.CanvasTexture(c); tx.encoding=THREE.sRGBEncoding; return tx; }
 function checkerTex(){ const c=document.createElement('canvas'); c.width=128;c.height=16; const g=c.getContext('2d');
   for(let y=0;y<2;y++)for(let x=0;x<16;x++){ g.fillStyle=((x+y)%2)?'#fff':'#111'; g.fillRect(x*8,y*8,8,8);} const tx=new THREE.CanvasTexture(c); tx.encoding=THREE.sRGBEncoding; return tx; }
-const roadMat=new THREE.MeshStandardMaterial({map:asphaltTex(),roughness:0.8,metalness:0});
-const curbMat=new THREE.MeshStandardMaterial({map:curbTex(),roughness:0.6});
-const gravelMat=new THREE.MeshStandardMaterial({color:0xc4b89a,roughness:1});
+const roadMat=new THREE.MeshStandardMaterial({map:asphaltTex(),roughness:0.8,metalness:0,side:THREE.DoubleSide});
+const curbMat=new THREE.MeshStandardMaterial({map:curbTex(),roughness:0.6,side:THREE.DoubleSide});
+const gravelMat=new THREE.MeshStandardMaterial({color:0xc4b89a,roughness:1,side:THREE.DoubleSide});
 const wallMat=new THREE.MeshStandardMaterial({map:wallTex(),metalness:0.45,roughness:0.5,side:THREE.DoubleSide});
 const gantryMat=new THREE.MeshStandardMaterial({color:0x222228,metalness:0.6,roughness:0.4});
 const standMat=new THREE.MeshStandardMaterial({map:standTex(),roughness:0.9});
@@ -210,11 +210,11 @@ const trackGroup=new THREE.Group(); scene.add(trackGroup);
 // real-circuit elevation profiles (metres) keyed by lap fraction in racing direction (0 = start/finish).
 // Approximate the famous gradients — above all Spa's Eau Rouge/Raidillon climb just after Turn 1.
 const ELEV={
-  MELBOURNE:[[0,2],[0.25,6],[0.5,3],[0.72,7],[1,2]],            // Albert Park — near flat
-  MONZA:[[0,1],[0.5,3],[1,1]],                                   // famously flat
-  SILVERSTONE:[[0,3],[0.3,9],[0.55,4],[0.8,10],[1,3]],          // gentle rolls
-  SUZUKA:[[0,6],[0.1,16],[0.25,30],[0.4,24],[0.52,12],[0.68,28],[0.85,18],[1,6]],   // figure-8 elevation
-  SPA:[[0,26],[0.03,4],[0.07,9],[0.12,52],[0.18,58],[0.28,46],[0.40,28],[0.50,14],[0.60,22],[0.72,46],[0.82,40],[0.92,33],[1,26]]  // La Source dip -> Eau Rouge/Raidillon climb -> rolling Ardennes
+  MELBOURNE:[[0,1],[0.25,4],[0.5,2],[0.72,4],[1,1]],            // Albert Park — near flat
+  MONZA:[[0,1],[0.5,2],[1,1]],                                   // famously flat
+  SILVERSTONE:[[0,2],[0.3,6],[0.55,3],[0.8,6],[1,2]],          // gentle rolls
+  SUZUKA:[[0,3],[0.1,9],[0.25,16],[0.4,12],[0.52,6],[0.68,15],[0.85,10],[1,3]],   // figure-8 elevation
+  SPA:[[0,13],[0.03,2],[0.08,4],[0.115,26],[0.17,28],[0.28,22],[0.40,13],[0.50,6],[0.60,10],[0.72,22],[0.82,19],[0.92,16],[1,13]]  // La Source dip -> Eau Rouge/Raidillon climb -> rolling Ardennes
 };
 function elevSample(prof,frac){ frac=((frac%1)+1)%1;
   for(let k=0;k<prof.length-1;k++){ const a=prof[k],b=prof[k+1];
@@ -238,7 +238,7 @@ function wall(offFn,h){ const pos=[],uv=[],idx=[],L=SAMP/6;
   geo.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2)); geo.setIndex(idx); geo.computeVertexNormals();
   const m=new THREE.Mesh(geo,wallMat); m.castShadow=true; m.receiveShadow=true; return m; }
 // grassy embankment from the run-off edge (track height) down to flat ground — so hills don't float
-function skirt(sgn){ const W0=60, pos=[],uvs=[],idx=[];
+function skirt(sgn){ const W0=95, pos=[],uvs=[],idx=[];
   for(let i=0;i<SAMP;i++){ const p=P[i],n=Nn[i], wIn=((sgn>0?WL[i]:WR[i])+7)*sgn, wOut=((sgn>0?WL[i]:WR[i])+W0)*sgn;
     pos.push(p.x+n.x*wIn,p.y,p.z+n.z*wIn); pos.push(p.x+n.x*wOut,-0.05,p.z+n.z*wOut);
     uvs.push(0,i/SAMP*SAMP/6); uvs.push(1,i/SAMP*SAMP/6); }
@@ -315,7 +315,7 @@ function buildTrack(tr){
     const roof=new THREE.Mesh(new THREE.BoxGeometry(9,0.6,s.len+2),gantryMat); roof.position.set(p.x+n.x*off,p.y+11.6,p.z+n.z*off); roof.rotation.y=ang; trackGroup.add(roof); });
   // trees
   for(let i=0;i<SAMP;i+=9){ if(Math.random()<0.55) continue; const p=P[i],n=Nn[i],s=Math.random()<0.5?1:-1,off=(WL[i]+20+Math.random()*90)*s,h=6+Math.random()*8;
-    const x=p.x+n.x*off,z=p.z+n.z*off, by=p.y*Math.max(0,1-(Math.abs(off)-7)/53);   // follow the embankment down to flat ground
+    const x=p.x+n.x*off,z=p.z+n.z*off, by=p.y*Math.max(0,1-(Math.abs(off)-7)/88);   // follow the embankment down to flat ground
     const tr=new THREE.Mesh(new THREE.CylinderGeometry(0.5,0.7,h,6),trunkM); tr.position.set(x,by+h/2,z); tr.castShadow=true; trackGroup.add(tr);
     const lf=new THREE.Mesh(new THREE.ConeGeometry(3.4,7,8),leafM); lf.position.set(x,by+h+2,z); lf.castShadow=true; trackGroup.add(lf); }
   // corner factor + DRS zones + markers
