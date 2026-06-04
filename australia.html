@@ -230,7 +230,7 @@ const ELEV={   // metres, lap fraction from the start/finish line (index 0 after
   MONZA:[[0,1],[0.5,2],[1,1]],                                   // famously flat
   SILVERSTONE:[[0,2],[0.3,6],[0.6,3],[0.85,6],[1,2]],          // gentle rolls
   SUZUKA:[[0,3],[0.15,10],[0.3,16],[0.45,12],[0.6,6],[0.78,15],[0.9,8],[1,3]],   // figure-8 elevation
-  SPA:[[0,12],[0.04,3],[0.07,6],[0.12,28],[0.16,30],[0.24,25],[0.34,18],[0.48,8],[0.62,12],[0.76,22],[0.88,17],[0.95,14],[1,12]]  // pit straight -> La Source dip -> Eau Rouge/Raidillon climb -> Kemmel high -> rolling Ardennes
+  SPA:[[0,12],[0.02,13],[0.045,3],[0.08,7],[0.13,28],[0.17,30],[0.26,25],[0.36,18],[0.48,8],[0.62,12],[0.76,22],[0.88,17],[0.95,14],[1,12]]  // pit straight -> La Source (high) -> Eau Rouge dip -> Raidillon climb -> Kemmel high -> rolling Ardennes
 };
 function elevSample(prof,frac){ frac=((frac%1)+1)%1;
   for(let k=0;k<prof.length-1;k++){ const a=prof[k],b=prof[k+1];
@@ -397,7 +397,8 @@ function mpt(p){ const pad=12,S=144-pad*2,s=Math.min(S/(mb.b-mb.a),S/(mb.d-mb.c)
 function drawMap(){ mapx.clearRect(0,0,144,144); mapx.strokeStyle='#25f4ee'; mapx.lineWidth=2.4; mapx.beginPath();
   for(let i=0;i<SAMP;i+=2){ const[x,y]=mpt(P[i]); i?mapx.lineTo(x,y):mapx.moveTo(x,y);} mapx.closePath(); mapx.stroke();
   const[sx,sy]=mpt(P[0]); mapx.fillStyle='#fff'; mapx.fillRect(sx-2,sy-2,4,4);
-  const[cx,cy]=mpt(car.position); mapx.fillStyle='#ff2e62'; mapx.beginPath(); mapx.arc(cx,cy,3.2,0,7); mapx.fill(); }
+  for(const a of ai){ const[ax,ay]=mpt(a.mesh.position); mapx.fillStyle=hexc(a.col); mapx.beginPath(); mapx.arc(ax,ay,2.4,0,7); mapx.fill(); }   // AI dots, colour-matched
+  const[cx,cy]=mpt(car.position); mapx.fillStyle='#ff2e62'; mapx.beginPath(); mapx.arc(cx,cy,4,0,7); mapx.fill(); mapx.lineWidth=1.4; mapx.strokeStyle='#fff'; mapx.stroke(); }   // player on top, outlined
 
 // ---- AI opponents + race ----
 let TOTAL_LAPS=3;
