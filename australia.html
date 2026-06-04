@@ -238,6 +238,11 @@ function elevSample(prof,frac){ frac=((frac%1)+1)%1;
   return prof[prof.length-1][1]; }
 function gradeAt(i){ return GR[i]||0; }
 function trackHeightAt(i){ return (P[i]&&P[i].y)||0; }
+// smooth road-surface height under the car: interpolate between samples along the track (no stair-step bounce on slopes)
+function groundY(){ const i=carIdx, t=T[i]; if(!t) return car.position.y;
+  const fwd=(car.position.x-P[i].x)*t.x+(car.position.z-P[i].z)*t.z, seg=Math.max(0.5,TLEN/SAMP);
+  const j= fwd>=0 ? (i+1)%SAMP : (i-1+SAMP)%SAMP, a=Math.min(1,Math.abs(fwd)/seg);
+  return P[i].y + (P[j].y-P[i].y)*a; }
 function disposeGroup(g){ for(let i=g.children.length-1;i>=0;i--){ const c=g.children[i]; if(c.geometry)c.geometry.dispose(); g.remove(c); } }
 function ribbon(oL,oR,uv,mat){ const pos=[],uvs=[],idx=[];
   for(let i=0;i<SAMP;i++){ const p=P[i],n=Nn[i],a=oL(i),b=oR(i);
@@ -363,7 +368,7 @@ function buildTrack(tr){
 }
 
 // ---- car: load Ferrari GLB (draco), fallback to box ----
-const car=new THREE.Group(); scene.add(car);
+const car=new THREE.Group(); car.rotation.order='YXZ'; scene.add(car);   // YXZ so pitch (x) applies after heading (y)
 let wheels=[], frontWheels=[], carTemplate=null;
 const paint=new THREE.MeshPhysicalMaterial({color:0xd5102a,metalness:0.7,roughness:0.28,clearcoat:1,clearcoatRoughness:0.08});
 const glassMat=new THREE.MeshPhysicalMaterial({color:0x111418,metalness:0,roughness:0.05,transparent:true,opacity:0.45});
@@ -462,12 +467,12 @@ function renderStandings(){ const list=orderList(); const myi=list.findIndex(s=>
 
 // ---- physics / loop ----
 let speed,heading,carIdx,lateral,lap,pLap,lapStart,running,raf,lastT,prevIdx,countdown,armed,raceOver;
-let fpsSmooth=60, lastFpsUpd=0;
+let fpsSmooth=60, lastFpsUpd=0, carPitch=0;
 const gearTops=[12,24,38,54,70,95];
 function placeAtStart(){ const gs=gridSlot(cfg.ai), i0=((Math.floor(gs.idx))%SAMP+SAMP)%SAMP;
   car.position.set(P[i0].x+Nn[i0].x*gs.lane,P[i0].y,P[i0].z+Nn[i0].z*gs.lane);
   heading=Math.atan2(T[i0].x,T[i0].z);
-  speed=0; carIdx=i0; prevIdx=i0; lateral=0; lap=0; pLap=0; armed=false; car.rotation.set(0,heading,0); }
+  speed=0; carIdx=i0; prevIdx=i0; lateral=0; lap=0; pLap=0; armed=false; carPitch=0; car.rotation.set(0,heading,0); }
 function updateIdx(){ let bi=carIdx,bd=1e9;
   for(let k=-6;k<=50;k++){ const i=((carIdx+k)%SAMP+SAMP)%SAMP; const dx=car.position.x-P[i].x,dz=car.position.z-P[i].z,d=dx*dx+dz*dz; if(d<bd){bd=d;bi=i;} }
   prevIdx=carIdx; carIdx=bi; lateral=(car.position.x-P[carIdx].x)*Nn[carIdx].x+(car.position.z-P[carIdx].z)*Nn[carIdx].z; }
@@ -497,7 +502,9 @@ function frame(now){ if(!running) return; const dt=Math.min(0.05,(now-lastT)/100
   car.rotation.y=heading; car.rotation.z=-((keyL?1:0)-(keyR?1:0))*grip*0.03;
   const ws=speed*dt/0.35; wheels.forEach(w=>w.rotation.x+=ws); const st=((keyL?1:0)-(keyR?1:0))*0.4; frontWheels.forEach(w=>w.rotation.y=st);
   updateIdx();
-  car.position.y += (trackHeightAt(carIdx)-car.position.y)*Math.min(1,dt*9);   // ride the elevation profile
+  car.position.y = groundY();                                                  // glue to the interpolated road surface — no bounce
+  carPitch += (Math.atan(gradeAt(carIdx)) - carPitch)*Math.min(1,dt*5);        // smooth nose-up/down on gradients
+  car.rotation.x = -carPitch;
   const eL=WL[carIdx]+6.3,eR=WR[carIdx]+6.3;   // hit the Armco wall (just inside the visible barrier)
   if(lateral>eL||lateral<-eR){ const lim=lateral>0?eL:-eR,over=lateral-lim,s=Nn[carIdx]; car.position.x-=s.x*over; car.position.z-=s.z*over; if(Math.abs(speed)>16) SFX.hit(); speed*=0.4; }
   updateAI(dt);
