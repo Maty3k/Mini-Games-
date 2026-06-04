@@ -221,7 +221,7 @@ texL.load('assets/textures/metal_diff.jpg', tx=>{ tx.wrapS=tx.wrapT=THREE.Repeat
 
 // ---- track state (rebuilt per circuit) ----
 const SAMP=900;
-let P=[],T=[],Nn=[],WL=[],WR=[],EH=[],GR=[],clearTo=[],vSafe=[],cornerF=[],drsZone=[],TLEN=1,SPM=1,mb={a:0,b:1,c:0,d:1};
+let P=[],T=[],Nn=[],WL=[],WR=[],EH=[],GR=[],clearTo=[],vSafe=[],RL=[],RT=[],cornerF=[],drsZone=[],TLEN=1,SPM=1,mb={a:0,b:1,c:0,d:1};
 const trackGroup=new THREE.Group(); scene.add(trackGroup);
 // real-circuit elevation profiles (metres) keyed by lap fraction in racing direction (0 = start/finish).
 // Approximate the famous gradients — above all Spa's Eau Rouge/Raidillon climb just after Turn 1.
@@ -302,13 +302,27 @@ function buildTrack(tr){
     WR.push(THREE.MathUtils.lerp(data[ia][2],data[(ia+1)%N][2],fr)); }
   clearTo.length=0;                                                               // distance to the nearest non-adjacent track section (huge except where the track passes near itself)
   for(let i=0;i<SAMP;i++){ let m=1e12; for(let j=0;j<SAMP;j+=2){ const cd=Math.min((j-i+SAMP)%SAMP,(i-j+SAMP)%SAMP); if(cd<60) continue; const dx=P[i].x-P[j].x,dz=P[i].z-P[j].z,d=dx*dx+dz*dz; if(d<m)m=d; } clearTo.push(Math.sqrt(m)); }
-  vSafe.length=0;                                                                 // speed-limit profile: max speed a car can physically hold (turn rate caps ~1.35 rad/s, so v <= 1.35*R)
-  { const ds=TLEN/SAMP; for(let i=0;i<SAMP;i++){ let v=82;                         // multi-scale: a tight chicane's L-R cancels over a wide span, so also sample a NARROW span and take the tightest
-      for(const sp of [2,4]){ const a=T[(i-sp+SAMP)%SAMP],b=T[(i+sp)%SAMP];
+  // ---- racing line: minimum-curvature path inside the track corridor (iterative smoothing, clamped to the road) -> out-in-out, apexing corners ----
+  RL.length=0; for(let i=0;i<SAMP;i++) RL.push(0);
+  { const m=2.2;                                                                  // keep the line ~2.2 m off the kerb
+    for(let it=0;it<450;it++){ const nl=RL.slice();
+      for(let i=0;i<SAMP;i++){ const ip=(i-1+SAMP)%SAMP, iq=(i+1)%SAMP;
+        const ax=P[ip].x+Nn[ip].x*RL[ip], az=P[ip].z+Nn[ip].z*RL[ip], bx=P[iq].x+Nn[iq].x*RL[iq], bz=P[iq].z+Nn[iq].z*RL[iq];
+        const tgt=((ax+bx)/2-P[i].x)*Nn[i].x + ((az+bz)/2-P[i].z)*Nn[i].z;          // pull each point toward the straightest line, projected onto the local normal
+        nl[i]=Math.max(-(WR[i]-m), Math.min(WL[i]-m, RL[i]+(tgt-RL[i])*0.35)); }
+      for(let i=0;i<SAMP;i++) RL[i]=nl[i]; } }
+  RT.length=0;                                                                     // tangent of the racing line at each sample
+  for(let i=0;i<SAMP;i++){ const ip=(i-1+SAMP)%SAMP, iq=(i+1)%SAMP;
+    const ax=P[ip].x+Nn[ip].x*RL[ip], az=P[ip].z+Nn[ip].z*RL[ip], bx=P[iq].x+Nn[iq].x*RL[iq], bz=P[iq].z+Nn[iq].z*RL[iq];
+    const dx=bx-ax, dz=bz-az, L=Math.hypot(dx,dz)||1; RT.push({x:dx/L, z:dz/L}); }
+  // ---- AI speed-limit profile from the RACING-LINE curvature (gentler than the centreline, so they carry more speed) ----
+  vSafe.length=0;
+  { const ds=TLEN/SAMP; for(let i=0;i<SAMP;i++){ let v=82;                         // multi-scale so a chicane's L-R doesn't cancel
+      for(const sp of [2,4]){ const a=RT[(i-sp+SAMP)%SAMP],b=RT[(i+sp)%SAMP];
         let dth=Math.abs(Math.atan2(a.x,a.z)-Math.atan2(b.x,b.z)); if(dth>Math.PI)dth=2*Math.PI-dth;
-        const R=dth>1e-3 ? (2*sp*ds)/dth : 1e5; v=Math.min(v, 1.35*R*0.78); }
+        const R=dth>1e-3 ? (2*sp*ds)/dth : 1e5; v=Math.min(v, 1.35*R*0.80); }
       vSafe.push(Math.max(8, Math.min(82, v))); }
-    for(let pass=0;pass<600;pass++){ let ch=false;                                // propagate braking zones backward: must already be slow enough to brake into each corner
+    for(let pass=0;pass<600;pass++){ let ch=false;                                // propagate braking zones backward
       for(let i=SAMP-1;i>=0;i--){ const nx=vSafe[(i+1)%SAMP], lim=Math.sqrt(nx*nx+2*15*ds); if(lim<vSafe[i]-0.02){vSafe[i]=lim;ch=true;} } if(!ch)break; } }
   trackGroup.add(ribbon(i=>WL[i],i=>-WR[i],SAMP/6,roadMat));                       // road
   trackGroup.add(ribbon(i=>WL[i]+1.1,i=>WL[i],SAMP/1.4,curbMat));                  // curbs
@@ -454,7 +468,7 @@ let youLabelAdded=false;
 function buildAI(){ ai.forEach(a=>scene.remove(a.mesh)); ai.length=0;
   const base=diffBase[cfg.diff];
   for(let i=0;i<cfg.ai;i++){ const a={mesh:makeCarVisual(aiColors[i]), name:aiNames[i], col:aiColors[i], idx:0, prevIdx:0, lap:0, pLap:0, armed:false, prevHigh:false,
-      x:0, z:0, heading:0, spd:0, lateral:0, stuck:0, lane:((i%3)-1)*1.6, base:base+i*2.0};   // physics-driven: own position/heading/speed
+      x:0, z:0, heading:0, spd:0, lateral:0, stuck:0, lane:((i%3)-1)*0.7, base:base+i*2.0};   // physics-driven; small offset from the racing line so they're not single-file
     a.mesh.add(makeLabel(a.name,aiColors[i])); ai.push(a); } }
 function gridSlot(slot){ return { idx:((SAMP-4-slot*4)%SAMP+SAMP)%SAMP, lane:(slot%2?1:-1)*2.6 }; }
 function posAI(a){ a.mesh.position.set(a.x, trackHeightAt(a.idx), a.z); a.mesh.rotation.y=a.heading; }
@@ -473,9 +487,9 @@ function updateAI(dt){
       for(const c of cars){ const d=c.p-myp; if(d>0.5&&d<g) g=d; }
       if(g<Infinity && (g/SPM)/Math.max(22,sp)<1.0) drs=true; }
     a.drs=drs;
-    // --- driver: Stanley steering — align to the track heading AND correct cross-track error, so the car stays glued to the line (centre + this car's lane bias) ---
-    const th=Math.atan2(T[i].x,T[i].z); let he=th-a.heading; while(he>Math.PI)he-=2*Math.PI; while(he<-Math.PI)he+=2*Math.PI;
-    const steerAngle = he + Math.atan2(2.8*(a.lateral-a.lane), Math.max(6,sp));
+    // --- driver: Stanley steering onto the RACING LINE (align to its heading + correct cross-track error toward it), plus a small per-car offset ---
+    const rt=RT[i]; const th=Math.atan2(rt.x,rt.z); let he=th-a.heading; while(he>Math.PI)he-=2*Math.PI; while(he<-Math.PI)he+=2*Math.PI;
+    const steerAngle = he + Math.atan2(2.8*(a.lateral-(RL[i]+a.lane)), Math.max(6,sp));
     let steer = steerAngle>0.015?1 : (steerAngle<-0.015?-1:0);
     // target speed: the pre-baked speed-limit profile (already includes braking zones), capped by this car's pace
     let tgt=Math.min(a.base*(drs?1.12:1), vSafe[(i+5)%SAMP]);
