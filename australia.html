@@ -185,6 +185,16 @@ const gantryMat=new THREE.MeshStandardMaterial({color:0x222228,metalness:0.6,rou
 const standMat=new THREE.MeshStandardMaterial({map:standTex(),roughness:0.9});
 const startMat=new THREE.MeshStandardMaterial({map:checkerTex(),roughness:0.6});
 const trunkM=new THREE.MeshStandardMaterial({color:0x553a23,roughness:1}), leafM=new THREE.MeshStandardMaterial({color:0x356a2c,roughness:1});
+const concreteMat=new THREE.MeshStandardMaterial({color:0x9a9a98,roughness:0.9,metalness:0,side:THREE.DoubleSide});
+// trackside advertising hoardings — procedural sponsor boards for an authentic circuit look
+function adTex(){ const c=document.createElement('canvas'); c.width=512;c.height=64; const g=c.getContext('2d');
+  const cols=['#d11d2a','#1565c0','#f9a825','#1b5e20','#ffffff','#111111','#6a1b9a','#00838f','#e64a19','#00897b'];
+  const words=['SHELL','PIRELLI','DHL','HEINEKEN','ROLEX','AWS','EMIRATES','PUMA','TAG','MSC','QATAR','CRYPTO','LENOVO','MOBIL 1','RAY-BAN'];
+  let x=0; while(x<512){ const w=46+(Math.random()*46|0), bg=cols[(Math.random()*cols.length)|0]; g.fillStyle=bg; g.fillRect(x,0,w,64);
+    g.fillStyle=(bg==='#ffffff'||bg==='#f9a825')?'#111':'#fff'; g.font='bold 19px sans-serif'; g.textBaseline='middle'; g.textAlign='center';
+    g.fillText(words[(Math.random()*words.length)|0], x+w/2, 34, w-6); x+=w+2; }
+  const tx=new THREE.CanvasTexture(c); tx.wrapS=THREE.RepeatWrapping; tx.repeat.set(10,1); tx.anisotropy=8; tx.encoding=THREE.sRGBEncoding; return tx; }
+const adMat=new THREE.MeshStandardMaterial({map:adTex(),roughness:0.7,metalness:0,side:THREE.DoubleSide});
 
 // ---- high-quality downloaded textures (assets/textures/) applied over the procedural defaults ----
 const texL=new THREE.TextureLoader();
@@ -200,8 +210,14 @@ texL.load('assets/textures/asphalt_nor.jpg', tx=>{ tx.wrapS=tx.wrapT=THREE.Repea
   roadMat.normalMap=tx; roadMat.normalScale=new THREE.Vector2(0.35,0.35); roadMat.needsUpdate=true; });
 texL.load('assets/textures/grass_diff.jpg', tx=>{ tx.wrapS=tx.wrapT=THREE.RepeatWrapping; tx.repeat.set(120,120); tx.encoding=THREE.sRGBEncoding; tx.anisotropy=8;
   grass.material.map=tx; grass.material.color.set(0xffffff); grass.material.needsUpdate=true; });
-texL.load('assets/textures/gravel_diff.jpg', tx=>{ tx.wrapS=tx.wrapT=THREE.RepeatWrapping; tx.repeat.set(2,60); tx.encoding=THREE.sRGBEncoding; tx.anisotropy=8;
-  gravelMat.map=tx; gravelMat.color.set(0xffffff); gravelMat.needsUpdate=true; });
+texL.load('assets/textures/sand_diff.jpg', tx=>{ tx.wrapS=tx.wrapT=THREE.RepeatWrapping; tx.repeat.set(3,70); tx.encoding=THREE.sRGBEncoding; tx.anisotropy=8;
+  gravelMat.map=tx; gravelMat.color.set(0xffffff); gravelMat.needsUpdate=true; });                                  // real sand-trap run-off
+texL.load('assets/textures/curb_diff.jpg', tx=>{ tx.wrapS=tx.wrapT=THREE.RepeatWrapping; tx.repeat.set(1,30); tx.encoding=THREE.sRGBEncoding; tx.anisotropy=8;
+  curbMat.map=tx; curbMat.color.set(0xffffff); curbMat.needsUpdate=true; });                                        // real red/white kerb
+texL.load('assets/textures/concrete_diff.jpg', tx=>{ tx.wrapS=tx.wrapT=THREE.RepeatWrapping; tx.repeat.set(6,1); tx.encoding=THREE.sRGBEncoding; tx.anisotropy=8;
+  concreteMat.map=tx; concreteMat.color.set(0xffffff); concreteMat.needsUpdate=true; });                            // concrete pit wall
+texL.load('assets/textures/metal_diff.jpg', tx=>{ tx.wrapS=tx.wrapT=THREE.RepeatWrapping; tx.anisotropy=8;
+  gantryMat.map=tx; gantryMat.color.set(0xb8bcc4); gantryMat.metalness=0.7; gantryMat.roughness=0.4; gantryMat.needsUpdate=true; });  // real metal gantry
 
 // ---- track state (rebuilt per circuit) ----
 const SAMP=900;
@@ -209,12 +225,12 @@ let P=[],T=[],Nn=[],WL=[],WR=[],EH=[],GR=[],cornerF=[],drsZone=[],TLEN=1,SPM=1,m
 const trackGroup=new THREE.Group(); scene.add(trackGroup);
 // real-circuit elevation profiles (metres) keyed by lap fraction in racing direction (0 = start/finish).
 // Approximate the famous gradients — above all Spa's Eau Rouge/Raidillon climb just after Turn 1.
-const ELEV={
-  MELBOURNE:[[0,1],[0.25,4],[0.5,2],[0.72,4],[1,1]],            // Albert Park — near flat
+const ELEV={   // metres, lap fraction from the start/finish line (index 0 after rotation)
+  MELBOURNE:[[0,1],[0.3,4],[0.6,2],[0.85,4],[1,1]],            // Albert Park — near flat
   MONZA:[[0,1],[0.5,2],[1,1]],                                   // famously flat
-  SILVERSTONE:[[0,2],[0.3,6],[0.55,3],[0.8,6],[1,2]],          // gentle rolls
-  SUZUKA:[[0,3],[0.1,9],[0.25,16],[0.4,12],[0.52,6],[0.68,15],[0.85,10],[1,3]],   // figure-8 elevation
-  SPA:[[0,13],[0.03,2],[0.08,4],[0.115,26],[0.17,28],[0.28,22],[0.40,13],[0.50,6],[0.60,10],[0.72,22],[0.82,19],[0.92,16],[1,13]]  // La Source dip -> Eau Rouge/Raidillon climb -> rolling Ardennes
+  SILVERSTONE:[[0,2],[0.3,6],[0.6,3],[0.85,6],[1,2]],          // gentle rolls
+  SUZUKA:[[0,3],[0.15,10],[0.3,16],[0.45,12],[0.6,6],[0.78,15],[0.9,8],[1,3]],   // figure-8 elevation
+  SPA:[[0,12],[0.04,3],[0.07,6],[0.12,28],[0.16,30],[0.24,25],[0.34,18],[0.48,8],[0.62,12],[0.76,22],[0.88,17],[0.95,14],[1,12]]  // pit straight -> La Source dip -> Eau Rouge/Raidillon climb -> Kemmel high -> rolling Ardennes
 };
 function elevSample(prof,frac){ frac=((frac%1)+1)%1;
   for(let k=0;k<prof.length-1;k++){ const a=prof[k],b=prof[k+1];
@@ -246,9 +262,19 @@ function skirt(sgn){ const W0=95, pos=[],uvs=[],idx=[];
   const geo=new THREE.BufferGeometry(); geo.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));
   geo.setAttribute('uv',new THREE.Float32BufferAttribute(uvs,2)); geo.setIndex(idx); geo.computeVertexNormals();
   const m=new THREE.Mesh(geo,grass.material); m.receiveShadow=true; return m; }
+// trackside advertising hoardings — a textured band sitting on top of the barriers
+function adBand(offFn,y0,y1){ const pos=[],uv=[],idx=[],L=SAMP/3;
+  for(let i=0;i<SAMP;i++){ const p=P[i],n=Nn[i],o=offFn(i),x=p.x+n.x*o,z=p.z+n.z*o;
+    pos.push(x,p.y+y0,z); pos.push(x,p.y+y1,z); uv.push(i/SAMP*L,1); uv.push(i/SAMP*L,0); }
+  for(let i=0;i<SAMP;i++){ const a=i*2,b=i*2+1,c=((i+1)%SAMP)*2,d=((i+1)%SAMP)*2+1; idx.push(a,b,c,b,d,c); }
+  const geo=new THREE.BufferGeometry(); geo.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));
+  geo.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2)); geo.setIndex(idx); geo.computeVertexNormals();
+  const m=new THREE.Mesh(geo,adMat); m.receiveShadow=true; return m; }
 function buildTrack(tr){
   const rev = (tr.rev!==false);   // TUMFTM order drives reversed in-game; reverse to the real racing direction (set a track's rev:false to keep original)
-  const data = rev ? tr.data.slice().reverse().map(p=>[p[0],p[1],p[3],p[2]]) : tr.data;
+  let data = rev ? tr.data.slice().reverse().map(p=>[p[0],p[1],p[3],p[2]]) : tr.data.slice();
+  const st0 = tr.start||0;        // rotate so centreline index 0 sits on the real start/finish line
+  { const sh=((Math.round(st0*data.length))%data.length+data.length)%data.length; if(sh) data=data.slice(sh).concat(data.slice(0,sh)); }
   disposeGroup(trackGroup);
   const curve=new THREE.CatmullRomCurve3(data.map(p=>new THREE.Vector3(p[0],0,p[1])),true,'centripetal');
   TLEN=curve.getLength(); SPM=SAMP/TLEN;
@@ -272,6 +298,8 @@ function buildTrack(tr){
   trackGroup.add(skirt(1)); trackGroup.add(skirt(-1));                             // grassy embankments down to ground level
   trackGroup.add(wall(i=>WL[i]+7,1.1));                                            // continuous Armco walls
   trackGroup.add(wall(i=>-(WR[i]+7),1.1));
+  trackGroup.add(adBand(i=>WL[i]+7.05,1.1,2.7));                                   // sponsor hoardings above the barriers
+  trackGroup.add(adBand(i=>-(WR[i]+7.05),1.1,2.7));
   // start/finish + gantry
   { const p=P[0],n=Nn[0],wid=WL[0]+WR[0];
     const sf=new THREE.Mesh(new THREE.PlaneGeometry(wid,5),startMat); sf.rotation.x=-Math.PI/2; sf.rotation.z=Math.atan2(n.x,n.z); sf.position.set(p.x,p.y+0.05,p.z); sf.receiveShadow=true; trackGroup.add(sf);
@@ -279,7 +307,7 @@ function buildTrack(tr){
     const beam=new THREE.Mesh(new THREE.BoxGeometry(wid+3,1.2,0.8),gantryMat); beam.position.set(p.x,p.y+8,p.z); beam.rotation.y=Math.atan2(n.x,n.z); beam.castShadow=true; trackGroup.add(beam); }
   // pit lane — from per-track pit data {from,to,side}
   { const pit=tr.pit;
-    if(pit){ const side=(rev?-pit.side:pit.side), pfrom=(rev?(1-pit.to+1)%1:pit.from), pto=(rev?(1-pit.from+1)%1:pit.to), w0=(i)=> side<0 ? WR[i] : WL[i];
+    if(pit){ const side=(rev?-pit.side:pit.side), pfrom=(((rev?(1-pit.to+1)%1:pit.from)-st0)%1+1)%1, pto=(((rev?(1-pit.from+1)%1:pit.to)-st0)%1+1)%1, w0=(i)=> side<0 ? WR[i] : WL[i];
       // build wrapping index list from `from`..`to` (fractions of a lap)
       const i0=Math.floor(pfrom*SAMP)%SAMP, i1=Math.floor(pto*SAMP)%SAMP, idxs=[];
       { let i=i0, guard=0; while(guard++<SAMP){ idxs.push(i); if(i===i1) break; i=(i+1)%SAMP; } }
@@ -301,7 +329,7 @@ function buildTrack(tr){
         for(let k=0;k<idxs.length-1;k++){ const a=k*2,b=k*2+1,c=(k+1)*2,d=(k+1)*2+1; idx.push(a,b,c,b,d,c); }
         const geo=new THREE.BufferGeometry(); geo.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));
         geo.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2)); geo.setIndex(idx); geo.computeVertexNormals();
-        const pw=new THREE.Mesh(geo,wallMat); pw.castShadow=true; pw.receiveShadow=true; trackGroup.add(pw); }
+        const pw=new THREE.Mesh(geo,concreteMat); pw.castShadow=true; pw.receiveShadow=true; trackGroup.add(pw); }
       // garage boxes along the outer side of the pit road, facing it
       const garageMat=new THREE.MeshStandardMaterial({color:0x33363d,metalness:0.4,roughness:0.6});
       const NG=8;
@@ -309,7 +337,7 @@ function buildTrack(tr){
         const p=P[i], n=Nn[i], W=w0(i), off=side*(W+3+PW+3.2), ang=Math.atan2(T[i].x,T[i].z);
         const box=new THREE.Mesh(new THREE.BoxGeometry(4,3,6),garageMat); box.position.set(p.x+n.x*off,p.y+1.5,p.z+n.z*off); box.rotation.y=ang; box.castShadow=true; box.receiveShadow=true; trackGroup.add(box); } } }
   // grandstands (crowd) + roofs — from per-track stands data
-  (tr.stands||[]).forEach(s=>{ const at=(rev?(1-s.at+1)%1:s.at), sside=(rev?-s.side:s.side); const i=Math.floor(at*SAMP)%SAMP, p=P[i], n=Nn[i], ang=Math.atan2(T[i].x,T[i].z);
+  (tr.stands||[]).forEach(s=>{ const at=(((rev?(1-s.at+1)%1:s.at)-st0)%1+1)%1, sside=(rev?-s.side:s.side); const i=Math.floor(at*SAMP)%SAMP, p=P[i], n=Nn[i], ang=Math.atan2(T[i].x,T[i].z);
     const off = sside<0 ? -(WR[i]+14) : (WL[i]+14);                          // beside the track, not across it
     const st=new THREE.Mesh(new THREE.BoxGeometry(8,11,s.len),standMat); st.position.set(p.x+n.x*off,p.y+5.5,p.z+n.z*off); st.rotation.y=ang; st.castShadow=true; st.receiveShadow=true; trackGroup.add(st);
     const roof=new THREE.Mesh(new THREE.BoxGeometry(9,0.6,s.len+2),gantryMat); roof.position.set(p.x+n.x*off,p.y+11.6,p.z+n.z*off); roof.rotation.y=ang; trackGroup.add(roof); });
