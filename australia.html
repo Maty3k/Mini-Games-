@@ -303,9 +303,11 @@ function buildTrack(tr){
   clearTo.length=0;                                                               // distance to the nearest non-adjacent track section (huge except where the track passes near itself)
   for(let i=0;i<SAMP;i++){ let m=1e12; for(let j=0;j<SAMP;j+=2){ const cd=Math.min((j-i+SAMP)%SAMP,(i-j+SAMP)%SAMP); if(cd<60) continue; const dx=P[i].x-P[j].x,dz=P[i].z-P[j].z,d=dx*dx+dz*dz; if(d<m)m=d; } clearTo.push(Math.sqrt(m)); }
   vSafe.length=0;                                                                 // speed-limit profile: max speed a car can physically hold (turn rate caps ~1.35 rad/s, so v <= 1.35*R)
-  { const ds=TLEN/SAMP; for(let i=0;i<SAMP;i++){ const a=T[(i-3+SAMP)%SAMP],b=T[(i+3)%SAMP];
-      let dth=Math.abs(Math.atan2(a.x,a.z)-Math.atan2(b.x,b.z)); if(dth>Math.PI)dth=2*Math.PI-dth;
-      const R=dth>1e-3 ? (6*ds)/dth : 1e5; vSafe.push(Math.max(8, Math.min(82, 1.35*R*0.78))); }
+  { const ds=TLEN/SAMP; for(let i=0;i<SAMP;i++){ let v=82;                         // multi-scale: a tight chicane's L-R cancels over a wide span, so also sample a NARROW span and take the tightest
+      for(const sp of [2,4]){ const a=T[(i-sp+SAMP)%SAMP],b=T[(i+sp)%SAMP];
+        let dth=Math.abs(Math.atan2(a.x,a.z)-Math.atan2(b.x,b.z)); if(dth>Math.PI)dth=2*Math.PI-dth;
+        const R=dth>1e-3 ? (2*sp*ds)/dth : 1e5; v=Math.min(v, 1.35*R*0.78); }
+      vSafe.push(Math.max(8, Math.min(82, v))); }
     for(let pass=0;pass<600;pass++){ let ch=false;                                // propagate braking zones backward: must already be slow enough to brake into each corner
       for(let i=SAMP-1;i>=0;i--){ const nx=vSafe[(i+1)%SAMP], lim=Math.sqrt(nx*nx+2*15*ds); if(lim<vSafe[i]-0.02){vSafe[i]=lim;ch=true;} } if(!ch)break; } }
   trackGroup.add(ribbon(i=>WL[i],i=>-WR[i],SAMP/6,roadMat));                       // road
