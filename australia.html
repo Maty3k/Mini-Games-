@@ -239,7 +239,7 @@ function elevSample(prof,frac){ frac=((frac%1)+1)%1;
 function gradeAt(i){ return GR[i]||0; }
 function trackHeightAt(i){ return (P[i]&&P[i].y)||0; }
 // true if (x,z) is clear of every NON-adjacent part of the centreline (used to keep props/skirts off other track sections at crossovers)
-function farFromOtherTrack(x,z,hi,minD){ const md=minD*minD; for(let j=0;j<SAMP;j+=2){ const cd=Math.min((j-hi+SAMP)%SAMP,(hi-j+SAMP)%SAMP); if(cd<60) continue; const dx=x-P[j].x,dz=z-P[j].z; if(dx*dx+dz*dz<md) return false; } return true; }
+function farFromOtherTrack(x,z,hi,minD){ const md=minD*minD; for(let j=0;j<SAMP;j++){ const cd=Math.min((j-hi+SAMP)%SAMP,(hi-j+SAMP)%SAMP); if(cd<8) continue; const dx=x-P[j].x,dz=z-P[j].z; if(dx*dx+dz*dz<md) return false; } return true; }
 // smooth road-surface height under the car: interpolate between samples along the track (no stair-step bounce on slopes)
 function groundY(){ const i=carIdx, t=T[i]; if(!t) return car.position.y;
   const fwd=(car.position.x-P[i].x)*t.x+(car.position.z-P[i].z)*t.z, seg=Math.max(0.5,TLEN/SAMP);
@@ -352,12 +352,14 @@ function buildTrack(tr){
       const garageMat=new THREE.MeshStandardMaterial({color:0x33363d,metalness:0.4,roughness:0.6});
       const NG=8;
       for(let g=0;g<NG;g++){ const k=Math.floor((g+0.5)/NG*(idxs.length-1)); const i=idxs[Math.max(0,Math.min(idxs.length-1,k))];
-        const p=P[i], n=Nn[i], W=w0(i), off=side*(W+3+PW+3.2), ang=Math.atan2(T[i].x,T[i].z);
-        const box=new THREE.Mesh(new THREE.BoxGeometry(4,3,6),garageMat); box.position.set(p.x+n.x*off,p.y+1.5,p.z+n.z*off); box.rotation.y=ang; box.castShadow=true; box.receiveShadow=true; trackGroup.add(box); } } }
+        const p=P[i], n=Nn[i], W=w0(i), off=side*(W+3+PW+3.2), ang=Math.atan2(T[i].x,T[i].z), gx=p.x+n.x*off, gz=p.z+n.z*off;
+        if(!farFromOtherTrack(gx,gz,i,11)) continue;                            // skip a garage that lands on another track section
+        const box=new THREE.Mesh(new THREE.BoxGeometry(4,3,6),garageMat); box.position.set(gx,p.y+1.5,gz); box.rotation.y=ang; box.castShadow=true; box.receiveShadow=true; trackGroup.add(box); } } }
   // grandstands (crowd) + roofs — from per-track stands data
   (tr.stands||[]).forEach(s=>{ const at=(((rev?(1-s.at+1)%1:s.at)-st0)%1+1)%1, sside=(rev?-s.side:s.side); const i=Math.floor(at*SAMP)%SAMP, p=P[i], n=Nn[i], ang=Math.atan2(T[i].x,T[i].z);
     const off = sside<0 ? -(WR[i]+14) : (WL[i]+14);                          // beside the track, not across it
-    const sx=p.x+n.x*off, sz=p.z+n.z*off; if(!farFromOtherTrack(sx,sz,i,18)) return;   // not on a crossing section
+    const sx=p.x+n.x*off, sz=p.z+n.z*off, hl=s.len/2, tlx=T[i].x*hl, tlz=T[i].z*hl;   // skip if the box (centre or either end) lands on any track section
+    if(!farFromOtherTrack(sx,sz,i,15) || !farFromOtherTrack(sx+tlx,sz+tlz,i,11) || !farFromOtherTrack(sx-tlx,sz-tlz,i,11)) return;
     const st=new THREE.Mesh(new THREE.BoxGeometry(8,11,s.len),standMat); st.position.set(sx,p.y+5.5,sz); st.rotation.y=ang; st.castShadow=true; st.receiveShadow=true; trackGroup.add(st);
     const roof=new THREE.Mesh(new THREE.BoxGeometry(9,0.6,s.len+2),gantryMat); roof.position.set(sx,p.y+11.6,sz); roof.rotation.y=ang; trackGroup.add(roof); });
   // trees
@@ -377,7 +379,7 @@ function buildTrack(tr){
     const line=new THREE.Mesh(new THREE.PlaneGeometry(wid,2.6),new THREE.MeshStandardMaterial({color:0x18ff5a,emissive:0x10c040,emissiveIntensity:0.9,roughness:0.5}));
     line.rotation.x=-Math.PI/2; line.rotation.z=Math.atan2(n.x,n.z); line.position.set(p.x,p.y+0.06,p.z); trackGroup.add(line);
     [1,-1].forEach(sd=>{ const b=new THREE.Mesh(new THREE.BoxGeometry(2.6,1.5,0.2),new THREE.MeshStandardMaterial({color:0x0c8a35,emissive:0x18ff5a,emissiveIntensity:0.5}));
-      b.position.set(p.x+n.x*(wid/2+1.6)*sd,p.y+2,p.z+n.z*(wid/2+1.6)*sd); b.rotation.y=Math.atan2(n.x,n.z); b.castShadow=true; trackGroup.add(b); }); } }
+      b.position.set(p.x+n.x*(wid/2+4)*sd,p.y+2,p.z+n.z*(wid/2+4)*sd); b.rotation.y=Math.atan2(n.x,n.z); b.castShadow=true; trackGroup.add(b); }); } }   // boards well outside the kerb
   // minimap bounds
   { let a=1e9,b=-1e9,c=1e9,d=-1e9; for(const p of P){a=Math.min(a,p.x);b=Math.max(b,p.x);c=Math.min(c,p.z);d=Math.max(d,p.z);} mb={a,b,c,d}; }
 }
