@@ -276,8 +276,9 @@ function adBand(offFn,y0,y1){ const pos=[],uv=[],idx=[],L=SAMP/3;
   geo.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2)); geo.setIndex(idx); geo.computeVertexNormals();
   const m=new THREE.Mesh(geo,adMat); m.receiveShadow=true; return m; }
 function buildTrack(tr){
-  const rev = (tr.rev!==false);   // TUMFTM order drives reversed in-game; reverse to the real racing direction (set a track's rev:false to keep original)
+  const rev = (tr.rev!==false);   // set rev:false to keep the source point order (the real racing direction for these circuits)
   let data = rev ? tr.data.slice().reverse().map(p=>[p[0],p[1],p[3],p[2]]) : tr.data.slice();
+  data = data.map(p=>[-p[0],p[1],p[3],p[2]]);   // un-mirror: the TUMFTM frame is left-right flipped, so reflect X + swap L/R widths -> driver goes the real (clockwise) way with corners on the correct side
   const st0 = tr.start||0;        // rotate so centreline index 0 sits on the real start/finish line
   { const sh=((Math.round(st0*data.length))%data.length+data.length)%data.length; if(sh) data=data.slice(sh).concat(data.slice(0,sh)); }
   disposeGroup(trackGroup);
