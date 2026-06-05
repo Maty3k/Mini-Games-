@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SKYHAWK — Neon Arcade</title>
+<link rel="stylesheet" href="style.css">
+<script src="sfx.js"></script>
+<script src="three.min.js"></script>
+<style>:root{ --accent: var(--neon-cyan); }
+  .status{ font-family:'Press Start 2P',monospace; font-size:13px; color:var(--neon-pink);
+    text-align:center; min-height:16px; margin-top:14px; }
+  .d3-badge{ font-family:'Press Start 2P',monospace; font-size:9px; color:var(--neon-violet);
+    border:1px solid var(--neon-violet); border-radius:3px; padding:3px 6px; letter-spacing:1px; }
+  .hint b{ color:var(--neon-cyan); }
+</style>
+</head>
+<body>
+  <div class="crt-on" aria-hidden="true"></div>
+  <div class="crt-lines" aria-hidden="true"></div>
+  <div class="crt-glass" aria-hidden="true"></div>
+
+  <nav class="gamebar">
+    <a class="back" href="index.html">‹ ARCADE</a>
+    <h1 class="game-title">SKYHAWK</h1>
+    <span class="d3-badge">▣ 3D</span>
+  </nav>
+
+  <div class="stage">
+    <div class="hud">
+      <span>SCORE <b id="score">0</b></span>
+      <span>GATES <b id="gates">0</b></span>
+      <span>SPD <b id="spd">0</b></span>
+      <span>ALT <b id="alt">0</b></span>
+      <span>LIVES <b id="lives">♥♥♥</b></span>
+      <span>BEST <b id="best">0</b></span>
+    </div>
+    <canvas id="c" width="480" height="480"></canvas>
+    <p class="status" id="status">Fly through the neon gates. Don't hit the deck.</p>
+    <button class="btn" id="start">PRESS START</button>
+    <p class="hint"><span class="key">↑↓</span> pitch · <span class="key">←→</span> roll · <span class="key">A D</span> rudder · <span class="key">W S</span> throttle · <span class="key">⇧</span> boost</p>
+  </div>
+
+<script>
+const cv=document.getElementById('c');
+const scoreEl=document.getElementById('score'), gatesEl=document.getElementById('gates'),
+      spdEl=document.getElementById('spd'), altEl=document.getElementById('alt'),
+      livesEl=document.getElementById('lives'), bestEl=document.getElementById('best'),
+      statusEl=document.getElementById('status'), startBtn=document.getElementById('start');
+let best=+(localStorage.skyhawkBest||0); bestEl.textContent=best;
+
+// ---------- renderer / scene ----------
+const SKY=0x0a0420;
+const renderer=new THREE.WebGLRenderer({canvas:cv, antialias:true});
+renderer.setSize(480,480,false);
+renderer.setClearColor(SKY,1);
+const scene=new THREE.Scene();
+scene.fog=new THREE.FogExp2(SKY, 0.0016);
+const camera=new THREE.PerspectiveCamera(72,1,0.5,3000);
+
+// sky gradient backdrop (big inverted dome that rides with the camera)
+(function(){
+  const cnv=document.createElement('canvas'); cnv.width=4; cnv.height=256;
+  const g=cnv.getContext('2d').createLinearGradient(0,0,0,256);
+  g.addColorStop(0.0,'#1a0b4e'); g.addColorStop(0.45,'#3a0f63');
+  g.addColorStop(0.62,'#9a1c6e'); g.addColorStop(0.74,'#ff3d7f');
+  g.addColorStop(0.8,'#2a0a3a'); g.addColorStop(1.0,'#05010f');
+  const cx=cnv.getContext('2d'); cx.fillStyle=g; cx.fillRect(0,0,4,256);
+  const tex=new THREE.CanvasTexture(cnv);
+  const dome=new THREE.Mesh(new THREE.SphereGeometry(2000,24,16),
+    new THREE.MeshBasicMaterial({map:tex,side:THREE.BackSide,fog:false,depthWrite:false}));
+  scene.add(dome); scene.userData.dome=dome;
+})();
+// neon sun disc near the horizon
+const sun=new THREE.Mesh(new THREE.CircleGeometry(150,40),
+  new THREE.MeshBasicMaterial({color:0xffb03a,fog:false,transparent:true,opacity:0.85,depthWrite:false}));
+scene.add(sun);
+
+// ---------- terrain (infinite wireframe height-field) ----------
+function terrainH(x,z){
+  return Math.sin(x*0.012)*16 + Math.cos(z*0.015)*16
+       + Math.sin((x+z)*0.006)*30
+       + Math.sin(x*0.0032)*Math.cos(z*0.0041)*64
+       + Math.cos(x*0.021+z*0.017)*7;
+}
+const GN=70, GS=26;                 // grid cells, cell size (world units)
+const SPAN=GN*GS;                   // total grid extent
+const gpos=[];                      // line-segment endpoints
+// build horizontal + vertical grid lines as one LineSegments buffer
+for(let j=0;j<=GN;j++) for(let i=0;i<GN;i++){       // along X
+  gpos.push((i-GN/2)*GS,0,(j-GN/2)*GS, (i+1-GN/2)*GS,0,(j-GN/2)*GS); }
+for(let i=0;i<=GN;i++) for(let j=0;j<GN;j++){       // along Z
+  gpos.push((i-GN/2)*GS,0,(j-GN/2)*GS, (i-GN/2)*GS,0,(j+1-GN/2)*GS); }
+const gArr=new Float32Array(gpos);
+const gGeo=new THREE.BufferGeometry();
+gGeo.setAttribute('position',new THREE.BufferAttribute(gArr,3));
+const terrain=new THREE.LineSegments(gGeo,
+  new THREE.LineBasicMaterial({color:0x16d0ff,transparent:true,opacity:0.55}));
+scene.add(terrain);
+let terrOX=0, terrOZ=0;             // snapped grid origin
+function refreshTerrain(px,pz){
+  terrOX=Math.round(px/GS)*GS; terrOZ=Math.round(pz/GS)*GS;
+  for(let k=0;k<gArr.length;k+=3){
+    gArr[k+1]=terrainH(gArr[k]+terrOX, gArr[k+2]+terrOZ);
+  }
+  gGeo.attributes.position.needsUpdate=true;
+  terrain.position.set(terrOX,0,terrOZ);
+}
+
+// ---------- the aircraft ----------
+const PLANE_COL=0xc9ff3d;
+const plane=new THREE.Group();
+function wf(geo,col){ return new THREE.Mesh(geo,new THREE.MeshBasicMaterial({color:col,wireframe:true})); }
+const fuse=wf(new THREE.CylinderGeometry(0.55,1.0,7,8),PLANE_COL);
+fuse.rotation.x=Math.PI/2; plane.add(fuse);             // nose toward -Z
+const nose=wf(new THREE.ConeGeometry(0.55,2.4,8),PLANE_COL);
+nose.rotation.x=-Math.PI/2; nose.position.z=-4.2; plane.add(nose);
+const wing=wf(new THREE.BoxGeometry(13,0.25,2.6),0x16d0ff);
+wing.position.z=0.4; plane.add(wing);
+const tail=wf(new THREE.BoxGeometry(5,0.22,1.6),0x16d0ff);
+tail.position.set(0,0,3.2); plane.add(tail);
+const fin=wf(new THREE.BoxGeometry(0.22,2.2,1.6),0xff3d7f);
+fin.position.set(0,1.0,3.2); plane.add(fin);
+scene.add(plane);
+// afterburner glow trail
+const TRAILN=26;
+const trailPos=new Float32Array(TRAILN*3);
+const trailGeo=new THREE.BufferGeometry();
+trailGeo.setAttribute('position',new THREE.BufferAttribute(trailPos,3));
+const trail=new THREE.Points(trailGeo,
+  new THREE.PointsMaterial({color:0xff7b2e,size:1.4,transparent:true,opacity:0.7}));
+scene.add(trail);
+
+// ---------- neon gate course ----------
+// The rings form one continuous, gently-weaving course rather than scattered
+// targets. `course` is an ordered ring buffer: course[0] is always the next gate
+// to fly through; clearing it regenerates that ring at the far end of the path.
+const GATEN=7, GATE_R=15, GATE_TUBE=1.2, GAP=150;
+const gateCols=[0x36ffb0,0xffd319,0x25f4ee,0xff36d0,0xb14bff,0x7bff4b];
+const course=[];
+for(let i=0;i<GATEN;i++){
+  const g=new THREE.Mesh(new THREE.TorusGeometry(GATE_R,GATE_TUBE,10,40),
+    new THREE.MeshBasicMaterial({color:gateCols[i%gateCols.length],wireframe:true}));
+  scene.add(g);
+  course.push({mesh:g, dir:new THREE.Vector3(0,0,-1), prevSide:-1});
+}
+// faint guide-ribbon threading the rings together so the route reads as a course
+const ribbonPos=new Float32Array(GATEN*3);
+const ribbonGeo=new THREE.BufferGeometry();
+ribbonGeo.setAttribute('position',new THREE.BufferAttribute(ribbonPos,3));
+const ribbon=new THREE.Line(ribbonGeo,
+  new THREE.LineBasicMaterial({color:0x39c6ff,transparent:true,opacity:0.4}));
+scene.add(ribbon);
+
+// course generator — advances a virtual "pen" that weaves & undulates
+const genPos=new THREE.Vector3(); let genYaw=0, genPitch=0;
+const _gq=new THREE.Quaternion(), _gq2=new THREE.Quaternion(), _gdir=new THREE.Vector3(), _gAX=new THREE.Vector3();
+function genForward(out){
+  _gq.setFromAxisAngle(WUP,genYaw);
+  _gq2.setFromAxisAngle(_gAX.set(1,0,0),genPitch); _gq.multiply(_gq2);
+  out.set(0,0,-1).applyQuaternion(_gq);
+}
+function genInto(ring){
+  genForward(_gdir);
+  genPos.addScaledVector(_gdir, GAP);
+  const ground=terrainH(genPos.x,genPos.z);
+  genPos.y=Math.max(ground+GATE_R+24, Math.min(ground+260, genPos.y));  // stay flyable
+  ring.dir.copy(_gdir);
+  ring.prevSide=-1;
+  ring.mesh.position.copy(genPos);
+  ring.mesh.lookAt(genPos.clone().add(_gdir));     // hole faces along the route
+  // evolve heading/pitch for the NEXT ring (gentle weave, undulate toward level)
+  genYaw   += (Math.random()-0.5)*0.7;
+  genPitch  = Math.max(-0.3, Math.min(0.3, (genPitch + (Math.random()-0.5)*0.3)*0.85));
+}
+function initCourse(){
+  genPos.copy(pos); genYaw=yaw; genPitch=0;
+  for(const ring of course) genInto(ring);
+  course.forEach((r,i)=>{ tmpV.copy(pos).sub(r.mesh.position); r.prevSide=tmpV.dot(r.dir); });
+}
+function advanceCourse(){
+  const old=course.shift(); genInto(old); course.push(old);
+  const nt=course[0]; tmpV.copy(pos).sub(nt.mesh.position); nt.prevSide=tmpV.dot(nt.dir);
+}
+
+// crash debris burst
+const DEBN=60;
+const debPos=new Float32Array(DEBN*3), debVel=new Float32Array(DEBN*3);
+const debGeo=new THREE.BufferGeometry();
+debGeo.setAttribute('position',new THREE.BufferAttribute(debPos,3));
+const debris=new THREE.Points(debGeo,
+  new THREE.PointsMaterial({color:0xff2e97,size:2.0,transparent:true,opacity:0}));
+scene.add(debris);
+let debLife=0;
+function burst(p,col){
+  debris.material.color.set(col); debris.material.opacity=1; debLife=1;
+  for(let i=0;i<DEBN;i++){
+    debPos[i*3]=p.x; debPos[i*3+1]=p.y; debPos[i*3+2]=p.z;
+    debVel[i*3]=(Math.random()-0.5)*70; debVel[i*3+1]=Math.random()*55; debVel[i*3+2]=(Math.random()-0.5)*70;
+  }
+  debGeo.attributes.position.needsUpdate=true;
+}
+
+// ---------- state & math helpers ----------
+const FWD=new THREE.Vector3(), RIGHT=new THREE.Vector3(), UP=new THREE.Vector3();
+const WUP=new THREE.Vector3(0,1,0);
+const tmpV=new THREE.Vector3(), tmpV2=new THREE.Vector3();
+const camPos=new THREE.Vector3(), camLook=new THREE.Vector3(), camUp=new THREE.Vector3(0,1,0);
+const quat=new THREE.Quaternion();
+const dq=new THREE.Quaternion();
+const AX=new THREE.Vector3();
+const pos=new THREE.Vector3();
+// decoupled flight angles: heading (yaw, world Y), pitch (climb), bank (visual roll)
+let yaw, pitch, bank;
+let speed, score, dist, gateCount, alive, raf, lastT, lives, shake, flash;
+
+// orientation = yaw(world Y) · pitch(local X) · roll(local Z). Built this way the
+// forward/heading depend only on yaw+pitch; bank is a pure visual roll that feeds
+// the coordinated turn — no gimbal coupling between the three controls.
+function buildQuat(){
+  quat.setFromAxisAngle(WUP, yaw);
+  dq.setFromAxisAngle(AX.set(1,0,0), pitch); quat.multiply(dq);
+  dq.setFromAxisAngle(AX.set(0,0,1), -bank); quat.multiply(dq);
+}
+function vectors(){
+  FWD.set(0,0,-1).applyQuaternion(quat);
+  RIGHT.set(1,0,0).applyQuaternion(quat);
+  UP.set(0,1,0).applyQuaternion(quat);
+}
+function setLives(n){ lives=n; livesEl.textContent='♥'.repeat(Math.max(0,n))||'—'; }
+
+function reset(){
+  yaw=0; pitch=0; bank=0; buildQuat();
+  pos.set(0,terrainH(0,0)+120,0);
+  speed=70; dist=0; score=0; gateCount=0; alive=true;
+  shake=0; flash=0; debLife=0; debris.material.opacity=0;
+  setLives(3);
+  scoreEl.textContent=0; gatesEl.textContent=0;
+  vectors(); refreshTerrain(pos.x,pos.z);
+  for(let i=0;i<TRAILN;i++){ trailPos[i*3]=pos.x; trailPos[i*3+1]=pos.y; trailPos[i*3+2]=pos.z; }
+  trailGeo.attributes.position.needsUpdate=true;
+  initCourse();
+  plane.position.copy(pos); plane.quaternion.copy(quat); plane.visible=true;
+}
+
+function crash(){
+  setLives(lives-1);
+  SFX.explode(); burst(pos,0xff7b2e);
+  shake=1.2; flash=1; plane.visible=false;
+  if(lives<=0) return die();
+  // bounce back up to a safe altitude, level out (keep heading)
+  pitch=0; bank=0; buildQuat();
+  pos.y=terrainH(pos.x,pos.z)+120; speed=70;
+  vectors();
+  setTimeout(()=>{ if(alive) plane.visible=true; },420);
+}
+
+let keyPitch=0,keyRoll=0,keyYaw=0,keyThr=0,boost=false;
+
+function frame(now){
+  if(!alive) return;
+  const dt=Math.min(0.05,(now-lastT)/1000||0.016); lastT=now;
+  vectors();
+
+  // ----- throttle -----
+  const MINS=42, MAXS=210;
+  speed += keyThr*60*dt;
+  if(boost) speed += 120*dt;
+  speed=Math.max(MINS,Math.min(MAXS,speed));
+
+  // ----- flight dynamics (decoupled angles) -----
+  // bank: roll input rolls; releasing auto-levels the wings (arcade feel)
+  if(keyRoll!==0) bank += keyRoll*1.9*dt;
+  else bank -= Math.sign(bank)*Math.min(Math.abs(bank), 2.0*dt);
+  bank=Math.max(-1.2,Math.min(1.2,bank));
+  // pitch: climb/dive, clamped short of vertical so you never flip
+  pitch += keyPitch*0.95*dt;
+  pitch=Math.max(-1.3,Math.min(1.3,pitch));
+  // heading: rudder + coordinated bank-turn (banking toward a wing turns that way)
+  yaw += (keyYaw*0.8 + bank*1.25)*dt;
+  buildQuat();
+
+  // ----- integrate position -----
+  vectors();
+  pos.addScaledVector(FWD, speed*dt);
+  dist += speed*dt;
+
+  // ----- terrain follow / crash -----
+  if(Math.abs(pos.x-terrOX)>GS*1.5 || Math.abs(pos.z-terrOZ)>GS*1.5) refreshTerrain(pos.x,pos.z);
+  const ground=terrainH(pos.x,pos.z);
+  const agl=pos.y-ground;
+  if(agl<3){ pos.y=ground+3; crash(); }
+
+  // ----- score from distance -----
+  score=Math.floor(dist/12)+gateCount*250;
+  scoreEl.textContent=score;
+  spdEl.textContent=Math.round(speed);
+  altEl.textContent=Math.round(pos.y);
+
+  // ----- gate course -----
+  // only the next ring (course[0]) is "live"; clearing it advances the route.
+  const target=course[0];
+  tmpV.copy(pos).sub(target.mesh.position);        // player relative to the ring
+  const side=tmpV.dot(target.dir);                 // <0 = before plane, >0 = past it
+  tmpV2.copy(target.dir).multiplyScalar(side);
+  const latd=tmpV.sub(tmpV2).length();             // offset from the hole centre
+  if(target.prevSide<0 && side>=0){                // crossed the ring's plane
+    if(latd<GATE_R-1.0){
+      gateCount++; gatesEl.textContent=gateCount;
+      SFX.coin(); flash=0.45;
+      target.mesh.material.color.set(0xffffff);
+    } else { SFX.tick(); flash=0.25; }
+    advanceCourse();
+  } else {
+    target.prevSide=side;
+  }
+  // if we've wandered far off the route, lay down a fresh course ahead of us
+  if(tmpV.copy(course[0].mesh.position).sub(pos).length()>720) initCourse();
+  // visuals: highlight + pulse the live ring, thread the guide-ribbon
+  course.forEach((r,i)=>{
+    r.mesh.rotation.z+=dt*0.5;
+    if(i===0){ r.mesh.material.color.set(0xbfffe9); r.mesh.scale.setScalar(1+0.07*Math.sin(now*0.007)); }
+    else { r.mesh.material.color.set(gateCols[i%gateCols.length]); r.mesh.scale.setScalar(1); }
+    ribbonPos[i*3]=r.mesh.position.x; ribbonPos[i*3+1]=r.mesh.position.y; ribbonPos[i*3+2]=r.mesh.position.z;
+  });
+  ribbonGeo.attributes.position.needsUpdate=true;
+
+  // ----- afterburner trail -----
+  for(let i=TRAILN-1;i>0;i--){ trailPos[i*3]=trailPos[(i-1)*3]; trailPos[i*3+1]=trailPos[(i-1)*3+1]; trailPos[i*3+2]=trailPos[(i-1)*3+2]; }
+  tmpV.copy(pos).addScaledVector(FWD,-4);
+  trailPos[0]=tmpV.x; trailPos[1]=tmpV.y; trailPos[2]=tmpV.z;
+  trailGeo.attributes.position.needsUpdate=true;
+  trail.material.opacity=boost?0.95:0.6;
+  trail.material.size=boost?2.2:1.4;
+
+  // ----- debris -----
+  if(debLife>0){ debLife-=dt*1.1;
+    for(let i=0;i<DEBN;i++){ debPos[i*3]+=debVel[i*3]*dt; debVel[i*3+1]-=80*dt; debPos[i*3+1]+=debVel[i*3+1]*dt; debPos[i*3+2]+=debVel[i*3+2]*dt; }
+    debGeo.attributes.position.needsUpdate=true; debris.material.opacity=Math.max(0,debLife);
+  }
+
+  // ----- aircraft transform -----
+  plane.position.copy(pos); plane.quaternion.copy(quat);
+
+  // ----- chase camera -----
+  vectors();
+  camPos.copy(pos).addScaledVector(FWD,-22).addScaledVector(UP,6).addScaledVector(WUP,2);
+  if(shake>0){ shake-=dt*2.2; const m=Math.max(0,shake)*4;
+    camPos.x+=(Math.random()-0.5)*m; camPos.y+=(Math.random()-0.5)*m; camPos.z+=(Math.random()-0.5)*m; }
+  camera.position.lerp(camPos,0.12);
+  camLook.copy(pos).addScaledVector(FWD,30);
+  camUp.lerp(tmpV.copy(WUP).lerp(UP,0.5).normalize(),0.1);
+  camera.up.copy(camUp);
+  camera.lookAt(camLook);
+
+  // sky dome + sun ride with the camera
+  scene.userData.dome.position.copy(camera.position);
+  tmpV.set(0,0,-1).applyQuaternion(camera.quaternion);
+  sun.position.copy(camera.position).addScaledVector(tmpV.set(FWD.x,0,FWD.z).normalize(),1600);
+  sun.position.y=camera.position.y-120;
+  sun.lookAt(camera.position);
+
+  // ----- red flash on hit -----
+  if(flash>0){ flash-=dt*2.5; cv.style.boxShadow='inset 0 0 90px rgba(255,46,151,'+Math.max(0,flash)+')'; }
+  else if(cv.style.boxShadow){ cv.style.boxShadow=''; }
+
+  renderer.render(scene,camera);
+  raf=requestAnimationFrame(frame);
+}
+
+function die(){
+  alive=false; cancelAnimationFrame(raf);
+  setTimeout(()=>SFX.gameover(),140);
+  if(score>best){ best=score; bestEl.textContent=best; localStorage.skyhawkBest=best; statusEl.textContent='★ NEW BEST '+score+' ★'; }
+  else statusEl.textContent='WENT DOWN · SCORE '+score;
+  statusEl.style.color='var(--neon-pink)';
+  cv.style.boxShadow='';
+  startBtn.textContent='FLY AGAIN'; startBtn.style.display='inline-block';
+}
+function begin(){
+  SFX.select(); reset(); startBtn.style.display='none';
+  statusEl.textContent='CLEARED FOR TAKEOFF'; statusEl.style.color='var(--neon-lime)';
+  cancelAnimationFrame(raf); lastT=performance.now(); raf=requestAnimationFrame(frame);
+}
+startBtn.onclick=begin;
+
+// ---------- input ----------
+function setk(e,v){
+  const k=e.key.toLowerCase();
+  if(k==='arrowup'){keyPitch=v? 1:0;e.preventDefault();}
+  else if(k==='arrowdown'){keyPitch=v?-1:0;e.preventDefault();}
+  else if(k==='arrowleft'){keyRoll=v? 1:0;e.preventDefault();}
+  else if(k==='arrowright'){keyRoll=v?-1:0;e.preventDefault();}
+  else if(k==='a'){keyYaw=v? 1:0;}
+  else if(k==='d'){keyYaw=v?-1:0;}
+  else if(k==='w'){keyThr=v? 1:0;}
+  else if(k==='s'){keyThr=v?-1:0;}
+  else if(k==='shift'){boost=v;}
+}
+addEventListener('keydown',e=>setk(e,true));
+addEventListener('keyup',e=>setk(e,false));
+// pointer drag: pitch (vertical) + roll (horizontal) like a flight stick
+let dragging=false,dragX=0,dragY=0;
+cv.addEventListener('pointerdown',e=>{dragging=true;dragX=e.clientX;dragY=e.clientY;});
+addEventListener('pointermove',e=>{ if(!dragging)return;
+  const dx=(e.clientX-dragX)/40, dy=(e.clientY-dragY)/40;
+  keyRoll=Math.max(-1,Math.min(1,-dx)); keyPitch=Math.max(-1,Math.min(1,-dy));
+});
+addEventListener('pointerup',()=>{dragging=false;keyRoll=0;keyPitch=0;});
+
+// ---------- initial idle frame ----------
+reset(); alive=false;
+camera.position.copy(pos).addScaledVector(FWD,-22).addScaledVector(UP,6);
+camera.lookAt(pos.clone().addScaledVector(FWD,30));
+scene.userData.dome.position.copy(camera.position);
+renderer.render(scene,camera);
+</script>
+</body>
+</html>
