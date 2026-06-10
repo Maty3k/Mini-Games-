@@ -7,12 +7,22 @@
 <link rel="stylesheet" href="style.css">
 <script src="sfx.js"></script>
 <script src="three.min.js"></script>
+<script src="lib/Sky.js"></script>
+<script src="lib/RGBELoader.js"></script>
+<script src="lib/CopyShader.js"></script>
+<script src="lib/LuminosityHighPassShader.js"></script>
+<script src="lib/FXAAShader.js"></script>
+<script src="lib/EffectComposer.js"></script>
+<script src="lib/RenderPass.js"></script>
+<script src="lib/ShaderPass.js"></script>
+<script src="lib/UnrealBloomPass.js"></script>
 <style>:root{ --accent: var(--neon-cyan); }
   .status{ font-family:'Press Start 2P',monospace; font-size:13px; color:var(--neon-pink);
     text-align:center; min-height:16px; margin-top:14px; }
   .d3-badge{ font-family:'Press Start 2P',monospace; font-size:9px; color:var(--neon-violet);
     border:1px solid var(--neon-violet); border-radius:3px; padding:3px 6px; letter-spacing:1px; }
   .hint b{ color:var(--neon-cyan); }
+  canvas#c{ border-radius:6px; box-shadow:0 0 22px rgba(0,0,0,.5); image-rendering:auto; width:100%; max-width:640px; height:auto; display:block; margin:0 auto; }
 </style>
 </head>
 <body>
@@ -35,223 +45,252 @@
       <span>LIVES <b id="lives">♥♥♥</b></span>
       <span>BEST <b id="best">0</b></span>
     </div>
-    <canvas id="c" width="480" height="480"></canvas>
-    <p class="status" id="status">Fly through the neon gates. Don't hit the deck.</p>
+    <canvas id="c" width="640" height="480"></canvas>
+    <p class="status" id="status">Fly through the gates. Don't hit the deck.</p>
     <button class="btn" id="start">PRESS START</button>
     <p class="hint"><span class="key">↑↓</span> pitch · <span class="key">←→</span> roll · <span class="key">A D</span> rudder · <span class="key">W S</span> throttle · <span class="key">⇧</span> boost</p>
   </div>
 
 <script>
-const cv=document.getElementById('c');
+const cv=document.getElementById('c'); const VW=640, VH=480;
 const scoreEl=document.getElementById('score'), gatesEl=document.getElementById('gates'),
       spdEl=document.getElementById('spd'), altEl=document.getElementById('alt'),
       livesEl=document.getElementById('lives'), bestEl=document.getElementById('best'),
       statusEl=document.getElementById('status'), startBtn=document.getElementById('start');
 let best=+(localStorage.skyhawkBest||0); bestEl.textContent=best;
 
-// ---------- renderer / scene ----------
-const SKY=0x0a0420;
+// ---------- renderer / scene (realistic: sRGB, ACES tone-map, soft shadows, bloom) ----------
 const renderer=new THREE.WebGLRenderer({canvas:cv, antialias:true});
-renderer.setSize(480,480,false);
-renderer.setClearColor(SKY,1);
+renderer.setSize(VW,VH,false);
+renderer.outputEncoding=THREE.sRGBEncoding;
+renderer.toneMapping=THREE.ACESFilmicToneMapping; renderer.toneMappingExposure=0.62;
+renderer.shadowMap.enabled=true; renderer.shadowMap.type=THREE.PCFSoftShadowMap;
 const scene=new THREE.Scene();
-scene.fog=new THREE.FogExp2(SKY, 0.0016);
-const camera=new THREE.PerspectiveCamera(72,1,0.5,3000);
+const HAZE=0xcddcea;
+scene.fog=new THREE.Fog(HAZE, 700, 4200);            // aerial perspective — distant mountains fade into haze
+const camera=new THREE.PerspectiveCamera(70,VW/VH,0.5,30000);
 
-// sky gradient backdrop (big inverted dome that rides with the camera)
-(function(){
-  const cnv=document.createElement('canvas'); cnv.width=4; cnv.height=256;
-  const g=cnv.getContext('2d').createLinearGradient(0,0,0,256);
-  g.addColorStop(0.0,'#1a0b4e'); g.addColorStop(0.45,'#3a0f63');
-  g.addColorStop(0.62,'#9a1c6e'); g.addColorStop(0.74,'#ff3d7f');
-  g.addColorStop(0.8,'#2a0a3a'); g.addColorStop(1.0,'#05010f');
-  const cx=cnv.getContext('2d'); cx.fillStyle=g; cx.fillRect(0,0,4,256);
-  const tex=new THREE.CanvasTexture(cnv);
-  const dome=new THREE.Mesh(new THREE.SphereGeometry(2000,24,16),
-    new THREE.MeshBasicMaterial({map:tex,side:THREE.BackSide,fog:false,depthWrite:false}));
-  scene.add(dome); scene.userData.dome=dome;
-})();
-// neon sun disc near the horizon
-const sun=new THREE.Mesh(new THREE.CircleGeometry(150,40),
-  new THREE.MeshBasicMaterial({color:0xffb03a,fog:false,transparent:true,opacity:0.85,depthWrite:false}));
-scene.add(sun);
-
-// ---------- terrain (infinite wireframe height-field) ----------
-function terrainH(x,z){
-  return Math.sin(x*0.012)*16 + Math.cos(z*0.015)*16
-       + Math.sin((x+z)*0.006)*30
-       + Math.sin(x*0.0032)*Math.cos(z*0.0041)*64
-       + Math.cos(x*0.021+z*0.017)*7;
+// ---------- physically-scattered sky + sun ----------
+const sky=new THREE.Sky(); sky.scale.setScalar(20000); scene.add(sky);
+{ const u=sky.material.uniforms; u['turbidity'].value=4.2; u['rayleigh'].value=2.0; u['mieCoefficient'].value=0.006; u['mieDirectionalG'].value=0.8; }
+const sunDir=new THREE.Vector3();
+const sun=new THREE.DirectionalLight(0xfff2dc, 3.4); sun.castShadow=true;
+sun.shadow.mapSize.set(2048,2048); sun.shadow.camera.near=1; sun.shadow.camera.far=900;
+{ const S=260; sun.shadow.camera.left=-S; sun.shadow.camera.right=S; sun.shadow.camera.top=S; sun.shadow.camera.bottom=-S; }
+sun.shadow.bias=-0.0004;
+scene.add(sun, sun.target);
+const hemi=new THREE.HemisphereLight(0xbcd6ff, 0x4a5a3a, 0.55); scene.add(hemi);
+function setSun(elevDeg, azimDeg){
+  const phi=THREE.MathUtils.degToRad(90-elevDeg), theta=THREE.MathUtils.degToRad(azimDeg);
+  sunDir.setFromSphericalCoords(1,phi,theta);
+  sky.material.uniforms['sunPosition'].value.copy(sunDir);
 }
-const GN=70, GS=26;                 // grid cells, cell size (world units)
-const SPAN=GN*GS;                   // total grid extent
-const gpos=[];                      // line-segment endpoints
-// build horizontal + vertical grid lines as one LineSegments buffer
-for(let j=0;j<=GN;j++) for(let i=0;i<GN;i++){       // along X
-  gpos.push((i-GN/2)*GS,0,(j-GN/2)*GS, (i+1-GN/2)*GS,0,(j-GN/2)*GS); }
-for(let i=0;i<=GN;i++) for(let j=0;j<GN;j++){       // along Z
-  gpos.push((i-GN/2)*GS,0,(j-GN/2)*GS, (i-GN/2)*GS,0,(j+1-GN/2)*GS); }
-const gArr=new Float32Array(gpos);
-const gGeo=new THREE.BufferGeometry();
-gGeo.setAttribute('position',new THREE.BufferAttribute(gArr,3));
-const terrain=new THREE.LineSegments(gGeo,
-  new THREE.LineBasicMaterial({color:0x16d0ff,transparent:true,opacity:0.55}));
-scene.add(terrain);
-let terrOX=0, terrOZ=0;             // snapped grid origin
+setSun(16, 120);
+// environment reflections from the sky itself (so the metal jet & sea reflect the real sky)
+const pmrem=new THREE.PMREMGenerator(renderer); pmrem.compileEquirectangularShader();
+{ const envScene=new THREE.Scene(); const skyEnv=new THREE.Sky(); skyEnv.scale.setScalar(20000);
+  skyEnv.material.uniforms['sunPosition'].value.copy(sunDir);
+  ['turbidity','rayleigh','mieCoefficient','mieDirectionalG'].forEach(k=>skyEnv.material.uniforms[k].value=sky.material.uniforms[k].value);
+  envScene.add(skyEnv); scene.environment=pmrem.fromScene(envScene).texture; }
+
+// ---------- shared textures ----------
+const texL=new THREE.TextureLoader();
+function loadTex(file,rep,enc){ const t=texL.load('assets/textures/'+file); t.wrapS=t.wrapT=THREE.RepeatWrapping; t.repeat.set(rep,rep); t.anisotropy=8; if(enc!==false)t.encoding=THREE.sRGBEncoding; return t; }
+
+// ---------- terrain: solid mountainous height-field rising from a reflective sea ----------
+// layered sines → organic ridged mountains; lowlands sit near/below sea level (y=0)
+function fbm(x,z){ let v=0,a=1,fx=x,fz=z; for(let o=0;o<5;o++){ v+=a*Math.sin(fx)*Math.cos(fz); fx=fx*1.93+1.7; fz=fz*2.07-0.9; a*=0.52; } return v; }
+function terrainH(x,z){
+  const X=x*0.00060, Z=z*0.00060;
+  let m=0,a=1,fx=X,fz=Z;
+  for(let o=0;o<5;o++){ m+=a*Math.abs(Math.sin(fx)+0.7*Math.cos(fz*1.27)); fx=fx*1.91+1.3; fz=fz*2.13-0.7; a*=0.55; }   // ridged
+  const mountains=Math.pow(Math.max(0,m*0.42),1.7)*270;       // tall ridged peaks
+  const ranges=Math.max(0,fbm(x*0.0011, z*0.0013))*95;        // broad high ground between the ranges
+  const hills=fbm(x*0.0024, z*0.0028)*28;
+  const detail=Math.sin(x*0.010)*Math.cos(z*0.012)*7;
+  return -50 + mountains + ranges + hills + detail;            // valleys dip below sea (y=0) → lakes/coastline
+}
+const SEA=0;
+function deckH(x,z){ return Math.max(SEA, terrainH(x,z)); }     // collision deck = land or sea surface
+const GN=150, GS=34, SPAN=GN*GS;                               // grid resolution / cell size / extent
+const terrMat=new THREE.MeshStandardMaterial({ vertexColors:true, roughness:0.96, metalness:0.0,
+  map:loadTex('gravel_diff.jpg',GN*0.5), normalMap:texL.load('assets/textures/asphalt_nor.jpg') });
+terrMat.normalMap.wrapS=terrMat.normalMap.wrapT=THREE.RepeatWrapping; terrMat.normalMap.repeat.set(GN*0.5,GN*0.5); terrMat.normalScale=new THREE.Vector2(0.4,0.4);
+const terrGeo=new THREE.PlaneGeometry(SPAN,SPAN,GN,GN); terrGeo.rotateX(-Math.PI/2);
+terrGeo.setAttribute('color', new THREE.BufferAttribute(new Float32Array((GN+1)*(GN+1)*3),3));
+const terrain=new THREE.Mesh(terrGeo,terrMat); terrain.receiveShadow=true; terrain.castShadow=true; scene.add(terrain);
+let terrOX=1e9, terrOZ=1e9;
+const _c=[0,0,0];
+function terrainColor(h, slopeY, out){
+  let r,g,b;
+  if(h<4){ r=0.74; g=0.67; b=0.49; }                                            // beach sand
+  else if(h>205){ const t=Math.min(1,(h-205)/110); r=0.82+0.15*t; g=0.84+0.14*t; b=0.86+0.13*t; }  // snow
+  else { const t=Math.min(1,Math.max(0,(h-26)/170)); r=0.16+0.28*t; g=0.33-0.12*t; b=0.12+0.07*t; } // grass → brown
+  if(slopeY<0.78){ const k=Math.min(1,(0.78-slopeY)/0.32); r=r*(1-k)+0.40*k; g=g*(1-k)+0.38*k; b=b*(1-k)+0.35*k; }  // steep → rock
+  out[0]=r; out[1]=g; out[2]=b;
+}
 function refreshTerrain(px,pz){
   terrOX=Math.round(px/GS)*GS; terrOZ=Math.round(pz/GS)*GS;
-  for(let k=0;k<gArr.length;k+=3){
-    gArr[k+1]=terrainH(gArr[k]+terrOX, gArr[k+2]+terrOZ);
-  }
-  gGeo.attributes.position.needsUpdate=true;
   terrain.position.set(terrOX,0,terrOZ);
+  const pos=terrGeo.attributes.position, col=terrGeo.attributes.color, e=GS;
+  for(let i=0;i<pos.count;i++){
+    const wx=pos.getX(i)+terrOX, wz=pos.getZ(i)+terrOZ;
+    const h=terrainH(wx,wz); pos.setY(i,h);
+    const hx=terrainH(wx+e,wz)-terrainH(wx-e,wz), hz=terrainH(wx,wz+e)-terrainH(wx,wz-e);
+    const inv=1/Math.hypot(hx, 2*e, hz), sy=2*e*inv;            // surface normal .y → slope
+    terrainColor(h, sy, _c); col.setXYZ(i,_c[0],_c[1],_c[2]);
+  }
+  pos.needsUpdate=true; col.needsUpdate=true; terrGeo.computeVertexNormals();
 }
+// sea
+const sea=new THREE.Mesh(new THREE.PlaneGeometry(40000,40000),
+  new THREE.MeshStandardMaterial({color:0x163d5c, roughness:0.08, metalness:0.0, envMapIntensity:1.2}));
+sea.rotation.x=-Math.PI/2; sea.position.y=SEA-0.2; sea.receiveShadow=true; scene.add(sea);
 
-// ---------- the aircraft ----------
-const PLANE_COL=0xc9ff3d;
+// ---------- clouds (soft camera-facing puffs that re-seed around the plane) ----------
+const cloudTex=(function(){ const c=document.createElement('canvas'); c.width=c.height=160; const g=c.getContext('2d');
+  for(let i=0;i<20;i++){ const x=30+Math.random()*100, y=40+Math.random()*70, r=22+Math.random()*34;
+    const rg=g.createRadialGradient(x,y,0,x,y,r); rg.addColorStop(0,'rgba(255,255,255,1)'); rg.addColorStop(0.55,'rgba(252,253,255,0.85)'); rg.addColorStop(1,'rgba(255,255,255,0)');
+    g.fillStyle=rg; g.beginPath(); g.arc(x,y,r,0,7); g.fill(); }
+  const t=new THREE.CanvasTexture(c); t.encoding=THREE.sRGBEncoding; return t; })();
+const CLOUDN=46, clouds=[];
+const cloudMat=new THREE.SpriteMaterial({map:cloudTex, color:0xffffff, transparent:true, opacity:0.9, depthWrite:false, fog:true});
+for(let i=0;i<CLOUDN;i++){ const s=new THREE.Sprite(cloudMat.clone()); const sc=200+Math.random()*360; s.scale.set(sc,sc*0.6,1); scene.add(s); clouds.push(s); }
+let cloudOX=1e9, cloudOZ=1e9;
+function reseedClouds(px,pz,py){ cloudOX=px; cloudOZ=pz;
+  clouds.forEach(s=>{ const a=Math.random()*6.283, r=260+Math.random()*2700;
+    s.position.set(px+Math.cos(a)*r, py-70+Math.random()*300, pz+Math.sin(a)*r);   // banked around the flight altitude so you fly past/through them
+    s.material.opacity=0.72+Math.random()*0.26; }); }
+
+// ---------- the aircraft (PBR metal jet) ----------
 const plane=new THREE.Group();
-function wf(geo,col){ return new THREE.Mesh(geo,new THREE.MeshBasicMaterial({color:col,wireframe:true})); }
-const fuse=wf(new THREE.CylinderGeometry(0.55,1.0,7,8),PLANE_COL);
-fuse.rotation.x=Math.PI/2; plane.add(fuse);             // nose toward -Z
-const nose=wf(new THREE.ConeGeometry(0.55,2.4,8),PLANE_COL);
-nose.rotation.x=-Math.PI/2; nose.position.z=-4.2; plane.add(nose);
-const wing=wf(new THREE.BoxGeometry(13,0.25,2.6),0x16d0ff);
-wing.position.z=0.4; plane.add(wing);
-const tail=wf(new THREE.BoxGeometry(5,0.22,1.6),0x16d0ff);
-tail.position.set(0,0,3.2); plane.add(tail);
-const fin=wf(new THREE.BoxGeometry(0.22,2.2,1.6),0xff3d7f);
-fin.position.set(0,1.0,3.2); plane.add(fin);
-scene.add(plane);
-// afterburner glow trail
-const TRAILN=26;
+const bodyMat=new THREE.MeshPhysicalMaterial({color:0x3a4a63, metalness:0.65, roughness:0.34, clearcoat:0.6, clearcoatRoughness:0.3});
+const wingMat=new THREE.MeshStandardMaterial({color:0x55617a, metalness:0.6, roughness:0.45});
+const trimMat=new THREE.MeshStandardMaterial({color:0xcf3b34, metalness:0.4, roughness:0.45});
+const metalMat=new THREE.MeshStandardMaterial({color:0x70757d, metalness:0.95, roughness:0.3});
+const glassMat=new THREE.MeshPhysicalMaterial({color:0x0a1018, metalness:0.1, roughness:0.05, transparent:true, opacity:0.55, clearcoat:1});
+function buildJet(){
+  // fuselage — smooth lathe profile, nose toward -Z
+  const prof=[[0.0,0],[0.32,0.25],[0.55,1.0],[0.74,2.4],[0.82,4.2],[0.78,6.2],[0.6,7.8],[0.34,8.7],[0.0,9.2]].map(p=>new THREE.Vector2(p[0],p[1]));
+  const fuse=new THREE.Mesh(new THREE.LatheGeometry(prof,24), bodyMat);
+  fuse.rotation.x=-Math.PI/2; fuse.position.z=4.6; plane.add(fuse);     // center body around origin, nose at -Z
+  // nose probe
+  const probe=new THREE.Mesh(new THREE.ConeGeometry(0.06,1.2,8), metalMat); probe.rotation.x=-Math.PI/2; probe.position.z=-5.2; plane.add(probe);
+  // main wings — swept delta, extruded thin then laid flat
+  const ws=new THREE.Shape(); ws.moveTo(0,-1.2); ws.lineTo(7.4,2.6); ws.lineTo(7.4,3.5); ws.lineTo(0.6,2.4); ws.lineTo(-0.6,2.4); ws.lineTo(-7.4,3.5); ws.lineTo(-7.4,2.6); ws.lineTo(0,-1.2);
+  const wing=new THREE.Mesh(new THREE.ExtrudeGeometry(ws,{depth:0.16,bevelEnabled:false}), wingMat);
+  wing.rotation.x=Math.PI/2; wing.position.set(0,-0.1,0.5); plane.add(wing);
+  // wingtip trim
+  [-1,1].forEach(s=>{ const t=new THREE.Mesh(new THREE.BoxGeometry(1.6,0.14,0.9), trimMat); t.position.set(s*6.7,-0.05,2.9); t.rotation.y=s*0.4; plane.add(t); });
+  // horizontal stabilisers
+  const ts=new THREE.Shape(); ts.moveTo(0,2.3); ts.lineTo(3.4,4.0); ts.lineTo(3.4,4.6); ts.lineTo(-3.4,4.6); ts.lineTo(-3.4,4.0); ts.lineTo(0,2.3);
+  const tail=new THREE.Mesh(new THREE.ExtrudeGeometry(ts,{depth:0.13,bevelEnabled:false}), wingMat);
+  tail.rotation.x=Math.PI/2; tail.position.set(0,0.05,0.3); plane.add(tail);
+  // vertical fin (Y-Z triangle extruded along X)
+  const fs=new THREE.Shape(); fs.moveTo(0,3.0); fs.lineTo(0.4,4.7); fs.lineTo(2.4,4.7); fs.lineTo(2.0,3.0); fs.lineTo(0,3.0);
+  const fin=new THREE.Mesh(new THREE.ExtrudeGeometry(fs,{depth:0.12,bevelEnabled:false}), wingMat);
+  fin.rotation.y=Math.PI/2; fin.position.set(-0.06,0.4,0); plane.add(fin);
+  const finTrim=new THREE.Mesh(new THREE.BoxGeometry(0.13,1.5,0.5), trimMat); finTrim.position.set(0,1.5,4.55); plane.add(finTrim);
+  // canopy
+  const cano=new THREE.Mesh(new THREE.SphereGeometry(0.62,18,12), glassMat); cano.scale.set(1,0.7,2.1); cano.position.set(0,0.62,-1.6); plane.add(cano);
+  // engine nozzle + afterburner
+  const noz=new THREE.Mesh(new THREE.CylinderGeometry(0.5,0.62,0.9,16), metalMat); noz.rotation.x=Math.PI/2; noz.position.z=5.0; plane.add(noz);
+  const burn=new THREE.Mesh(new THREE.ConeGeometry(0.42,2.6,16), new THREE.MeshBasicMaterial({color:0x8ad8ff, transparent:true, opacity:0.85, blending:THREE.AdditiveBlending, depthWrite:false}));
+  burn.rotation.x=Math.PI/2; burn.position.z=6.4; plane.add(burn); plane.userData.burn=burn;
+  plane.traverse(o=>{ if(o.isMesh){ o.castShadow=true; } });
+}
+buildJet(); scene.add(plane);
+
+// afterburner trail — additive glowing points (bloom picks them up)
+const TRAILN=30;
 const trailPos=new Float32Array(TRAILN*3);
-const trailGeo=new THREE.BufferGeometry();
-trailGeo.setAttribute('position',new THREE.BufferAttribute(trailPos,3));
-const trail=new THREE.Points(trailGeo,
-  new THREE.PointsMaterial({color:0xff7b2e,size:1.4,transparent:true,opacity:0.7}));
+const trailGeo=new THREE.BufferGeometry(); trailGeo.setAttribute('position',new THREE.BufferAttribute(trailPos,3));
+const trail=new THREE.Points(trailGeo, new THREE.PointsMaterial({color:0x8fd6ff,size:2.2,transparent:true,opacity:0.7,blending:THREE.AdditiveBlending,depthWrite:false}));
 scene.add(trail);
 
-// ---------- neon gate course ----------
-// The rings form one continuous, gently-weaving course rather than scattered
-// targets. `course` is an ordered ring buffer: course[0] is always the next gate
-// to fly through; clearing it regenerates that ring at the far end of the path.
-const GATEN=7, GATE_R=15, GATE_TUBE=1.2, GAP=150;
-const gateCols=[0x36ffb0,0xffd319,0x25f4ee,0xff36d0,0xb14bff,0x7bff4b];
+// ---------- glowing race-gate course ----------
+const GATEN=7, GATE_R=17, GATE_TUBE=1.3, GAP=160;
+const gateCols=[0x36ffb0,0xffd319,0x25f4ee,0xff36d0,0xb14bff,0xff7b2a];
 const course=[];
 for(let i=0;i<GATEN;i++){
-  const g=new THREE.Mesh(new THREE.TorusGeometry(GATE_R,GATE_TUBE,10,40),
-    new THREE.MeshBasicMaterial({color:gateCols[i%gateCols.length],wireframe:true}));
-  scene.add(g);
-  course.push({mesh:g, dir:new THREE.Vector3(0,0,-1), prevSide:-1});
+  const grp=new THREE.Group();
+  const col=gateCols[i%gateCols.length];
+  const ring=new THREE.Mesh(new THREE.TorusGeometry(GATE_R,GATE_TUBE,14,48),
+    new THREE.MeshStandardMaterial({color:col, emissive:col, emissiveIntensity:1.3, metalness:0.5, roughness:0.35}));
+  ring.castShadow=true;
+  const frame=new THREE.Mesh(new THREE.TorusGeometry(GATE_R+0.5,0.35,10,48), metalMat);
+  grp.add(ring); grp.add(frame); scene.add(grp);
+  course.push({grp, ring, col, dir:new THREE.Vector3(0,0,-1), prevSide:-1});
 }
-// faint guide-ribbon threading the rings together so the route reads as a course
+// faint guide ribbon threading the rings
 const ribbonPos=new Float32Array(GATEN*3);
-const ribbonGeo=new THREE.BufferGeometry();
-ribbonGeo.setAttribute('position',new THREE.BufferAttribute(ribbonPos,3));
-const ribbon=new THREE.Line(ribbonGeo,
-  new THREE.LineBasicMaterial({color:0x39c6ff,transparent:true,opacity:0.4}));
+const ribbonGeo=new THREE.BufferGeometry(); ribbonGeo.setAttribute('position',new THREE.BufferAttribute(ribbonPos,3));
+const ribbon=new THREE.Line(ribbonGeo, new THREE.LineBasicMaterial({color:0x8fe6ff,transparent:true,opacity:0.32,blending:THREE.AdditiveBlending,depthWrite:false}));
 scene.add(ribbon);
 
 // course generator — advances a virtual "pen" that weaves & undulates
 const genPos=new THREE.Vector3(); let genYaw=0, genPitch=0;
 const _gq=new THREE.Quaternion(), _gq2=new THREE.Quaternion(), _gdir=new THREE.Vector3(), _gAX=new THREE.Vector3();
-function genForward(out){
-  _gq.setFromAxisAngle(WUP,genYaw);
-  _gq2.setFromAxisAngle(_gAX.set(1,0,0),genPitch); _gq.multiply(_gq2);
-  out.set(0,0,-1).applyQuaternion(_gq);
-}
+function genForward(out){ _gq.setFromAxisAngle(WUP,genYaw); _gq2.setFromAxisAngle(_gAX.set(1,0,0),genPitch); _gq.multiply(_gq2); out.set(0,0,-1).applyQuaternion(_gq); }
 function genInto(ring){
   genForward(_gdir);
   genPos.addScaledVector(_gdir, GAP);
-  const ground=terrainH(genPos.x,genPos.z);
-  genPos.y=Math.max(ground+GATE_R+24, Math.min(ground+260, genPos.y));  // stay flyable
+  const ground=deckH(genPos.x,genPos.z);
+  genPos.y=Math.max(ground+GATE_R+26, Math.min(ground+300, genPos.y));   // keep flyable above terrain/sea
   ring.dir.copy(_gdir);
   ring.prevSide=-1;
-  ring.mesh.position.copy(genPos);
-  ring.mesh.lookAt(genPos.clone().add(_gdir));     // hole faces along the route
-  // evolve heading/pitch for the NEXT ring (gentle weave, undulate toward level)
-  genYaw   += (Math.random()-0.5)*0.7;
-  genPitch  = Math.max(-0.3, Math.min(0.3, (genPitch + (Math.random()-0.5)*0.3)*0.85));
+  ring.grp.position.copy(genPos);
+  ring.grp.lookAt(genPos.clone().add(_gdir));                            // hole faces along the route
+  genYaw  += (Math.random()-0.5)*0.7;
+  genPitch = Math.max(-0.28, Math.min(0.28, (genPitch+(Math.random()-0.5)*0.3)*0.85));
 }
-function initCourse(){
-  genPos.copy(pos); genYaw=yaw; genPitch=0;
-  for(const ring of course) genInto(ring);
-  course.forEach((r,i)=>{ tmpV.copy(pos).sub(r.mesh.position); r.prevSide=tmpV.dot(r.dir); });
-}
-function advanceCourse(){
-  const old=course.shift(); genInto(old); course.push(old);
-  const nt=course[0]; tmpV.copy(pos).sub(nt.mesh.position); nt.prevSide=tmpV.dot(nt.dir);
-}
+function initCourse(){ genPos.copy(pos); genYaw=yaw; genPitch=0; for(const r of course) genInto(r); course.forEach(r=>{ tmpV.copy(pos).sub(r.grp.position); r.prevSide=tmpV.dot(r.dir); }); }
+function advanceCourse(){ const old=course.shift(); genInto(old); course.push(old); const nt=course[0]; tmpV.copy(pos).sub(nt.grp.position); nt.prevSide=tmpV.dot(nt.dir); }
 
-// crash debris burst
-const DEBN=60;
+// ---------- crash debris (glowing embers) ----------
+const DEBN=70;
 const debPos=new Float32Array(DEBN*3), debVel=new Float32Array(DEBN*3);
-const debGeo=new THREE.BufferGeometry();
-debGeo.setAttribute('position',new THREE.BufferAttribute(debPos,3));
-const debris=new THREE.Points(debGeo,
-  new THREE.PointsMaterial({color:0xff2e97,size:2.0,transparent:true,opacity:0}));
+const debGeo=new THREE.BufferGeometry(); debGeo.setAttribute('position',new THREE.BufferAttribute(debPos,3));
+const debris=new THREE.Points(debGeo, new THREE.PointsMaterial({color:0xff8a2e,size:2.6,transparent:true,opacity:0,blending:THREE.AdditiveBlending,depthWrite:false}));
 scene.add(debris);
 let debLife=0;
-function burst(p,col){
-  debris.material.color.set(col); debris.material.opacity=1; debLife=1;
-  for(let i=0;i<DEBN;i++){
-    debPos[i*3]=p.x; debPos[i*3+1]=p.y; debPos[i*3+2]=p.z;
-    debVel[i*3]=(Math.random()-0.5)*70; debVel[i*3+1]=Math.random()*55; debVel[i*3+2]=(Math.random()-0.5)*70;
-  }
-  debGeo.attributes.position.needsUpdate=true;
-}
+function burst(p){ debris.material.opacity=1; debLife=1;
+  for(let i=0;i<DEBN;i++){ debPos[i*3]=p.x; debPos[i*3+1]=p.y; debPos[i*3+2]=p.z;
+    debVel[i*3]=(Math.random()-0.5)*80; debVel[i*3+1]=Math.random()*62; debVel[i*3+2]=(Math.random()-0.5)*80; }
+  debGeo.attributes.position.needsUpdate=true; }
 
 // ---------- state & math helpers ----------
 const FWD=new THREE.Vector3(), RIGHT=new THREE.Vector3(), UP=new THREE.Vector3();
 const WUP=new THREE.Vector3(0,1,0);
 const tmpV=new THREE.Vector3(), tmpV2=new THREE.Vector3();
 const camPos=new THREE.Vector3(), camLook=new THREE.Vector3(), camUp=new THREE.Vector3(0,1,0);
-const quat=new THREE.Quaternion();
-const dq=new THREE.Quaternion();
-const AX=new THREE.Vector3();
+const quat=new THREE.Quaternion(), dq=new THREE.Quaternion(), AX=new THREE.Vector3();
 const pos=new THREE.Vector3();
-// decoupled flight angles: heading (yaw, world Y), pitch (climb), bank (visual roll)
 let yaw, pitch, bank;
 let speed, score, dist, gateCount, alive, raf, lastT, lives, shake, flash;
 
-// orientation = yaw(world Y) · pitch(local X) · roll(local Z). Built this way the
-// forward/heading depend only on yaw+pitch; bank is a pure visual roll that feeds
-// the coordinated turn — no gimbal coupling between the three controls.
-function buildQuat(){
-  quat.setFromAxisAngle(WUP, yaw);
-  dq.setFromAxisAngle(AX.set(1,0,0), pitch); quat.multiply(dq);
-  dq.setFromAxisAngle(AX.set(0,0,1), -bank); quat.multiply(dq);
-}
-function vectors(){
-  FWD.set(0,0,-1).applyQuaternion(quat);
-  RIGHT.set(1,0,0).applyQuaternion(quat);
-  UP.set(0,1,0).applyQuaternion(quat);
-}
+// orientation = yaw(world Y) · pitch(local X) · roll(local Z) — no gimbal coupling between controls
+function buildQuat(){ quat.setFromAxisAngle(WUP, yaw); dq.setFromAxisAngle(AX.set(1,0,0), pitch); quat.multiply(dq); dq.setFromAxisAngle(AX.set(0,0,1), -bank); quat.multiply(dq); }
+function vectors(){ FWD.set(0,0,-1).applyQuaternion(quat); RIGHT.set(1,0,0).applyQuaternion(quat); UP.set(0,1,0).applyQuaternion(quat); }
 function setLives(n){ lives=n; livesEl.textContent='♥'.repeat(Math.max(0,n))||'—'; }
 
 function reset(){
   yaw=0; pitch=0; bank=0; buildQuat();
-  pos.set(0,terrainH(0,0)+120,0);
-  speed=70; dist=0; score=0; gateCount=0; alive=true;
+  pos.set(0,deckH(0,0)+150,0);
+  speed=80; dist=0; score=0; gateCount=0; alive=true;
   shake=0; flash=0; debLife=0; debris.material.opacity=0;
-  setLives(3);
-  scoreEl.textContent=0; gatesEl.textContent=0;
-  vectors(); refreshTerrain(pos.x,pos.z);
+  setLives(3); scoreEl.textContent=0; gatesEl.textContent=0;
+  vectors(); refreshTerrain(pos.x,pos.z); reseedClouds(pos.x,pos.z,pos.y);
   for(let i=0;i<TRAILN;i++){ trailPos[i*3]=pos.x; trailPos[i*3+1]=pos.y; trailPos[i*3+2]=pos.z; }
   trailGeo.attributes.position.needsUpdate=true;
   initCourse();
   plane.position.copy(pos); plane.quaternion.copy(quat); plane.visible=true;
 }
-
 function crash(){
-  setLives(lives-1);
-  SFX.explode(); burst(pos,0xff7b2e);
+  setLives(lives-1); SFX.explode(); burst(pos);
   shake=1.2; flash=1; plane.visible=false;
   if(lives<=0) return die();
-  // bounce back up to a safe altitude, level out (keep heading)
-  pitch=0; bank=0; buildQuat();
-  pos.y=terrainH(pos.x,pos.z)+120; speed=70;
-  vectors();
+  pitch=0; bank=0; buildQuat(); pos.y=deckH(pos.x,pos.z)+150; speed=80; vectors();
   setTimeout(()=>{ if(alive) plane.visible=true; },420);
 }
 
@@ -261,110 +300,73 @@ function frame(now){
   if(!alive) return;
   const dt=Math.min(0.05,(now-lastT)/1000||0.016); lastT=now;
   vectors();
-
-  // ----- throttle -----
-  const MINS=42, MAXS=210;
-  speed += keyThr*60*dt;
-  if(boost) speed += 120*dt;
+  // throttle
+  const MINS=46, MAXS=230;
+  speed += keyThr*64*dt; if(boost) speed += 130*dt;
   speed=Math.max(MINS,Math.min(MAXS,speed));
-
-  // ----- flight dynamics (decoupled angles) -----
-  // bank: roll input rolls; releasing auto-levels the wings (arcade feel)
-  if(keyRoll!==0) bank += keyRoll*1.9*dt;
-  else bank -= Math.sign(bank)*Math.min(Math.abs(bank), 2.0*dt);
+  // flight dynamics (decoupled angles, auto-levelling bank, coordinated turn)
+  if(keyRoll!==0) bank += keyRoll*1.9*dt; else bank -= Math.sign(bank)*Math.min(Math.abs(bank), 2.0*dt);
   bank=Math.max(-1.2,Math.min(1.2,bank));
-  // pitch: climb/dive, clamped short of vertical so you never flip
-  pitch += keyPitch*0.95*dt;
-  pitch=Math.max(-1.3,Math.min(1.3,pitch));
-  // heading: rudder + coordinated bank-turn (banking toward a wing turns that way)
+  pitch += keyPitch*0.95*dt; pitch=Math.max(-1.3,Math.min(1.3,pitch));
   yaw += (keyYaw*0.8 + bank*1.25)*dt;
   buildQuat();
-
-  // ----- integrate position -----
-  vectors();
-  pos.addScaledVector(FWD, speed*dt);
-  dist += speed*dt;
-
-  // ----- terrain follow / crash -----
-  if(Math.abs(pos.x-terrOX)>GS*1.5 || Math.abs(pos.z-terrOZ)>GS*1.5) refreshTerrain(pos.x,pos.z);
-  const ground=terrainH(pos.x,pos.z);
-  const agl=pos.y-ground;
+  // integrate
+  vectors(); pos.addScaledVector(FWD, speed*dt); dist += speed*dt;
+  // terrain follow / crash
+  if(Math.abs(pos.x-terrOX)>GS*2 || Math.abs(pos.z-terrOZ)>GS*2) refreshTerrain(pos.x,pos.z);
+  if(Math.abs(pos.x-cloudOX)>1400 || Math.abs(pos.z-cloudOZ)>1400) reseedClouds(pos.x,pos.z,pos.y);
+  const ground=deckH(pos.x,pos.z), agl=pos.y-ground;
   if(agl<3){ pos.y=ground+3; crash(); }
-
-  // ----- score from distance -----
+  // score / hud
   score=Math.floor(dist/12)+gateCount*250;
-  scoreEl.textContent=score;
-  spdEl.textContent=Math.round(speed);
-  altEl.textContent=Math.round(pos.y);
-
-  // ----- gate course -----
-  // only the next ring (course[0]) is "live"; clearing it advances the route.
+  scoreEl.textContent=score; spdEl.textContent=Math.round(speed); altEl.textContent=Math.round(pos.y);
+  // gate course
   const target=course[0];
-  tmpV.copy(pos).sub(target.mesh.position);        // player relative to the ring
-  const side=tmpV.dot(target.dir);                 // <0 = before plane, >0 = past it
+  tmpV.copy(pos).sub(target.grp.position);
+  const side=tmpV.dot(target.dir);
   tmpV2.copy(target.dir).multiplyScalar(side);
-  const latd=tmpV.sub(tmpV2).length();             // offset from the hole centre
-  if(target.prevSide<0 && side>=0){                // crossed the ring's plane
-    if(latd<GATE_R-1.0){
-      gateCount++; gatesEl.textContent=gateCount;
-      SFX.coin(); flash=0.45;
-      target.mesh.material.color.set(0xffffff);
-    } else { SFX.tick(); flash=0.25; }
+  const latd=tmpV.sub(tmpV2).length();
+  if(target.prevSide<0 && side>=0){
+    if(latd<GATE_R-1.0){ gateCount++; gatesEl.textContent=gateCount; SFX.coin(); flash=0.4; }
+    else { SFX.tick(); flash=0.22; }
     advanceCourse();
-  } else {
-    target.prevSide=side;
-  }
-  // if we've wandered far off the route, lay down a fresh course ahead of us
-  if(tmpV.copy(course[0].mesh.position).sub(pos).length()>720) initCourse();
-  // visuals: highlight + pulse the live ring, thread the guide-ribbon
+  } else target.prevSide=side;
+  if(tmpV.copy(course[0].grp.position).sub(pos).length()>820) initCourse();
+  // ring visuals — pulse/brighten the live ring, thread the guide ribbon
   course.forEach((r,i)=>{
-    r.mesh.rotation.z+=dt*0.5;
-    if(i===0){ r.mesh.material.color.set(0xbfffe9); r.mesh.scale.setScalar(1+0.07*Math.sin(now*0.007)); }
-    else { r.mesh.material.color.set(gateCols[i%gateCols.length]); r.mesh.scale.setScalar(1); }
-    ribbonPos[i*3]=r.mesh.position.x; ribbonPos[i*3+1]=r.mesh.position.y; ribbonPos[i*3+2]=r.mesh.position.z;
+    r.grp.rotation.z+=dt*0.4;
+    if(i===0){ r.ring.material.emissive.set(0xffffff); r.ring.material.emissiveIntensity=2.0; const s=1+0.06*Math.sin(now*0.007); r.grp.scale.setScalar(s); }
+    else { r.ring.material.emissive.set(r.col); r.ring.material.emissiveIntensity=1.2; r.grp.scale.setScalar(1); }
+    ribbonPos[i*3]=r.grp.position.x; ribbonPos[i*3+1]=r.grp.position.y; ribbonPos[i*3+2]=r.grp.position.z;
   });
   ribbonGeo.attributes.position.needsUpdate=true;
-
-  // ----- afterburner trail -----
+  // afterburner trail
   for(let i=TRAILN-1;i>0;i--){ trailPos[i*3]=trailPos[(i-1)*3]; trailPos[i*3+1]=trailPos[(i-1)*3+1]; trailPos[i*3+2]=trailPos[(i-1)*3+2]; }
-  tmpV.copy(pos).addScaledVector(FWD,-4);
-  trailPos[0]=tmpV.x; trailPos[1]=tmpV.y; trailPos[2]=tmpV.z;
+  tmpV.copy(pos).addScaledVector(FWD,-5); trailPos[0]=tmpV.x; trailPos[1]=tmpV.y; trailPos[2]=tmpV.z;
   trailGeo.attributes.position.needsUpdate=true;
-  trail.material.opacity=boost?0.95:0.6;
-  trail.material.size=boost?2.2:1.4;
-
-  // ----- debris -----
+  trail.material.opacity=boost?0.95:0.55; trail.material.size=boost?3.0:2.0;
+  plane.userData.burn.scale.setScalar(boost?1.5:0.9); plane.userData.burn.material.opacity=boost?0.95:0.7;
+  // debris
   if(debLife>0){ debLife-=dt*1.1;
-    for(let i=0;i<DEBN;i++){ debPos[i*3]+=debVel[i*3]*dt; debVel[i*3+1]-=80*dt; debPos[i*3+1]+=debVel[i*3+1]*dt; debPos[i*3+2]+=debVel[i*3+2]*dt; }
-    debGeo.attributes.position.needsUpdate=true; debris.material.opacity=Math.max(0,debLife);
-  }
-
-  // ----- aircraft transform -----
+    for(let i=0;i<DEBN;i++){ debPos[i*3]+=debVel[i*3]*dt; debVel[i*3+1]-=82*dt; debPos[i*3+1]+=debVel[i*3+1]*dt; debPos[i*3+2]+=debVel[i*3+2]*dt; }
+    debGeo.attributes.position.needsUpdate=true; debris.material.opacity=Math.max(0,debLife); }
+  // aircraft transform
   plane.position.copy(pos); plane.quaternion.copy(quat);
-
-  // ----- chase camera -----
+  // chase camera
   vectors();
-  camPos.copy(pos).addScaledVector(FWD,-22).addScaledVector(UP,6).addScaledVector(WUP,2);
-  if(shake>0){ shake-=dt*2.2; const m=Math.max(0,shake)*4;
-    camPos.x+=(Math.random()-0.5)*m; camPos.y+=(Math.random()-0.5)*m; camPos.z+=(Math.random()-0.5)*m; }
+  camPos.copy(pos).addScaledVector(FWD,-22).addScaledVector(UP,6).addScaledVector(WUP,2.5);
+  if(shake>0){ shake-=dt*2.2; const m=Math.max(0,shake)*4; camPos.x+=(Math.random()-0.5)*m; camPos.y+=(Math.random()-0.5)*m; camPos.z+=(Math.random()-0.5)*m; }
   camera.position.lerp(camPos,0.12);
-  camLook.copy(pos).addScaledVector(FWD,30);
-  camUp.lerp(tmpV.copy(WUP).lerp(UP,0.5).normalize(),0.1);
-  camera.up.copy(camUp);
+  camLook.copy(pos).addScaledVector(FWD,34);
+  camUp.lerp(tmpV.copy(WUP).lerp(UP,0.5).normalize(),0.1); camera.up.copy(camUp);
   camera.lookAt(camLook);
-
-  // sky dome + sun ride with the camera
-  scene.userData.dome.position.copy(camera.position);
-  tmpV.set(0,0,-1).applyQuaternion(camera.quaternion);
-  sun.position.copy(camera.position).addScaledVector(tmpV.set(FWD.x,0,FWD.z).normalize(),1600);
-  sun.position.y=camera.position.y-120;
-  sun.lookAt(camera.position);
-
-  // ----- red flash on hit -----
+  // sun shadow box follows the plane; sea rides under the camera
+  sun.position.copy(pos).addScaledVector(sunDir,400); sun.target.position.copy(pos); sun.target.updateMatrixWorld();
+  sea.position.x=pos.x; sea.position.z=pos.z;
+  // red flash on hit
   if(flash>0){ flash-=dt*2.5; cv.style.boxShadow='inset 0 0 90px rgba(255,46,151,'+Math.max(0,flash)+')'; }
   else if(cv.style.boxShadow){ cv.style.boxShadow=''; }
-
-  renderer.render(scene,camera);
+  composer.render();
   raf=requestAnimationFrame(frame);
 }
 
@@ -373,8 +375,7 @@ function die(){
   setTimeout(()=>SFX.gameover(),140);
   if(score>best){ best=score; bestEl.textContent=best; localStorage.skyhawkBest=best; statusEl.textContent='★ NEW BEST '+score+' ★'; }
   else statusEl.textContent='WENT DOWN · SCORE '+score;
-  statusEl.style.color='var(--neon-pink)';
-  cv.style.boxShadow='';
+  statusEl.style.color='var(--neon-pink)'; cv.style.boxShadow='';
   startBtn.textContent='FLY AGAIN'; startBtn.style.display='inline-block';
 }
 function begin(){
@@ -384,36 +385,36 @@ function begin(){
 }
 startBtn.onclick=begin;
 
+// ---------- post-processing ----------
+const composer=new THREE.EffectComposer(renderer);
+composer.addPass(new THREE.RenderPass(scene,camera));
+const bloom=new THREE.UnrealBloomPass(new THREE.Vector2(VW,VH),0.55,0.7,0.85); composer.addPass(bloom);
+const fxaa=new THREE.ShaderPass(THREE.FXAAShader); fxaa.material.uniforms['resolution'].value.set(1/VW,1/VH); composer.addPass(fxaa);
+
 // ---------- input ----------
-function setk(e,v){
-  const k=e.key.toLowerCase();
+function setk(e,v){ const k=e.key.toLowerCase();
   if(k==='arrowup'){keyPitch=v? 1:0;e.preventDefault();}
   else if(k==='arrowdown'){keyPitch=v?-1:0;e.preventDefault();}
   else if(k==='arrowleft'){keyRoll=v? 1:0;e.preventDefault();}
   else if(k==='arrowright'){keyRoll=v?-1:0;e.preventDefault();}
-  else if(k==='a'){keyYaw=v? 1:0;}
-  else if(k==='d'){keyYaw=v?-1:0;}
-  else if(k==='w'){keyThr=v? 1:0;}
-  else if(k==='s'){keyThr=v?-1:0;}
+  else if(k==='a'){keyYaw=v? 1:0;} else if(k==='d'){keyYaw=v?-1:0;}
+  else if(k==='w'){keyThr=v? 1:0;} else if(k==='s'){keyThr=v?-1:0;}
   else if(k==='shift'){boost=v;}
 }
-addEventListener('keydown',e=>setk(e,true));
-addEventListener('keyup',e=>setk(e,false));
-// pointer drag: pitch (vertical) + roll (horizontal) like a flight stick
+addEventListener('keydown',e=>setk(e,true)); addEventListener('keyup',e=>setk(e,false));
 let dragging=false,dragX=0,dragY=0;
 cv.addEventListener('pointerdown',e=>{dragging=true;dragX=e.clientX;dragY=e.clientY;});
-addEventListener('pointermove',e=>{ if(!dragging)return;
-  const dx=(e.clientX-dragX)/40, dy=(e.clientY-dragY)/40;
-  keyRoll=Math.max(-1,Math.min(1,-dx)); keyPitch=Math.max(-1,Math.min(1,-dy));
-});
+addEventListener('pointermove',e=>{ if(!dragging)return; const dx=(e.clientX-dragX)/40, dy=(e.clientY-dragY)/40;
+  keyRoll=Math.max(-1,Math.min(1,-dx)); keyPitch=Math.max(-1,Math.min(1,-dy)); });
 addEventListener('pointerup',()=>{dragging=false;keyRoll=0;keyPitch=0;});
 
 // ---------- initial idle frame ----------
 reset(); alive=false;
 camera.position.copy(pos).addScaledVector(FWD,-22).addScaledVector(UP,6);
-camera.lookAt(pos.clone().addScaledVector(FWD,30));
-scene.userData.dome.position.copy(camera.position);
-renderer.render(scene,camera);
+camera.lookAt(pos.clone().addScaledVector(FWD,34));
+sun.position.copy(pos).addScaledVector(sunDir,400); sun.target.position.copy(pos); sun.target.updateMatrixWorld();
+sea.position.set(pos.x,SEA-0.2,pos.z);
+composer.render();
 </script>
 </body>
 </html>
