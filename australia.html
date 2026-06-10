@@ -238,7 +238,7 @@ texL.load('assets/textures/metal_diff.jpg', tx=>{ tx.wrapS=tx.wrapT=THREE.Repeat
 
 // ---- track state (rebuilt per circuit) ----
 const SAMP=900;
-let P=[],T=[],Nn=[],WL=[],WR=[],EH=[],GR=[],vSafe=[],RL=[],RT=[],cornerF=[],drsZone=[],TLEN=1,SPM=1,wallMargin=6.3,mb={a:0,b:1,c:0,d:1},pitSet=null,pitSide=0,pitIdxs=[];
+let P=[],T=[],Nn=[],WL=[],WR=[],EH=[],GR=[],vSafe=[],RL=[],RT=[],cornerF=[],drsZone=[],TLEN=1,SPM=1,wallMargin=6.3,mb={a:0,b:1,c:0,d:1},pitSet=null,pitSide=0,pitIdxs=[],pitWallAt=[];
 const trackGroup=new THREE.Group(); scene.add(trackGroup);
 // real-circuit elevation profiles (metres) keyed by lap fraction in racing direction (0 = start/finish).
 // Approximate the famous gradients — above all Spa's Eau Rouge/Raidillon climb just after Turn 1.
@@ -494,13 +494,17 @@ function buildTrack(tr){
   { const p=P[0],n=Nn[0],wid=WL[0]+WR[0];
     const sf=new THREE.Mesh(new THREE.PlaneGeometry(wid,5),startMat); sf.rotation.x=-Math.PI/2; sf.rotation.z=Math.atan2(n.x,n.z); sf.position.set(p.x,p.y+0.05,p.z); sf.receiveShadow=true; trackGroup.add(sf);
     // gantry legs stand BEHIND the barrier (or at the pit wall on the pit side), never at the track edge
-    const legOff=s=>{ const W=s>0?WL[0]:WR[0]; return inPit(0,s) ? W+3.7 : W+wOff+0.8; };
+    const legOff=s=>{ const W=s>0?WL[0]:WR[0]; return inPit(0,s) ? W+2.95 : W+wOff+0.8; };   // pit-side leg stands ON the pit wall, clear of the now-drivable lane
     const oL=legOff(1), oR=legOff(-1);
     [[oL,1],[oR,-1]].forEach(([o,s])=>{ const post=new THREE.Mesh(new THREE.BoxGeometry(0.6,8.6,0.6),gantryMat); post.position.set(p.x+n.x*o*s,p.y+3.7,p.z+n.z*o*s); post.castShadow=true; trackGroup.add(post); });   // legs run into the ground
     const beam=new THREE.Mesh(new THREE.BoxGeometry(oL+oR,1.2,0.8),gantryMat); beam.position.set(p.x+n.x*(oL-oR)/2,p.y+8,p.z+n.z*(oL-oR)/2); beam.rotation.y=Math.atan2(n.x,n.z); beam.castShadow=true; trackGroup.add(beam); }
   // pit lane — uses the pit stretch computed up front
+  pitWallAt=new Array(SAMP).fill(false);
   { if(pitIdxs.length>1){ const side=pitSide, idxs=pitIdxs, w0=(i)=> side<0 ? WR[i] : WL[i];
       const PW=9;                       // pit road width
+      // the lane is OPEN at both ends: no pit wall over the entry/exit stretches, so the player can drive in
+      const segm=TLEN/SAMP, gIn=Math.min(Math.floor(idxs.length*0.38),Math.max(6,Math.round(65/segm))), gOut=Math.min(Math.floor(idxs.length*0.3),Math.max(5,Math.round(55/segm)));
+      idxs.forEach((i,k)=>{ pitWallAt[i]= k>=gIn && k<idxs.length-gOut; });
       // pit road: flat asphalt strip; inner edge ~3m outside track edge, centre offset = side*(W+7.5)
       if(idxs.length>1){ const pos=[],uvs=[],idx=[];
         for(let k=0;k<idxs.length;k++){ const i=idxs[k], p=P[i], n=Nn[i], W=w0(i);
@@ -514,11 +518,22 @@ function buildTrack(tr){
       // pit wall: low continuous wall between track and pit road
       if(idxs.length>1){ const pos=[],uv=[],idx=[],PH=1;
         for(let k=0;k<idxs.length;k++){ const i=idxs[k], p=P[i], n=Nn[i], o=side*(w0(i)+3), x=p.x+n.x*o, z=p.z+n.z*o;
-          pos.push(x,p.y-0.45,z); pos.push(x,p.y+PH,z); uv.push(k/6,0); uv.push(k/6,1); }
+          pos.push(x,p.y-0.45,z); pos.push(x,p.y+(pitWallAt[i]?PH:-0.45),z); uv.push(k/6,0); uv.push(k/6,1); }   // wall collapses over the open entry/exit
         for(let k=0;k<idxs.length-1;k++){ const a=k*2,b=k*2+1,c=(k+1)*2,d=(k+1)*2+1; idx.push(a,b,c,b,d,c); }
         const geo=new THREE.BufferGeometry(); geo.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));
         geo.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2)); geo.setIndex(idx); geo.computeVertexNormals();
         const pw=new THREE.Mesh(geo,concreteMat); pw.castShadow=true; pw.receiveShadow=true; trackGroup.add(pw); }
+      // entry/exit: solid white line instead of the wall, plus a painted PIT marker at the entry
+      { const lineMat=new THREE.MeshBasicMaterial({color:0xffffff,side:THREE.DoubleSide});
+        const mk=(k0,k1)=>{ if(k1<=k0) return; trackGroup.add(ribbonRange(idxs[k0],idxs[k1],i=>side*(w0(i)+2.8),i=>side*(w0(i)+3.2),SAMP/6,lineMat,0.05)); };
+        mk(0,gIn); mk(idxs.length-gOut,idxs.length-1);
+        const c=document.createElement('canvas'); c.width=256; c.height=128; const g2=c.getContext('2d');
+        g2.clearRect(0,0,256,128); g2.fillStyle='rgba(255,255,255,0.95)'; g2.font='bold 92px sans-serif'; g2.textAlign='center'; g2.textBaseline='middle'; g2.fillText('PIT',128,64);
+        const ptx=new THREE.CanvasTexture(c); ptx.encoding=THREE.sRGBEncoding;
+        const ki=idxs[Math.max(1,Math.floor(gIn*0.55))], pp=P[ki], nn=Nn[ki];
+        const dec2=new THREE.Mesh(new THREE.PlaneGeometry(5.5,2.8),new THREE.MeshBasicMaterial({map:ptx,transparent:true,depthWrite:false}));
+        dec2.rotation.x=-Math.PI/2; dec2.rotation.z=Math.atan2(nn.x,nn.z)+Math.PI;
+        const po=side*(w0(ki)+3+4.5); dec2.position.set(pp.x+nn.x*po,pp.y+0.06,pp.z+nn.z*po); trackGroup.add(dec2); }
       // garage row along the outer side of the pit road — near-continuous, so it reads as the pit building
       const garageMat=new THREE.MeshStandardMaterial({color:0x33363d,metalness:0.4,roughness:0.6});
       const NG=Math.max(8,Math.round(idxs.length*(TLEN/SAMP)/16));               // one ~15 m block per ~16 m of pit lane
@@ -554,7 +569,7 @@ function buildTrack(tr){
         const dec=new THREE.Mesh(new THREE.PlaneGeometry(4.4,6.4),new THREE.MeshBasicMaterial({map:pitBoxTex(tcol),transparent:true,depthWrite:false}));
         const doff=side*(W+3+PW*0.55);
         dec.rotation.x=-Math.PI/2; dec.rotation.z=Math.atan2(n.x,n.z); dec.position.set(p.x+n.x*doff,p.y+0.05,p.z+n.z*doff); trackGroup.add(dec);   // painted pit box on the pit road
-        for(const dz of [-4.6,4.6]){ const sx2=fx2+T[i].x*dz-n.x*side*0.95, sz2=fz2+T[i].z*dz-n.z*side*0.95;  // tyre stacks at the garage corners
+        for(const dz of [-4.6,4.6]){ const sx2=fx2+T[i].x*dz+n.x*side*0.55, sz2=fz2+T[i].z*dz+n.z*side*0.55;  // tyre stacks tucked against the garages, out of the drivable lane
           const st2=new THREE.Mesh(stackG,stackM); st2.position.set(sx2,p.y+0.48,sz2); st2.castShadow=true; trackGroup.add(st2);
           const cap=new THREE.Mesh(capG,new THREE.MeshStandardMaterial({color:tcol,roughness:0.6})); cap.position.set(sx2,p.y+1.02,sz2); trackGroup.add(cap); } } } }
   // grandstands (crowd) + roofs — from per-track stands data
@@ -646,36 +661,112 @@ const f1Paint=new THREE.MeshPhysicalMaterial({color:0xd5102a,metalness:0.65,roug
 const carbonM=new THREE.MeshStandardMaterial({color:0x14151a,metalness:0.35,roughness:0.55});
 const rimM=new THREE.MeshStandardMaterial({color:0xb9bdc7,metalness:0.9,roughness:0.32});
 const slickM=new THREE.MeshStandardMaterial({color:0x111114,roughness:0.92});
-function buildF1Car(){ const g=new THREE.Group(); const M=(geo,mat,x,y,z,rx,ry,rz)=>{ const m=new THREE.Mesh(geo,mat); m.position.set(x,y,z); if(rx)m.rotation.x=rx; if(ry)m.rotation.y=ry; if(rz)m.rotation.z=rz; m.castShadow=true; g.add(m); return m; };
-  M(new THREE.BoxGeometry(1.46,0.07,3.7),carbonM,0,0.14,-0.1);                                  // floor
-  M(new THREE.BoxGeometry(0.56,0.3,2.0),f1Paint,0,0.42,0.75);                                   // chassis spine
-  const nose=M(new THREE.BoxGeometry(0.34,0.2,1.45),f1Paint,0,0.36,2.2); nose.scale.set(1,1,1); nose.rotation.x=0.045;  // nose, slight droop
-  M(new THREE.BoxGeometry(0.66,0.36,1.8),f1Paint,0,0.55,-0.55);                                 // cockpit + engine cover
-  M(new THREE.BoxGeometry(0.3,0.3,0.62),f1Paint,0,0.86,-0.72);                                  // airbox
-  M(new THREE.BoxGeometry(0.05,0.34,1.05),f1Paint,0,0.86,-1.55);                                // dorsal fin
-  M(new THREE.BoxGeometry(0.45,0.3,1.55),f1Paint,-0.55,0.4,-0.5); M(new THREE.BoxGeometry(0.45,0.3,1.55),f1Paint,0.55,0.4,-0.5);   // sidepods
-  M(new THREE.TorusGeometry(0.34,0.045,8,18,Math.PI),carbonM,0,0.72,0.18,0,0,0);                // halo hoop
-  M(new THREE.CylinderGeometry(0.035,0.05,0.34,8),carbonM,0,0.72,0.5,0.5,0,0);                  // halo pillar
-  M(new THREE.BoxGeometry(1.9,0.045,0.5),carbonM,0,0.18,2.72);                                  // front wing main
-  M(new THREE.BoxGeometry(1.7,0.04,0.3),carbonM,0,0.27,2.62).rotation.x=-0.18;                  // front flap
-  [-0.95,0.95].forEach(x=>M(new THREE.BoxGeometry(0.04,0.22,0.52),carbonM,x,0.26,2.72));        // FW endplates
-  M(new THREE.BoxGeometry(1.04,0.05,0.4),carbonM,0,0.92,-2.25).rotation.x=0.22;                 // rear wing main
-  M(new THREE.BoxGeometry(1.0,0.04,0.26),carbonM,0,1.04,-2.36).rotation.x=0.38;                 // DRS flap
-  [-0.52,0.52].forEach(x=>M(new THREE.BoxGeometry(0.045,0.46,0.62),carbonM,x,0.88,-2.28));      // RW endplates
-  M(new THREE.BoxGeometry(0.07,0.42,0.3),carbonM,0,0.62,-2.2);                                  // RW pylon
-  [-0.42,0.42].forEach(x=>M(new THREE.BoxGeometry(0.16,0.07,0.2),carbonM,x,0.72,0.62));         // mirrors
-  M(new THREE.BoxGeometry(0.3,0.12,0.06),new THREE.MeshStandardMaterial({color:0x550000,emissive:0xff2222,emissiveIntensity:1.4}),0,0.5,-2.42);  // rain light
-  const wg=new THREE.CylinderGeometry(0.46,0.46,0.42,18), rg=new THREE.CylinderGeometry(0.3,0.3,0.43,14);
-  [[-0.83,1.62,1],[0.83,1.62,1],[-0.83,-1.7,0],[0.83,-1.7,0]].forEach(([x,z,front])=>{
-    const w=new THREE.Object3D(); w.rotation.order='YXZ'; w.position.set(x,0.46,z);             // wrapper: y = steer, x = spin
-    const ty=new THREE.Mesh(wg,slickM); ty.rotation.z=Math.PI/2; ty.castShadow=true; w.add(ty);
-    const rim=new THREE.Mesh(rg,rimM); rim.rotation.z=Math.PI/2; w.add(rim);
-    g.add(w); wheels.push(w); if(front) frontWheels.push(w); });
+function buildF1Car(){
+  const g = new THREE.Group();
+  const M = (geo,mat,x,y,z,rx,ry,rz)=>{ const m=new THREE.Mesh(geo,mat); m.position.set(x,y,z);
+    if(rx)m.rotation.x=rx; if(ry)m.rotation.y=ry; if(rz)m.rotation.z=rz; m.castShadow=true; g.add(m); return m; };
+  const rod = (ax,ay,az,bx,by,bz,r,mat)=>{ const a=new THREE.Vector3(ax,ay,az), b=new THREE.Vector3(bx,by,bz);
+    const d=new THREE.Vector3().subVectors(b,a), len=d.length();
+    const m=new THREE.Mesh(new THREE.CylinderGeometry(r,r,len,7),mat||carbonM);
+    m.position.copy(a).addScaledVector(d,0.5);
+    m.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), d.normalize());
+    m.castShadow=true; g.add(m); return m; };
+  const lathe = pts => new THREE.LatheGeometry(pts.map(p=>new THREE.Vector2(p[0],p[1])), 28);
+  // floor + diffuser (carbon)
+  M(new THREE.BoxGeometry(1.48,0.06,3.5), carbonM, 0,0.12,-0.15);
+  M(new THREE.BoxGeometry(0.10,0.025,2.0), carbonM, -0.76,0.165,-0.40);
+  M(new THREE.BoxGeometry(0.10,0.025,2.0), carbonM,  0.76,0.165,-0.40);
+  M(new THREE.BoxGeometry(1.05,0.04,0.65), carbonM, 0,0.20,-2.0, 0.28);
+  // sculpted central fuselage: one smooth lathe, tail -> front bulkhead (squashed to an ellipse)
+  const body = new THREE.Mesh(lathe([[0.02,0],[0.10,0.12],[0.18,0.45],[0.27,0.95],[0.325,1.5],
+                                     [0.335,1.85],[0.33,2.2],[0.27,2.65],[0.20,2.9],[0.155,3.1]]), f1Paint);
+  body.rotation.x = Math.PI/2; body.scale.set(1.15,1,0.82); body.position.set(0,0.40,-1.95);
+  body.castShadow = true; g.add(body);
+  // slim raised nose cone (own lathe, drooped toward the wing)
+  const nose = new THREE.Mesh(lathe([[0.18,0],[0.155,0.4],[0.12,0.8],[0.085,1.15],[0.045,1.4],[0.0,1.55]]), f1Paint);
+  nose.rotation.x = Math.PI/2 + 0.075; nose.scale.set(1.1,1,0.75); nose.position.set(0,0.43,1.02);
+  nose.castShadow = true; g.add(nose);
+  // engine cover spine (stretched sphere) + shark fin
+  const sph = new THREE.SphereGeometry(1,20,14);
+  const spine = new THREE.Mesh(sph, f1Paint); spine.scale.set(0.17,0.24,0.85);
+  spine.position.set(0,0.52,-0.55); spine.castShadow=true; g.add(spine);
+  const finS = new THREE.Shape(); finS.moveTo(-0.45,0.50); finS.lineTo(-0.45,0.99);
+  finS.lineTo(-1.90,0.55); finS.lineTo(-1.90,0.32); finS.closePath();
+  const fin = new THREE.Mesh(new THREE.ExtrudeGeometry(finS,{depth:0.03,bevelEnabled:false}), f1Paint);
+  fin.rotation.y = -Math.PI/2; fin.position.set(0.015,0,0); fin.castShadow=true; g.add(fin);
+  // sidepods with rounded sculpt + dark inlets
+  [-1,1].forEach(s=>{
+    const pod = new THREE.Mesh(sph, f1Paint); pod.scale.set(0.36,0.27,0.95);
+    pod.position.set(s*0.50,0.36,-0.55); pod.castShadow=true; g.add(pod);
+    const inl = new THREE.Mesh(sph, carbonM); inl.scale.set(0.13,0.08,0.05);
+    inl.position.set(s*0.50,0.42,0.34); inl.castShadow=true; g.add(inl);
+  });
+  // cockpit: dark surround, helmet, visor
+  const pad = new THREE.Mesh(sph, carbonM); pad.scale.set(0.26,0.09,0.40); pad.position.set(0,0.645,0.35); pad.castShadow=true; g.add(pad);
+  const helmetM = new THREE.MeshStandardMaterial({color:0xf0f2fa, metalness:0.35, roughness:0.3});
+  const hel = new THREE.Mesh(sph, helmetM); hel.scale.set(0.115,0.115,0.125); hel.position.set(0,0.68,0.28); hel.castShadow=true; g.add(hel);
+  const vis = new THREE.Mesh(sph, carbonM); vis.scale.set(0.09,0.045,0.06); vis.position.set(0,0.70,0.39); vis.castShadow=true; g.add(vis);
+  // halo (horizontal elongated ring + front pillar)
+  const halo = new THREE.Mesh(new THREE.TorusGeometry(0.30,0.048,9,26), carbonM);
+  halo.rotation.x = Math.PI/2; halo.scale.set(0.95,1.3,1); halo.position.set(0,0.80,0.30); halo.castShadow=true; g.add(halo);
+  rod(0,0.55,0.88, 0,0.80,0.68, 0.028);
+  // airbox over the roll hoop
+  M(new THREE.CylinderGeometry(0.09,0.13,0.26,14), f1Paint, 0,0.84,-0.18, 0.12);
+  const ain = new THREE.Mesh(sph, carbonM); ain.scale.set(0.075,0.06,0.025); ain.position.set(0,0.86,-0.045); ain.castShadow=true; g.add(ain);
+  // suspension wishbones (upper + lower per wheel)
+  [-1,1].forEach(s=>{
+    rod(s*0.12,0.52,1.72,  s*0.79,0.50,1.65, 0.018);
+    rod(s*0.10,0.30,1.58,  s*0.79,0.36,1.65, 0.018);
+    rod(s*0.15,0.50,-1.62, s*0.79,0.50,-1.75,0.018);
+    rod(s*0.15,0.26,-1.85, s*0.79,0.36,-1.75,0.018);
+  });
+  // front wing: 3 layered elements + endplates + nose pylons
+  M(new THREE.BoxGeometry(1.84,0.035,0.52), carbonM, 0,0.15,2.60, -0.05);
+  M(new THREE.BoxGeometry(1.66,0.028,0.36), carbonM, 0,0.225,2.50, -0.25);
+  M(new THREE.BoxGeometry(1.48,0.025,0.26), carbonM, 0,0.30,2.42, -0.45);
+  M(new THREE.BoxGeometry(0.025,0.26,0.58), carbonM, -0.90,0.26,2.58, 0,-0.08);
+  M(new THREE.BoxGeometry(0.025,0.26,0.58), carbonM,  0.90,0.26,2.58, 0, 0.08);
+  M(new THREE.BoxGeometry(0.03,0.13,0.35), carbonM, -0.06,0.235,2.50);
+  M(new THREE.BoxGeometry(0.03,0.13,0.35), carbonM,  0.06,0.235,2.50);
+  // rear wing on a centre pylon + beam wing (visible slot gap between elements)
+  M(new THREE.BoxGeometry(1.04,0.032,0.40), carbonM, 0,0.84,-2.22, 0.20);
+  M(new THREE.BoxGeometry(0.98,0.026,0.26), carbonM, 0,0.97,-2.36, 0.42);
+  M(new THREE.BoxGeometry(0.028,0.38,0.52), carbonM, -0.53,0.86,-2.27);
+  M(new THREE.BoxGeometry(0.028,0.38,0.52), carbonM,  0.53,0.86,-2.27);
+  rod(0,0.50,-1.78, 0,0.83,-2.20, 0.032);
+  M(new THREE.BoxGeometry(0.90,0.028,0.18), carbonM, 0,0.52,-2.16, 0.45);
+  // mirrors
+  [-1,1].forEach(s=>{
+    M(new THREE.BoxGeometry(0.13,0.055,0.05), carbonM, s*0.45,0.66,0.62);
+    rod(s*0.30,0.60,0.55, s*0.43,0.655,0.60, 0.012);
+  });
+  // rear crash structure + rain light
+  M(new THREE.CylinderGeometry(0.085,0.035,0.45,10), carbonM, 0,0.44,-2.10, Math.PI/2);
+  M(new THREE.BoxGeometry(0.06,0.18,0.045),
+    new THREE.MeshStandardMaterial({color:0x550000, emissive:0xff2222, emissiveIntensity:1.5}), 0,0.44,-2.34);
+  // wheels: tread cylinder + rounded torus shoulders + sidewall + bright rim
+  const shoulder = new THREE.TorusGeometry(0.40,0.055,10,24);
+  const mkWheel = (x,z,W,front)=>{
+    const w = new THREE.Object3D(); w.rotation.order='YXZ'; w.position.set(x,0.455,z);          // wrapper: y = steer, x = spin
+    const tread = new THREE.Mesh(new THREE.CylinderGeometry(0.455,0.455,W-0.11,24), slickM);
+    tread.rotation.z = Math.PI/2; tread.castShadow=true; w.add(tread);
+    [-1,1].forEach(s=>{ const t=new THREE.Mesh(shoulder, slickM); t.rotation.y=Math.PI/2;
+      t.position.x = s*(W/2-0.055); t.castShadow=true; w.add(t); });
+    const side = new THREE.Mesh(new THREE.CylinderGeometry(0.355,0.355,W-0.04,20), slickM);
+    side.rotation.z = Math.PI/2; side.castShadow=true; w.add(side);
+    const rim = new THREE.Mesh(new THREE.CylinderGeometry(0.245,0.245,W+0.015,18), rimM);
+    rim.rotation.z = Math.PI/2; rim.castShadow=true; w.add(rim);
+    g.add(w); wheels.push(w); if(front) frontWheels.push(w);
+  };
+  mkWheel(-0.83, 1.65, 0.36, 1); mkWheel(0.83, 1.65, 0.36, 1);
+  mkWheel(-0.83,-1.75, 0.40, 0); mkWheel(0.83,-1.75, 0.40, 0);
   return g; }
 let boxParts=[];
-function buildBoxCar(){ const b=new THREE.Mesh(new THREE.BoxGeometry(1.8,1,4.4),paint); b.position.y=0.7; b.castShadow=true; car.add(b); boxParts.push(b);
+function buildBoxCar(){ boxParts.forEach(o=>car.remove(o)); boxParts=[];                       // idempotent: never stack a second fallback car
+  if(playerModel){ car.remove(playerModel); playerModel=null; } wheels.length=0; frontWheels.length=0;
+  const b=new THREE.Mesh(new THREE.BoxGeometry(1.8,1,4.4),paint); b.position.y=0.7; b.castShadow=true; car.add(b); boxParts.push(b);
   const wg=new THREE.CylinderGeometry(0.35,0.35,0.4,16),rub=new THREE.MeshStandardMaterial({color:0x111,roughness:0.9});
-  [[-0.95,-1.5],[0.95,-1.5],[-0.95,1.5],[0.95,1.5]].forEach(([x,z])=>{ const w=new THREE.Mesh(wg,rub); w.rotation.z=Math.PI/2; w.position.set(x,0.35,z); car.add(w); wheels.push(w); boxParts.push(w);}); }
+  [[-0.95,-1.5,0],[0.95,-1.5,0],[-0.95,1.5,1],[0.95,1.5,1]].forEach(([x,z,f])=>{ const w=new THREE.Mesh(wg,rub); w.rotation.z=Math.PI/2; w.position.set(x,0.35,z); car.add(w); wheels.push(w); if(f) frontWheels.push(w); boxParts.push(w);}); }
 // swap the player's model (the AI keep the Ferrari template)
 let playerModel=null, loadSeq=0;
 function attachPlayer(m){ if(playerModel) car.remove(playerModel); boxParts.forEach(o=>car.remove(o)); boxParts=[];
@@ -697,6 +788,9 @@ function setPlayerCar(idx,cb){ const c=CARS[idx], seq=++loadSeq;
     const m=g.scene, bb=new THREE.Box3().setFromObject(m), sz=new THREE.Vector3(); bb.getSize(sz);
     const sc=4.5/Math.max(sz.x,sz.z); m.scale.setScalar(sc);
     const bb2=new THREE.Box3().setFromObject(m); m.position.y=-bb2.min.y;
+    m.traverse(o=>{ if(o.isMesh&&o.material){ const src=o.material;          // kit models ship matte — give them clearcoat showroom paint
+      o.material=new THREE.MeshPhysicalMaterial({map:src.map||null,color:src.color?src.color.clone():new THREE.Color(0xffffff),
+        metalness:0.15,roughness:0.42,clearcoat:0.9,clearcoatRoughness:0.18}); } });
     m.rotation.y=Math.PI; attachPlayer(m); cb&&cb();
   }, undefined, ()=>{ if(seq===loadSeq){ buildBoxCar(); cb&&cb(); } }); }
 const draco=new THREE.DRACOLoader(); draco.setDecoderPath('lib/draco/');
@@ -846,13 +940,13 @@ function renderStandings(){ const list=orderList(); const myi=list.findIndex(s=>
     return '<div class="row'+(s.me?' me':'')+'"><span class="pp">P'+(i+1)+'</span><span style="color:'+hexc(s.col)+'">'+s.name+'</span>'+(s.drs?'<span class="drsmk">DRS</span>':'')+'<span class="gap">'+gap+'</span></div>'; }).join(''); return pos; }
 
 // ---- physics / loop ----
-let speed,heading,carIdx,lateral,lap,pLap,lapStart,running,raf,lastT,prevIdx,countdown,armed,raceOver;
+let speed,heading,carIdx,lateral,lap,pLap,lapStart,running,raf,lastT,prevIdx,countdown,armed,raceOver,wasInLane=false;
 let fpsSmooth=60, lastFpsUpd=0, carPitch=0;
 const gearTops=[12,24,38,54,70,95];
 function placeAtStart(){ const gs=gridSlot(cfg.ai), i0=gs.idx;
   car.position.set(P[i0].x+Nn[i0].x*gs.lane+T[i0].x*gs.fwd,P[i0].y,P[i0].z+Nn[i0].z*gs.lane+T[i0].z*gs.fwd);
   heading=Math.atan2(T[i0].x,T[i0].z);
-  speed=0; carIdx=i0; prevIdx=i0; lateral=0; lap=0; pLap=0; armed=false; carPitch=0; car.rotation.set(0,heading,0); }
+  speed=0; carIdx=i0; prevIdx=i0; lateral=0; lap=0; pLap=0; armed=false; carPitch=0; wasInLane=false; car.rotation.set(0,heading,0); }
 function updateIdx(){ let bi=carIdx,bd=1e9;
   for(let k=-6;k<=50;k++){ const i=((carIdx+k)%SAMP+SAMP)%SAMP; const dx=car.position.x-P[i].x,dz=car.position.z-P[i].z,d=dx*dx+dz*dz; if(d<bd){bd=d;bi=i;} }
   prevIdx=carIdx; carIdx=bi; lateral=(car.position.x-P[carIdx].x)*Nn[carIdx].x+(car.position.z-P[carIdx].z)*Nn[carIdx].z; }
@@ -890,7 +984,18 @@ function frame(now){ if(!running) return; const dt=Math.min(0.05,(now-lastT)/100
   carPitch += (Math.atan(gradeAt(carIdx)) - carPitch)*Math.min(1,dt*5);        // smooth nose-up/down on gradients
   car.rotation.x = -carPitch;
   const pm=Math.min(wallMargin,2.6);                         // the concrete pit wall is the boundary along the pit stretch
-  const eL=WL[carIdx]+(inPit(carIdx,1)?pm:wallMargin),eR=WR[carIdx]+(inPit(carIdx,-1)?pm:wallMargin);   // hit the Armco wall (just inside the visible barrier)
+  let eL=WL[carIdx]+(inPit(carIdx,1)?pm:wallMargin),eR=WR[carIdx]+(inPit(carIdx,-1)?pm:wallMargin);   // hit the Armco wall (just inside the visible barrier)
+  // the pit lane is OPEN to the player: drive in over the entry/exit stretches; in the walled
+  // stretch the pit wall is two-sided and the lane is bounded by the garage row
+  let inLane=false;
+  if(pitSet&&pitSet.has(carIdx)&&pitSide!==0){
+    const W=(pitSide>0?WL:WR)[carIdx], myLat=pitSide>0?lateral:-lateral, outL=W+10.4;
+    if(!pitWallAt[carIdx]){ if(pitSide>0) eL=outL; else eR=outL; inLane=myLat>W+1.5; }
+    else if(myLat>W+2.8){ inLane=true; if(pitSide>0) eL=outL; else eR=outL;
+      if(myLat<W+3.45){ const tgt=(W+3.45)*(pitSide>0?1:-1), ov=tgt-lateral, s2=Nn[carIdx];   // bounced off the wall's lane-side face
+        car.position.x+=s2.x*ov; car.position.z+=s2.z*ov; speed*=0.7; } }
+  }
+  if(inLane&&!wasInLane){ flash('PIT LANE'); } wasInLane=inLane;
   if(lateral>eL||lateral<-eR){ const lim=lateral>0?eL:-eR,over=lateral-lim,s=Nn[carIdx]; car.position.x-=s.x*over; car.position.z-=s.z*over; if(Math.abs(speed)>16) SFX.hit(); speed*=0.4; }
   updateAI(dt);
   for(const a of ai){ const dx=car.position.x-a.mesh.position.x,dz=car.position.z-a.mesh.position.z,d=Math.hypot(dx,dz);
