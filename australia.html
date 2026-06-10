@@ -74,6 +74,12 @@
   .tacho .tnums{ font-family:'Press Start 2P',monospace; font-size:9px; color:#cdbfe0; margin-top:5px;
     text-shadow:0 0 6px #000; letter-spacing:1px; }
   .tacho .tnums b{ color:var(--neon-amber); }
+  .missions{ margin-top:12px; font-family:'Press Start 2P',monospace; font-size:9px; color:#cdbfe0; width:100%; max-width:700px;
+    background:rgba(10,4,24,.6); border:2px solid rgba(157,92,255,.5); border-radius:6px; padding:12px 16px; }
+  .missions .mrow{ display:flex; gap:10px; align-items:baseline; margin:7px 0; line-height:1.55; }
+  .missions .mname{ color:var(--neon-cyan); min-width:128px; }
+  .missions .mdone{ color:#18ff5a; } .missions .mtodo{ color:#7a8a99; }
+  .missions .mdesc{ color:#cdbfe0; flex:1; }
 </style>
 </head>
 <body>
@@ -87,7 +93,7 @@
     <div class="race-wrap">
       <canvas id="c" width="700" height="438"></canvas>
       <canvas class="minimap" id="map" width="144" height="144"></canvas>
-      <div class="lap-info">LAP <b id="lap">1</b>/<span id="laptot">3</span> · POS <b id="pos">-</b>/<span id="postot">4</span><br>TIME <b id="cur">0.000</b></div>
+      <div class="lap-info">LAP <b id="lap">1</b>/<span id="laptot">3</span> · POS <b id="pos">-</b>/<span id="postot">4</span><br>TIME <b id="cur">0.000</b> · TYRE <b id="tyreEl">100%</b></div>
       <div class="standings" id="standings"></div>
       <div class="speedo"><b id="kmh">0</b><br><span>KM/H</span></div>
       <div class="drs" id="drs">DRS</div>
@@ -108,7 +114,9 @@
       <div class="setrow"><span class="lbl">LEVEL</span><button class="dbtn" data-diff="EASY">EASY</button><button class="dbtn on" data-diff="NORMAL">NORMAL</button><button class="dbtn" data-diff="HARD">HARD</button></div>
       <div class="setrow"><span class="lbl">FOV</span><button class="sbtn" data-act="fov-1">−</button><b id="setFov">66</b><button class="sbtn" data-act="fov+1">+</button></div>
       <div class="setrow"><span class="lbl">CAM</span><button class="sbtn" data-act="cam-1">−</button><b id="setCam" style="min-width:64px">CLOSE</b><button class="sbtn" data-act="cam+1">+</button></div>
+      <div class="setrow"><button class="dbtn" id="missionsBtn">◆ MISSIONS</button></div>
     </div>
+    <div class="missions" id="missionsPanel" style="display:none"></div>
     <p class="status" id="status">Loading circuit & car…</p>
     <button class="btn" id="start" disabled>LOADING…</button>
     <p class="hint"><span class="key">↑</span> throttle · <span class="key">↓</span> brake · <span class="key">← →</span> steer · pads on mobile</p>
@@ -121,8 +129,35 @@ const lapEl=document.getElementById('lap'), curEl=document.getElementById('cur')
       flagEl=document.getElementById('flag'), gtitle=document.getElementById('gtitle'),
       fpsEl=document.getElementById('fps'), gearEl=document.getElementById('gear'), rpmEl=document.getElementById('rpm'), rpmFillEl=document.getElementById('rpmfill');
 const mapc=document.getElementById('map'), mapx=mapc.getContext('2d');
+const tyreEl=document.getElementById('tyreEl');
 let bestLap=0;
 const fmt=ms=>{ if(!ms) return '--'; return (ms/1000).toFixed(3); };
+
+// ---- missions: persistent challenges (localStorage), awarded live with a toast ----
+const MISSIONS=[
+  {id:'firstwin', name:'FIRST WIN',    desc:'Win a race on any circuit'},
+  {id:'sweep',    name:'CLEAN SWEEP',  desc:'Win on all 6 circuits', prog:()=>Object.keys(MS.wins).length+'/6'},
+  {id:'boxbox',   name:'BOX BOX',      desc:'Complete a pit stop in your yellow box'},
+  {id:'pitwin',   name:'PIT PERFECT',  desc:'Win a race in which you made a pit stop'},
+  {id:'speed',    name:'SPEED DEMON',  desc:'Reach 320 km/h (you will need DRS)'},
+  {id:'hotlap',   name:'HOT LAP',      desc:'Beat the circuit target lap time'},
+  {id:'overtake', name:'OVERTAKER',    desc:'Make 3 overtakes in one race'},
+  {id:'endure',   name:'ENDURANCE',    desc:'Finish a race of 10 laps or more'},
+  {id:'tourer',   name:'GRAND TOURER', desc:'Drive 100 km in total', prog:()=>Math.min(100,MS.km).toFixed(1)+'/100 km'},
+  {id:'clean',    name:'NO SCRATCHES', desc:'Win without touching a wall'},
+];
+let MS={done:{},wins:{},km:0};
+try{ const s=JSON.parse(localStorage.neonMissions||'{}'); MS={done:s.done||{},wins:s.wins||{},km:+s.km||0}; }catch(_){}
+function saveMS(){ try{ localStorage.neonMissions=JSON.stringify(MS); }catch(_){} }
+function award(id){ if(MS.done[id]) return; MS.done[id]=true; saveMS();
+  const m=MISSIONS.find(m=>m.id===id); flash('MISSION ✓ '+(m?m.name:id)); try{SFX.powerup();}catch(_){}
+  renderMissions(); }
+function lapTarget(){ return Math.ceil(TLEN/(TRACKS[cfg.track].streetWalls?40:52)); }   // seconds — scaled to the circuit
+function renderMissions(){ const el=document.getElementById('missionsPanel'); if(!el) return;
+  el.innerHTML='<div style="color:var(--neon-amber);margin-bottom:9px">◆ MISSIONS — '+Object.keys(MS.done).length+'/'+MISSIONS.length+' COMPLETE</div>'+
+    MISSIONS.map(m=>{ const d=!!MS.done[m.id];
+      let desc=m.desc; if(m.id==='hotlap') desc+=' (this circuit: '+lapTarget()+'s)';
+      return '<div class="mrow"><span class="'+(d?'mdone':'mtodo')+'">'+(d?'✔':'○')+'</span><span class="mname">'+m.name+'</span><span class="mdesc">'+desc+(m.prog&&!d?' — '+m.prog():'')+'</span></div>'; }).join(''); }
 
 const renderer=new THREE.WebGLRenderer({canvas:cv, antialias:true});
 renderer.setSize(W,H,false);
@@ -238,7 +273,7 @@ texL.load('assets/textures/metal_diff.jpg', tx=>{ tx.wrapS=tx.wrapT=THREE.Repeat
 
 // ---- track state (rebuilt per circuit) ----
 const SAMP=900;
-let P=[],T=[],Nn=[],WL=[],WR=[],EH=[],GR=[],vSafe=[],RL=[],RT=[],cornerF=[],drsZone=[],TLEN=1,SPM=1,wallMargin=6.3,mb={a:0,b:1,c:0,d:1},pitSet=null,pitSide=0,pitIdxs=[],pitWallAt=[];
+let P=[],T=[],Nn=[],WL=[],WR=[],EH=[],GR=[],vSafe=[],RL=[],RT=[],cornerF=[],drsZone=[],TLEN=1,SPM=1,wallMargin=6.3,mb={a:0,b:1,c:0,d:1},pitSet=null,pitSide=0,pitIdxs=[],pitWallAt=[],playerPit=null,pitCrew=null,crewMat=null;
 const trackGroup=new THREE.Group(); scene.add(trackGroup);
 // real-circuit elevation profiles (metres) keyed by lap fraction in racing direction (0 = start/finish).
 // Approximate the famous gradients — above all Spa's Eau Rouge/Raidillon climb just after Turn 1.
@@ -499,7 +534,7 @@ function buildTrack(tr){
     [[oL,1],[oR,-1]].forEach(([o,s])=>{ const post=new THREE.Mesh(new THREE.BoxGeometry(0.6,8.6,0.6),gantryMat); post.position.set(p.x+n.x*o*s,p.y+3.7,p.z+n.z*o*s); post.castShadow=true; trackGroup.add(post); });   // legs run into the ground
     const beam=new THREE.Mesh(new THREE.BoxGeometry(oL+oR,1.2,0.8),gantryMat); beam.position.set(p.x+n.x*(oL-oR)/2,p.y+8,p.z+n.z*(oL-oR)/2); beam.rotation.y=Math.atan2(n.x,n.z); beam.castShadow=true; trackGroup.add(beam); }
   // pit lane — uses the pit stretch computed up front
-  pitWallAt=new Array(SAMP).fill(false);
+  pitWallAt=new Array(SAMP).fill(false); playerPit=null; pitCrew=null; crewMat=null;
   { if(pitIdxs.length>1){ const side=pitSide, idxs=pitIdxs, w0=(i)=> side<0 ? WR[i] : WL[i];
       const PW=9;                       // pit road width
       // the lane is OPEN at both ends: no pit wall over the entry/exit stretches, so the player can drive in
@@ -571,7 +606,30 @@ function buildTrack(tr){
         dec.rotation.x=-Math.PI/2; dec.rotation.z=Math.atan2(n.x,n.z); dec.position.set(p.x+n.x*doff,p.y+0.05,p.z+n.z*doff); trackGroup.add(dec);   // painted pit box on the pit road
         for(const dz of [-4.6,4.6]){ const sx2=fx2+T[i].x*dz+n.x*side*0.55, sz2=fz2+T[i].z*dz+n.z*side*0.55;  // tyre stacks tucked against the garages, out of the drivable lane
           const st2=new THREE.Mesh(stackG,stackM); st2.position.set(sx2,p.y+0.48,sz2); st2.castShadow=true; trackGroup.add(st2);
-          const cap=new THREE.Mesh(capG,new THREE.MeshStandardMaterial({color:tcol,roughness:0.6})); cap.position.set(sx2,p.y+1.02,sz2); trackGroup.add(cap); } } } }
+          const cap=new THREE.Mesh(capG,new THREE.MeshStandardMaterial({color:tcol,roughness:0.6})); cap.position.set(sx2,p.y+1.02,sz2); trackGroup.add(cap); } }
+      // ---- the player's own pit box: yellow markings halfway down the lane + a (hidden) crew for animated stops ----
+      { const k=Math.floor(0.5*(idxs.length-1)), i=idxs[k], p=P[i], n=Nn[i], W=w0(i), ang=Math.atan2(T[i].x,T[i].z);
+        const off=side*(W+3+PW*0.55), bx=p.x+n.x*off, bz=p.z+n.z*off;
+        if(farFromOtherTrack(bx,bz,i,12)){
+          const yc=document.createElement('canvas'); yc.width=128; yc.height=192; const yx=yc.getContext('2d');
+          yx.clearRect(0,0,128,192); yx.strokeStyle='rgba(255,211,25,0.95)'; yx.lineWidth=8; yx.strokeRect(8,8,112,176);
+          yx.fillStyle='rgba(255,211,25,0.95)'; yx.fillRect(8,88,112,8);
+          yx.font='bold 40px sans-serif'; yx.textAlign='center'; yx.fillText('YOU',64,60);
+          const ytx=new THREE.CanvasTexture(yc); ytx.encoding=THREE.sRGBEncoding;
+          const ydec=new THREE.Mesh(new THREE.PlaneGeometry(4.6,6.8),new THREE.MeshBasicMaterial({map:ytx,transparent:true,depthWrite:false}));
+          ydec.rotation.x=-Math.PI/2; ydec.rotation.z=Math.atan2(n.x,n.z); ydec.position.set(bx,p.y+0.058,bz); trackGroup.add(ydec);
+          pitCrew=new THREE.Group(); pitCrew.visible=false;
+          crewMat=new THREE.MeshStandardMaterial({color:0xd5102a,roughness:0.7});
+          const headM=new THREE.MeshStandardMaterial({color:0x23232a,roughness:0.45});
+          [[-1.15,1.65],[1.15,1.65],[-1.15,-1.75],[1.15,-1.75],[0,2.75],[0,-2.85]].forEach(([lx,lz])=>{   // 4 wheel gunners + front/rear jacks
+            const f=new THREE.Group();
+            const bod=new THREE.Mesh(new THREE.CylinderGeometry(0.16,0.2,0.62,8),crewMat); bod.position.y=0.5; bod.castShadow=true; f.add(bod);
+            const hed=new THREE.Mesh(new THREE.SphereGeometry(0.13,10,8),headM); hed.position.y=0.95; hed.castShadow=true; f.add(hed);
+            f.position.set(bx+Math.sin(ang)*lz-Math.cos(ang)*lx, p.y, bz+Math.cos(ang)*lz+Math.sin(ang)*lx); f.rotation.y=ang;
+            pitCrew.add(f); });
+          trackGroup.add(pitCrew);
+          playerPit={x:bx,z:bz,y:p.y,i};
+        } } } }
   // grandstands (crowd) + roofs — from per-track stands data
   (tr.stands||[]).forEach(s=>{ const at=(((rev?(1-s.at+1)%1:s.at)-st0)%1+1)%1; let sside=(rev?-s.side:s.side); const i0=Math.floor(at*SAMP)%SAMP, hl=s.len/2;
     if(pitSet&&pitSet.has(i0)&&sside===pitSide) sside=-sside;                    // never drop a grandstand onto the pit complex
@@ -776,7 +834,7 @@ function attachPlayer(m){ if(playerModel) car.remove(playerModel); boxParts.forE
       if(!nested){ wheels.push(o); if(/front|_f/i.test(o.name)) frontWheels.push(o); } } });   // only top road-wheel nodes — nested sub-meshes double-spin, and the cockpit steering wheel is not a wheel
   applyPaint(); }
 function applyPaint(){ const c=CARS[cfg.car], col=PAINTS[cfg.paint][1];
-  paint.color.set(col); f1Paint.color.set(col);
+  paint.color.set(col); f1Paint.color.set(col); if(crewMat) crewMat.color.set(col);   // your crew wears your colours
   if(c.paint==='tint'&&playerModel){ const b=playerModel.getObjectByName('body');
     if(b) b.traverse(o=>{ if(o.isMesh&&o.material&&o.material.color) o.material.color.set(col); }); } }
 function setPlayerCar(idx,cb){ const c=CARS[idx], seq=++loadSeq;
@@ -804,8 +862,9 @@ gltfL.load('assets/ferrari.glb', g=>{
   ['glass','windshield'].forEach(nm=>{ const o=m.getObjectByName(nm); if(o) o.material=glassMat; });
   m.traverse(o=>{ if(o.isMesh){ o.castShadow=true; o.receiveShadow=true; } });
   m.rotation.y=Math.PI; carTemplate=m;
-  setPlayerCar(cfg.car, ()=>{ carReady=true; maybeReady(); });
-}, undefined, err=>{ console.warn('GLB failed, using box car', err); buildBoxCar(); carReady=true; maybeReady(); });
+  const wasReady=carReady;                                  // the 9s box-car fallback may already have made the game playable
+  setPlayerCar(cfg.car, ()=>{ if(!wasReady){ carReady=true; maybeReady(); } });   // a LATE GLB only swaps the model — never re-runs race setup
+}, undefined, err=>{ console.warn('GLB failed, using box car', err); if(!carReady){ buildBoxCar(); carReady=true; maybeReady(); } });
 
 // ---- post-processing ----
 const composer=new THREE.EffectComposer(renderer);
@@ -941,12 +1000,16 @@ function renderStandings(){ const list=orderList(); const myi=list.findIndex(s=>
 
 // ---- physics / loop ----
 let speed,heading,carIdx,lateral,lap,pLap,lapStart,running,raf,lastT,prevIdx,countdown,armed,raceOver,wasInLane=false;
+let tyre=1,pitted=false,wallHits=0,overtakes=0,prevPosM=99,lastPassT=0,warned50=false,pitPhase='idle',pitT0=0,pitLift=0;
 let fpsSmooth=60, lastFpsUpd=0, carPitch=0;
 const gearTops=[12,24,38,54,70,95];
 function placeAtStart(){ const gs=gridSlot(cfg.ai), i0=gs.idx;
   car.position.set(P[i0].x+Nn[i0].x*gs.lane+T[i0].x*gs.fwd,P[i0].y,P[i0].z+Nn[i0].z*gs.lane+T[i0].z*gs.fwd);
   heading=Math.atan2(T[i0].x,T[i0].z);
-  speed=0; carIdx=i0; prevIdx=i0; lateral=0; lap=0; pLap=0; armed=false; carPitch=0; wasInLane=false; car.rotation.set(0,heading,0); }
+  speed=0; carIdx=i0; prevIdx=i0; lateral=0; lap=0; pLap=0; armed=false; carPitch=0; wasInLane=false;
+  tyre=1; pitted=false; wallHits=0; overtakes=0; prevPosM=99; lastPassT=0; warned50=false; pitPhase='idle'; pitLift=0;
+  wheels.forEach(w=>w.scale.setScalar(1)); if(pitCrew) pitCrew.visible=false;
+  car.rotation.set(0,heading,0); }
 function updateIdx(){ let bi=carIdx,bd=1e9;
   for(let k=-6;k<=50;k++){ const i=((carIdx+k)%SAMP+SAMP)%SAMP; const dx=car.position.x-P[i].x,dz=car.position.z-P[i].z,d=dx*dx+dz*dz; if(d<bd){bd=d;bi=i;} }
   prevIdx=carIdx; carIdx=bi; lateral=(car.position.x-P[carIdx].x)*Nn[carIdx].x+(car.position.z-P[carIdx].z)*Nn[carIdx].z; }
@@ -970,19 +1033,43 @@ function frame(now){ if(!running) return; const dt=Math.min(0.05,(now-lastT)/100
   const offTrack=lateral>WL[carIdx]||lateral<-WR[carIdx];
   const drsOn = !offTrack && drsZone[carIdx] && gapAhead<1.0;
   const maxSpd=offTrack?26:(drsOn?92:78), power=offTrack?7:(drsOn?15:12);
-  if(keyG) speed+=power*dt; else if(keyB) speed-=(speed>0?40:15)*dt; else speed-=Math.sign(speed)*4*dt;
+  if(keyG&&pitPhase!=='service') speed+=power*dt; else if(keyB) speed-=(speed>0?40:15)*dt; else speed-=Math.sign(speed)*4*dt;
   speed -= (power/(maxSpd*maxSpd))*speed*Math.abs(speed)*dt;     // air+rolling drag -> top speed approached gradually, not instantly
   speed -= gradeAt(carIdx)*9.0*dt;                               // hills bite: climbing bleeds speed, descents add it
+  if(pitPhase==='service') speed=0;                              // car is up on the jacks
+  // tyre wear: faster when cornering; worn tyres lose steering grip — pit for a fresh set
+  tyre=Math.max(0, tyre - dt*(Math.abs(speed)/78)*0.0014*((keyL||keyR)?1.5:1));
+  if(tyre<0.5&&!warned50){ warned50=true; flash('BOX BOX — TYRES AT 50%'); }
+  MS.km+=Math.abs(speed)*dt/1000;
   if(Math.abs(speed)<0.35&&!keyG&&!keyB) speed=0; if(speed>maxSpd*1.04) speed=maxSpd*1.04; if(speed<-15) speed=-15;
   const grip=Math.min(1,Math.abs(speed)/11);
-  heading+=((keyL?1:0)-(keyR?1:0))*1.35*grip*dt*Math.sign(speed||1);
+  heading+=((keyL?1:0)-(keyR?1:0))*1.35*grip*(0.55+0.45*tyre)*dt*Math.sign(speed||1);   // worn tyres steer lazily
   const fx=Math.sin(heading),fz=Math.cos(heading); car.position.x+=fx*speed*dt; car.position.z+=fz*speed*dt;
   car.rotation.y=heading; car.rotation.z=-((keyL?1:0)-(keyR?1:0))*grip*0.03;
   const ws=speed*dt/0.35; wheels.forEach(w=>w.rotation.x+=ws); const st=((keyL?1:0)-(keyR?1:0))*0.4; frontWheels.forEach(w=>w.rotation.y=st);
   updateIdx();
-  car.position.y = groundY();                                                  // glue to the interpolated road surface — no bounce
+  car.position.y = groundY()+pitLift;                                          // glue to the interpolated road surface (+ pit jacks)
   carPitch += (Math.atan(gradeAt(carIdx)) - carPitch)*Math.min(1,dt*5);        // smooth nose-up/down on gradients
   car.rotation.x = -carPitch;
+  // ---- pit stop: stop inside your yellow box for an animated service + fresh tyres ----
+  if(playerPit&&running&&countdown<=0){
+    let inLaneNow=false;
+    if(pitSet&&pitSet.has(carIdx)&&pitSide!==0){ const W2=(pitSide>0?WL:WR)[carIdx]; inLaneNow=(pitSide>0?lateral:-lateral)>W2+2.8; }
+    const pd=Math.hypot(car.position.x-playerPit.x, car.position.z-playerPit.z);
+    if(pitPhase==='idle'&&inLaneNow&&pd<4.6&&Math.abs(speed)<0.6&&pLap>0){
+      pitPhase='service'; pitT0=now; speed=0; if(pitCrew) pitCrew.visible=true; try{SFX.coin();}catch(_){}
+    }
+    if(pitPhase==='service'){ const el2=now-pitT0, DUR=3000;
+      pitLift = el2<350? 0.27*(el2/350) : el2>DUR-300? Math.max(0,0.27*((DUR-el2)/300)) : 0.27;          // up on the jacks, drop at the end
+      const wp = (el2>700&&el2<2200)? (1-Math.abs(el2-1450)/750) : 0;                                    // wheels off / wheels on
+      wheels.forEach(w=>w.scale.setScalar(1-0.72*wp));
+      if(pitCrew) pitCrew.children.forEach((f,q)=>{ f.position.y=playerPit.y+Math.abs(Math.sin(now*0.012+q*1.3))*0.08; });   // crew working
+      flagEl.textContent=((DUR-el2)/1000).toFixed(1); flagEl.style.opacity=1;
+      if(el2>=DUR){ pitPhase='leave'; pitLift=0; tyre=1; warned50=false; pitted=true;
+        wheels.forEach(w=>w.scale.setScalar(1)); if(pitCrew) pitCrew.visible=false;
+        flash('TYRES FRESH — GO GO GO'); award('boxbox'); saveMS(); }
+    } else if(pitPhase==='leave'&&pd>9){ pitPhase='idle'; }
+  }
   const pm=Math.min(wallMargin,2.6);                         // the concrete pit wall is the boundary along the pit stretch
   let eL=WL[carIdx]+(inPit(carIdx,1)?pm:wallMargin),eR=WR[carIdx]+(inPit(carIdx,-1)?pm:wallMargin);   // hit the Armco wall (just inside the visible barrier)
   // the pit lane is OPEN to the player: drive in over the entry/exit stretches; in the walled
@@ -996,20 +1083,27 @@ function frame(now){ if(!running) return; const dt=Math.min(0.05,(now-lastT)/100
         car.position.x+=s2.x*ov; car.position.z+=s2.z*ov; speed*=0.7; } }
   }
   if(inLane&&!wasInLane){ flash('PIT LANE'); } wasInLane=inLane;
-  if(lateral>eL||lateral<-eR){ const lim=lateral>0?eL:-eR,over=lateral-lim,s=Nn[carIdx]; car.position.x-=s.x*over; car.position.z-=s.z*over; if(Math.abs(speed)>16) SFX.hit(); speed*=0.4; }
+  if(lateral>eL||lateral<-eR){ const lim=lateral>0?eL:-eR,over=lateral-lim,s=Nn[carIdx]; car.position.x-=s.x*over; car.position.z-=s.z*over;
+    if(Math.abs(speed)>8) wallHits++; if(Math.abs(speed)>16) SFX.hit(); speed*=0.4; }
   updateAI(dt);
   for(const a of ai){ const dx=car.position.x-a.mesh.position.x,dz=car.position.z-a.mesh.position.z,d=Math.hypot(dx,dz);
     if(d<3.4&&d>0.01){ const pu=(3.4-d)*0.6; car.position.x+=dx/d*pu; car.position.z+=dz/d*pu; speed*=0.985; } }
-  renderStandings();
+  { const posNow=renderStandings();                                        // overtake detection (debounced)
+    if(pLap>0&&countdown<=0){ if(posNow<prevPosM&&now-lastPassT>1500){ overtakes++; lastPassT=now; if(overtakes>=3) award('overtake'); }
+      else if(posNow>prevPosM) lastPassT=now; }
+    prevPosM=posNow; }
   if(prevIdx>SAMP*0.82&&carIdx<SAMP*0.18){ pLap++; if(pLap===1&&lap===0) lapStart=now; }   // lap 1 is timed from the line, not from lights-out
   if(carIdx>SAMP*0.45&&carIdx<SAMP*0.6) armed=true;
   if(armed&&prevIdx>SAMP*0.82&&carIdx<SAMP*0.18){ armed=false;
-    { const t=now-lapStart; if(!bestLap||t<bestLap){ bestLap=t; localStorage['neonBest_'+TRACKS[cfg.track].name]=Math.round(t); flash('FAST LAP '+fmt(t)); SFX.powerup(); } else { flash('LAP '+fmt(t)); SFX.tick(); } }
+    { const t=now-lapStart; if(!bestLap||t<bestLap){ bestLap=t; localStorage['neonBest_'+TRACKS[cfg.track].name]=Math.round(t); flash('FAST LAP '+fmt(t)); SFX.powerup(); } else { flash('LAP '+fmt(t)); SFX.tick(); }
+      if(t<=lapTarget()*1000) award('hotlap'); if(MS.km>=100) award('tourer'); saveMS(); }
     lap++; lapStart=now;
     if(lap>=TOTAL_LAPS){ lapEl.textContent=TOTAL_LAPS; return finishRace(now); }
     lapEl.textContent=Math.min(lap+1,TOTAL_LAPS); }
   if(pLap>0) curEl.textContent=((now-lapStart)/1000).toFixed(3);
   kmhEl.textContent=Math.round(Math.abs(speed)*3.6);
+  if(Math.abs(speed)*3.6>=320) award('speed');
+  tyreEl.textContent=Math.round(tyre*100)+'%'; tyreEl.style.color=tyre>0.6?'#18ff5a':(tyre>0.3?'#ffb020':'#ff2e3a');
   // FPS counter (smoothed, throttled to ~4x/sec)
   fpsSmooth += ((1/Math.max(dt,1e-3)) - fpsSmooth)*0.1;
   if(now-lastFpsUpd>250){ lastFpsUpd=now; fpsEl.textContent='FPS '+Math.round(fpsSmooth); }
@@ -1036,6 +1130,12 @@ function setupRace(){ TOTAL_LAPS=cfg.laps; buildAI();
 
 function finishRace(now){ raceOver=true; running=false; cancelAnimationFrame(raf);
   const pos=standings();
+  if(pos===1){ award('firstwin'); MS.wins[TRACKS[cfg.track].name]=true;
+    if(Object.keys(MS.wins).length>=TRACKS.length) award('sweep');
+    if(pitted) award('pitwin'); if(wallHits===0) award('clean'); }
+  if(TOTAL_LAPS>=10) award('endure');
+  if(MS.km>=100) award('tourer');
+  saveMS();
   flagEl.textContent = pos===1 ? '🏁 P1 — WIN!' : 'FINISHED P'+pos+'/'+(cfg.ai+1); flagEl.style.opacity=1;
   statusEl.textContent = pos===1 ? '★ VICTORY — P1 ★' : 'Race over · you finished P'+pos;
   statusEl.style.color = pos===1 ? 'var(--neon-lime)' : 'var(--neon-pink)';
@@ -1057,6 +1157,8 @@ function refreshSettings(){ document.getElementById('setAi').textContent=cfg.ai;
   document.getElementById('setFov').textContent=cfg.fov; document.getElementById('setCam').textContent=CAM_NAMES[cfg.camPreset];
   document.querySelectorAll('.dbtn').forEach(b=>b.classList.toggle('on', b.dataset.diff===cfg.diff)); }
 settingsEl.addEventListener('click',e=>{ const b=e.target.closest('button'); if(!b||running) return;
+  if(b.id==='missionsBtn'){ const p2=document.getElementById('missionsPanel'); const show=p2.style.display==='none';
+    p2.style.display=show?'':'none'; if(show) renderMissions(); try{SFX.select();}catch(_){} return; }
   const a=b.dataset.act; let trkChanged=false, garage=false;
   if(a==='ai-1') cfg.ai=Math.max(1,cfg.ai-1); else if(a==='ai+1') cfg.ai=Math.min(7,cfg.ai+1);
   else if(a==='lap-1') cfg.laps=Math.max(1,cfg.laps-1); else if(a==='lap+1') cfg.laps=Math.min(15,cfg.laps+1);
@@ -1079,6 +1181,7 @@ function hold(id,set){ const el=document.getElementById(id); el.addEventListener
 hold('tL',v=>keyL=v); hold('tR',v=>keyR=v); hold('tG',v=>keyG=v); hold('tB',v=>keyB=v);
 
 function maybeReady(){
+  if(running) return;                                       // never reset a race in progress (e.g. a slow asset arriving late)
   if(hdrReady&&carReady){ setupRace(); refreshSettings(); settingsEl.style.display=''; startBtn.disabled=false; startBtn.textContent='PRESS START'; statusEl.textContent='Pick a circuit · set up your race'; statusEl.style.color='var(--neon-pink)'; }
   else { placeAtStart(); snapCam(); composer.render(); drawMap(); } }
 // ---- init ----
