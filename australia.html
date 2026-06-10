@@ -148,7 +148,8 @@ new THREE.RGBELoader().load('assets/venice_sunset_1k.hdr', tex=>{
 const sunDir=new THREE.Vector3(); { const e=22*Math.PI/180,a=150*Math.PI/180; sunDir.set(Math.cos(e)*Math.sin(a),Math.sin(e),Math.cos(e)*Math.cos(a)); }
 const sun=new THREE.DirectionalLight(0xfff1de,2.1); sun.castShadow=true;
 sun.shadow.mapSize.set(2048,2048); sun.shadow.camera.near=1; sun.shadow.camera.far=440;
-const SH=120; sun.shadow.camera.left=-SH; sun.shadow.camera.right=SH; sun.shadow.camera.top=SH; sun.shadow.camera.bottom=-SH; sun.shadow.bias=-0.0005;
+const SH=120; sun.shadow.camera.left=-SH; sun.shadow.camera.right=SH; sun.shadow.camera.top=SH; sun.shadow.camera.bottom=-SH;
+sun.shadow.bias=-0.0002; sun.shadow.normalBias=1.2;   // normalBias kills surface acne on the large road/terrain sheets (showed up as dark "debris" blotches mid-road on elevated tracks)
 scene.add(sun, sun.target);
 // permanent grass ground
 const grass=new THREE.Mesh(new THREE.PlaneGeometry(14000,14000),new THREE.MeshStandardMaterial({color:0x4a7a39,roughness:1,side:THREE.DoubleSide}));
