@@ -235,7 +235,7 @@ texL.load('assets/textures/metal_diff.jpg', tx=>{ tx.wrapS=tx.wrapT=THREE.Repeat
 
 // ---- track state (rebuilt per circuit) ----
 const SAMP=900;
-let P=[],T=[],Nn=[],WL=[],WR=[],EH=[],GR=[],clearTo=[],vSafe=[],RL=[],RT=[],cornerF=[],drsZone=[],TLEN=1,SPM=1,wallMargin=6.3,mb={a:0,b:1,c:0,d:1};
+let P=[],T=[],Nn=[],WL=[],WR=[],EH=[],GR=[],clearTo=[],vSafe=[],RL=[],RT=[],cornerF=[],drsZone=[],TLEN=1,SPM=1,wallMargin=6.3,mb={a:0,b:1,c:0,d:1},pitSet=null,pitSide=0,pitIdxs=[];
 const trackGroup=new THREE.Group(); scene.add(trackGroup);
 // real-circuit elevation profiles (metres) keyed by lap fraction in racing direction (0 = start/finish).
 // Approximate the famous gradients — above all Spa's Eau Rouge/Raidillon climb just after Turn 1.
@@ -243,8 +243,8 @@ const ELEV={   // metres, lap fraction from the start/finish line (index 0 after
   MELBOURNE:[[0,1],[0.3,4],[0.6,2],[0.85,4],[1,1]],            // Albert Park — near flat
   MONZA:[[0,1],[0.5,2],[1,1]],                                   // famously flat
   SILVERSTONE:[[0,2],[0.3,6],[0.6,3],[0.85,6],[1,2]],          // gentle rolls
-  SUZUKA:[[0,3],[0.15,11],[0.3,19],[0.45,14],[0.6,7],[0.78,9],[0.9,6],[1,3]],   // figure-8: big gap at the 0.32<->0.74 crossover so one road bridges ~10m over the other
-  SPA:[[0,12],[0.02,13],[0.045,3],[0.08,7],[0.13,28],[0.17,30],[0.26,25],[0.36,18],[0.48,8],[0.62,12],[0.76,22],[0.88,17],[0.95,14],[1,12]],  // pit straight -> La Source (high) -> Eau Rouge dip -> Raidillon climb -> Kemmel high -> rolling Ardennes
+  SUZUKA:[[0,3.5],[0.028,3],[0.178,11],[0.328,19],[0.478,14],[0.628,7],[0.808,9],[0.928,6],[1,3.5]],   // figure-8: big gap at the 0.35<->0.76 crossover so one road bridges ~10m over the other
+  SPA:[[0,12],[0.025,12.5],[0.05,11],[0.095,3],[0.135,28],[0.175,30],[0.26,25],[0.36,18],[0.48,8],[0.62,12],[0.76,22],[0.88,17],[0.93,14.2],[0.96,14],[1,12]],  // pit straight -> La Source (flat hairpin) -> descent -> Eau Rouge dip -> Raidillon climb -> Kemmel high -> rolling Ardennes -> flat Bus Stop
   MONACO:[[0,0.4],[1,0.4]]   // FLAT — a street circuit sits on the ground; the engine's elevated-road+embankment model can't do Monaco's real hills without city terrain, and any elevation makes the walled road float
 };
 function elevSample(prof,frac){ frac=((frac%1)+1)%1;
@@ -254,7 +254,11 @@ function elevSample(prof,frac){ frac=((frac%1)+1)%1;
 function gradeAt(i){ return GR[i]||0; }
 function trackHeightAt(i){ return (P[i]&&P[i].y)||0; }
 // true if (x,z) is clear of every NON-adjacent part of the centreline (used to keep props/skirts off other track sections at crossovers)
-function farFromOtherTrack(x,z,hi,minD){ const md=minD*minD; for(let j=0;j<SAMP;j++){ const cd=Math.min((j-hi+SAMP)%SAMP,(hi-j+SAMP)%SAMP); if(cd<8) continue; const dx=x-P[j].x,dz=z-P[j].z; if(dx*dx+dz*dz<md) return false; } return true; }
+function farFromOtherTrack(x,z,hi,minD){ const md=minD*minD; for(let j=0;j<SAMP;j++){ const cd=Math.min((j-hi+SAMP)%SAMP,(hi-j+SAMP)%SAMP); if(cd<5) continue; const dx=x-P[j].x,dz=z-P[j].z; if(dx*dx+dz*dz<md) return false; } return true; }   // cd window must stay under a chicane's leg-to-leg index distance, or the other leg reads as "own neighbourhood"
+// true if sample i lies in the pit stretch on side sgn (+1 = the WL side) — barriers/props must yield to the pit complex there
+const inPit=(i,sgn)=> !!pitSet && pitSide===sgn && pitSet.has(i);
+// true if any sample of the (wrapping) range [i0..i1] is in the pit stretch on side sgn
+function pitClash(i0,i1,sgn){ if(!pitSet||pitSide!==sgn) return false; let i=i0,g=0; while(g++<=SAMP){ if(pitSet.has(i)) return true; if(i===i1)break; i=(i+1)%SAMP; } return false; }
 // true if a footprint point (x,z) spanning heights [ymin,ymax] pokes within `rad` of the Armco wall (road edge + 7) of ANY
 // track section at a comparable height. Unlike farFromOtherTrack this is width-aware (the wall sits at the real road edge,
 // not a fixed radius) and checks every sample — so it also catches a long grandstand's end swinging toward its own curve.
@@ -277,9 +281,9 @@ function ribbon(oL,oR,uv,mat){ const pos=[],uvs=[],idx=[];
   const geo=new THREE.BufferGeometry(); geo.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));
   geo.setAttribute('uv',new THREE.Float32BufferAttribute(uvs,2)); geo.setIndex(idx); geo.computeVertexNormals();
   const m=new THREE.Mesh(geo,mat); m.receiveShadow=true; return m; }
-function wall(offFn,h){ const pos=[],uv=[],idx=[],L=SAMP/6;
-  for(let i=0;i<SAMP;i++){ const p=P[i],n=Nn[i],o=offFn(i),x=p.x+n.x*o,z=p.z+n.z*o;
-    pos.push(x,p.y+0.1,z); pos.push(x,p.y+h,z); uv.push(i/SAMP*L,0); uv.push(i/SAMP*L,1); }
+function wall(offFn,h,skipFn){ const pos=[],uv=[],idx=[],L=SAMP/6;
+  for(let i=0;i<SAMP;i++){ const p=P[i],n=Nn[i],o=offFn(i),x=p.x+n.x*o,z=p.z+n.z*o,top=(skipFn&&skipFn(i))?0.1:h;   // skipped samples collapse the wall to nothing (pit complex)
+    pos.push(x,p.y+0.1,z); pos.push(x,p.y+top,z); uv.push(i/SAMP*L,0); uv.push(i/SAMP*L,1); }
   for(let i=0;i<SAMP;i++){ const a=i*2,b=i*2+1,c=((i+1)%SAMP)*2,d=((i+1)%SAMP)*2+1; idx.push(a,b,c,b,d,c); }
   const geo=new THREE.BufferGeometry(); geo.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));
   geo.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2)); geo.setIndex(idx); geo.computeVertexNormals();
@@ -298,9 +302,9 @@ function skirt(sgn){ const W0=70, pos=[],uvs=[],idx=[];
   geo.setAttribute('uv',new THREE.Float32BufferAttribute(uvs,2)); geo.setIndex(idx); geo.computeVertexNormals();
   const m=new THREE.Mesh(geo,grass.material); m.receiveShadow=true; return m; }
 // trackside advertising hoardings — a textured band sitting on top of the barriers
-function adBand(offFn,y0,y1,mat,uvScale){ const pos=[],uv=[],idx=[],L=uvScale||SAMP/3;
-  for(let i=0;i<SAMP;i++){ const p=P[i],n=Nn[i],o=offFn(i),x=p.x+n.x*o,z=p.z+n.z*o;
-    pos.push(x,p.y+y0,z); pos.push(x,p.y+y1,z); uv.push(i/SAMP*L,1); uv.push(i/SAMP*L,0); }
+function adBand(offFn,y0,y1,mat,uvScale,skipFn){ const pos=[],uv=[],idx=[],L=uvScale||SAMP/3;
+  for(let i=0;i<SAMP;i++){ const p=P[i],n=Nn[i],o=offFn(i),x=p.x+n.x*o,z=p.z+n.z*o,yt=(skipFn&&skipFn(i))?y0:y1;   // skipped samples collapse the band (pit complex)
+    pos.push(x,p.y+y0,z); pos.push(x,p.y+yt,z); uv.push(i/SAMP*L,1); uv.push(i/SAMP*L,0); }
   for(let i=0;i<SAMP;i++){ const a=i*2,b=i*2+1,c=((i+1)%SAMP)*2,d=((i+1)%SAMP)*2+1; idx.push(a,b,c,b,d,c); }
   const geo=new THREE.BufferGeometry(); geo.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));
   geo.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2)); geo.setIndex(idx); geo.computeVertexNormals();
@@ -323,7 +327,7 @@ function buildTrack(tr){
   const rev = (tr.rev!==false);   // set rev:false to keep the source point order (the real racing direction for these circuits)
   wallMargin = tr.streetWalls ? 1.3 : 6.3;   // street circuits (Monaco): walls right at the track edge, so you hit them much sooner
   let data = rev ? tr.data.slice().reverse().map(p=>[p[0],p[1],p[3],p[2]]) : tr.data.slice();
-  data = data.map(p=>[-p[0],p[1],p[3],p[2]]);   // un-mirror: the TUMFTM frame is left-right flipped, so reflect X + swap L/R widths -> driver goes the real (clockwise) way with corners on the correct side
+  data = data.map(p=>[p[0],-p[1],p[3],p[2]]);   // un-mirror: the TUMFTM frame is left-right flipped, so reflect (+ swap L/R widths) -> driver goes the real way with corners on the correct side; reflecting Y (not X) keeps the world NORTH-UP, so the minimap matches real circuit maps
   const st0 = tr.start||0;        // rotate so centreline index 0 sits on the real start/finish line
   { const sh=((Math.round(st0*data.length))%data.length+data.length)%data.length; if(sh) data=data.slice(sh).concat(data.slice(0,sh)); }
   disposeGroup(trackGroup);
@@ -334,6 +338,18 @@ function buildTrack(tr){
   for(let i=0;i<SAMP;i++) P.push(curve.getPointAt(i/SAMP));
   const prof=ELEV[tr.name]||[[0,1],[1,1]]; EH.length=0;     // bake elevation onto the centreline
   for(let i=0;i<SAMP;i++){ const h=elevSample(prof,i/SAMP); EH.push(h); P[i].y=h; }
+  // flatten the elevation through very tight corners: a hairpin's entry/exit pavement overlaps at the apex,
+  // so any grade across it would leave the two road sheets at different heights (a visible step on the track)
+  { const A=i=>{ const a=P[(i-1+SAMP)%SAMP], b=P[(i+1)%SAMP]; return Math.atan2(b.x-a.x,b.z-a.z); };
+    const turn=(i,w)=>{ let d=A((i+w)%SAMP)-A((i-w+SAMP)%SAMP); while(d>Math.PI)d-=2*Math.PI; while(d<-Math.PI)d+=2*Math.PI; return Math.abs(d); };
+    const sharp=[]; for(let i=0;i<SAMP;i++) sharp.push(turn(i,8)>1.1 || turn(i,4)>1.05);   // two scales: wide for hairpins, short so a chicane's S doesn't cancel itself out
+    let i=0; while(i<SAMP){ if(!sharp[i]){i++;continue;} let j=i; while(j<SAMP&&sharp[j])j++;
+      const i0=i, i1=j-1, m=(P[(i0-1+SAMP)%SAMP].y+P[(i1+1)%SAMP].y)/2;
+      for(let k=i0;k<=i1;k++){ P[k].y=m; EH[k]=m; }
+      const B=8; for(let b=1;b<=B;b++){ const t=0.5-0.5*Math.cos(Math.PI*b/B);     // cosine blend back to the profile on both sides
+        const ka=(i0-b+SAMP)%SAMP; P[ka].y=P[ka].y*t+m*(1-t); EH[ka]=P[ka].y;
+        const kb=(i1+b)%SAMP; P[kb].y=P[kb].y*t+m*(1-t); EH[kb]=P[kb].y; }
+      i=j; } }
   GR.length=0;
   const WIDEN = tr.widen!=null ? tr.widen : 0.7;          // a little extra half-width for room (per-track; Monaco stays narrow)
   for(let i=0;i<SAMP;i++){ const a=P[(i-1+SAMP)%SAMP],b=P[(i+1)%SAMP];
@@ -344,6 +360,12 @@ function buildTrack(tr){
     WR.push(THREE.MathUtils.lerp(data[ia][2],data[(ia+1)%N][2],fr)+WIDEN); }
   clearTo.length=0;                                                               // distance to the nearest non-adjacent track section (huge except where the track passes near itself)
   for(let i=0;i<SAMP;i++){ let m=1e12; for(let j=0;j<SAMP;j+=2){ const cd=Math.min((j-i+SAMP)%SAMP,(i-j+SAMP)%SAMP); if(cd<60) continue; const dx=P[i].x-P[j].x,dz=P[i].z-P[j].z,d=dx*dx+dz*dz; if(d<m)m=d; } clearTo.push(Math.sqrt(m)); }
+  // pit stretch (range + side), computed up front so barriers and props can make way for the pit complex
+  pitSet=null; pitSide=0; pitIdxs=[];
+  if(tr.pit){ pitSide=(rev?-tr.pit.side:tr.pit.side);
+    const pf=(((rev?(1-tr.pit.to+1)%1:tr.pit.from)-st0)%1+1)%1, pt=(((rev?(1-tr.pit.from+1)%1:tr.pit.to)-st0)%1+1)%1;
+    const i0=Math.floor(pf*SAMP)%SAMP, i1=Math.floor(pt*SAMP)%SAMP; pitSet=new Set();
+    let i=i0,g=0; while(g++<SAMP){ pitSet.add(i); pitIdxs.push(i); if(i===i1)break; i=(i+1)%SAMP; } }
   // ---- racing line: minimum-curvature path inside the track corridor (iterative smoothing, clamped to the road) -> out-in-out, apexing corners ----
   RL.length=0; for(let i=0;i<SAMP;i++) RL.push(0);
   { const m=2.2;                                                                  // keep the line ~2.2 m off the kerb
@@ -372,6 +394,7 @@ function buildTrack(tr){
   for(let s=0;s<3;s++){ const c2=cmask.slice(); for(let i=0;i<SAMP;i++){ if(c2[(i-1+SAMP)%SAMP]||c2[(i+1)%SAMP]) cmask[i]=true; } }   // grow the corner zones a little
   const ranges=[]; { let i=0; while(i<SAMP){ if(!cmask[i]){i++;continue;} let j=i; while(j<SAMP&&cmask[j])j++; if(j-i>4) ranges.push([i,j-1]); i=j+1; } }
   const noRunoff = !!tr.streetWalls;                                               // street circuits (Monaco): walls hard against the track, no run-off/gravel
+  const wOff = noRunoff ? 1.6 : 7;                                                 // barrier offset from the track edge (street walls sit right at it)
   // ---- track surface ----
   trackGroup.add(ribbon(i=>WL[i],i=>-WR[i],SAMP/6,roadMat));                       // asphalt road (white edge lines baked in, NO centre line)
   { const rl=ribbon(i=>RL[i]+1.7,i=>RL[i]-1.7,SAMP/6,rubberMat); rl.position.y+=0.013; trackGroup.add(rl); }   // rubbered-in racing line
@@ -384,32 +407,36 @@ function buildTrack(tr){
     trackGroup.add(ribbonRange(i0,i1,i=>WL[i]+1.1,i=>WL[i],SAMP/1.4,curbMat,0.04));        // red/white kerbs, both edges
     trackGroup.add(ribbonRange(i0,i1,i=>-WR[i],i=>-WR[i]-1.1,SAMP/1.4,curbMat,0.04));
     if(!noRunoff){
-      trackGroup.add(ribbonRange(i0,i1,i=>WL[i]+1.1,i=>WL[i]+2.5,SAMP/3,greenMat,0.034));  // green painted run-off / astroturf
-      trackGroup.add(ribbonRange(i0,i1,i=>-WR[i]-2.5,i=>-WR[i]-1.1,SAMP/3,greenMat,0.034));
-      if(minV<70){ const oL=out?(i=>-WR[i]-6.8):(i=>WL[i]+2.4), oR=out?(i=>-WR[i]-2.4):(i=>WL[i]+6.8);  // gravel trap on the OUTSIDE of medium/slow corners
-        trackGroup.add(ribbonRange(i0,i1,oL,oR,SAMP/8,gravelMat,0.044)); }
-      if(minV<34){ const off=out?(i=>-(WR[i]+6.9)):(i=>WL[i]+6.9);                  // tyre wall only at the slow corners (hairpins / chicanes)
-        trackGroup.add(bandRange(i0,i1,off,0.05,0.95,SAMP/2,tyreMat)); }
-      if(minV<60){ [50,100,150].forEach(d=>{ const bi=((i0-Math.round(d*SPM))%SAMP+SAMP)%SAMP, p=P[bi], n=Nn[bi], o=WL[bi]+3.5;   // distance/braking boards on the approach
+      if(!pitClash(i0,i1,1)) trackGroup.add(ribbonRange(i0,i1,i=>WL[i]+1.1,i=>WL[i]+2.5,SAMP/3,greenMat,0.034));  // green painted run-off / astroturf (never over the pit complex)
+      if(!pitClash(i0,i1,-1)) trackGroup.add(ribbonRange(i0,i1,i=>-WR[i]-2.5,i=>-WR[i]-1.1,SAMP/3,greenMat,0.034));
+      // gravel / tyre walls need open ground: probe along the range so they never land on a nearby track section (tight chicane legs, figure-8)
+      const clearAlong=offFn=>{ for(let k=i0;k<=i1+2;k+=3){ const kk=Math.min(i1,k), p=P[kk], n=Nn[kk], o=offFn(kk);
+        if(!farFromOtherTrack(p.x+n.x*o,p.z+n.z*o,kk,9)) return false; } return true; };
+      if(minV<70&&!pitClash(i0,i1,out?-1:1)){ const oL=out?(i=>-WR[i]-6.8):(i=>WL[i]+2.4), oR=out?(i=>-WR[i]-2.4):(i=>WL[i]+6.8);  // gravel trap on the OUTSIDE of medium/slow corners
+        if(clearAlong(out?(i=>-WR[i]-4.6):(i=>WL[i]+4.6))) trackGroup.add(ribbonRange(i0,i1,oL,oR,SAMP/8,gravelMat,0.044)); }
+      if(minV<34&&!pitClash(i0,i1,out?-1:1)){ const off=out?(i=>-(WR[i]+6.9)):(i=>WL[i]+6.9);                  // tyre wall only at the slow corners (hairpins / chicanes)
+        if(clearAlong(off)) trackGroup.add(bandRange(i0,i1,off,0.05,0.95,SAMP/2,tyreMat)); }
+      if(minV<60){ [50,100,150].forEach(d=>{ const bi=((i0-Math.round(d*SPM))%SAMP+SAMP)%SAMP, p=P[bi], n=Nn[bi], o=WL[bi]+wOff-0.45;   // distance/braking boards at the barrier line, not on the run-off
+        const bx=p.x+n.x*o, bz=p.z+n.z*o;
+        if(inPit(bi,1)||!farFromOtherTrack(bx,bz,bi,15)) return;                    // never in the pit complex or beside another track section
         const ang=Math.atan2(T[bi].x,T[bi].z);
-        const board=new THREE.Mesh(new THREE.BoxGeometry(1.5,1.5,0.12),numMats[d]); board.position.set(p.x+n.x*o,p.y+1.5,p.z+n.z*o); board.rotation.y=ang; board.castShadow=true; trackGroup.add(board);
-        const post=new THREE.Mesh(new THREE.BoxGeometry(0.12,1.5,0.12),boardMat); post.position.set(p.x+n.x*o,p.y+0.75,p.z+n.z*o); trackGroup.add(post); }); } } }
-  // ---- barriers: Armco + sponsor boards + catch fencing ----
-  const wOff = noRunoff ? 1.6 : 7;                                                 // street walls sit right at the track edge
-  trackGroup.add(wall(i=>WL[i]+wOff,1.1)); trackGroup.add(wall(i=>-(WR[i]+wOff),1.1));
-  trackGroup.add(adBand(i=>WL[i]+wOff+0.05,1.15,2.4)); trackGroup.add(adBand(i=>-(WR[i]+wOff+0.05),1.15,2.4));     // sponsor hoardings
-  trackGroup.add(adBand(i=>WL[i]+wOff+0.1,2.4,5.6,fenceMat,SAMP/1.5)); trackGroup.add(adBand(i=>-(WR[i]+wOff+0.1),2.4,5.6,fenceMat,SAMP/1.5)); // catch fencing above
+        const board=new THREE.Mesh(new THREE.BoxGeometry(1.5,1.5,0.12),numMats[d]); board.position.set(bx,p.y+1.5,bz); board.rotation.y=ang; board.castShadow=true; trackGroup.add(board);
+        const post=new THREE.Mesh(new THREE.BoxGeometry(0.12,1.5,0.12),boardMat); post.position.set(bx,p.y+0.75,bz); trackGroup.add(post); }); } } }
+  // ---- barriers: Armco + sponsor boards + catch fencing (all yield to the pit complex over the pit stretch) ----
+  const skipL=i=>inPit(i,1), skipR=i=>inPit(i,-1);
+  trackGroup.add(wall(i=>WL[i]+wOff,1.1,skipL)); trackGroup.add(wall(i=>-(WR[i]+wOff),1.1,skipR));
+  trackGroup.add(adBand(i=>WL[i]+wOff+0.05,1.15,2.4,adMat,0,skipL)); trackGroup.add(adBand(i=>-(WR[i]+wOff+0.05),1.15,2.4,adMat,0,skipR));     // sponsor hoardings
+  trackGroup.add(adBand(i=>WL[i]+wOff+0.1,2.4,5.6,fenceMat,SAMP/1.5,skipL)); trackGroup.add(adBand(i=>-(WR[i]+wOff+0.1),2.4,5.6,fenceMat,SAMP/1.5,skipR)); // catch fencing above
   // start/finish + gantry
   { const p=P[0],n=Nn[0],wid=WL[0]+WR[0];
     const sf=new THREE.Mesh(new THREE.PlaneGeometry(wid,5),startMat); sf.rotation.x=-Math.PI/2; sf.rotation.z=Math.atan2(n.x,n.z); sf.position.set(p.x,p.y+0.05,p.z); sf.receiveShadow=true; trackGroup.add(sf);
-    [1,-1].forEach(s=>{ const post=new THREE.Mesh(new THREE.BoxGeometry(0.6,8,0.6),gantryMat); post.position.set(p.x+n.x*(wid/2+1)*s,p.y+4,p.z+n.z*(wid/2+1)*s); post.castShadow=true; trackGroup.add(post); });
-    const beam=new THREE.Mesh(new THREE.BoxGeometry(wid+3,1.2,0.8),gantryMat); beam.position.set(p.x,p.y+8,p.z); beam.rotation.y=Math.atan2(n.x,n.z); beam.castShadow=true; trackGroup.add(beam); }
-  // pit lane — from per-track pit data {from,to,side}
-  { const pit=tr.pit;
-    if(pit){ const side=(rev?-pit.side:pit.side), pfrom=(((rev?(1-pit.to+1)%1:pit.from)-st0)%1+1)%1, pto=(((rev?(1-pit.from+1)%1:pit.to)-st0)%1+1)%1, w0=(i)=> side<0 ? WR[i] : WL[i];
-      // build wrapping index list from `from`..`to` (fractions of a lap)
-      const i0=Math.floor(pfrom*SAMP)%SAMP, i1=Math.floor(pto*SAMP)%SAMP, idxs=[];
-      { let i=i0, guard=0; while(guard++<SAMP){ idxs.push(i); if(i===i1) break; i=(i+1)%SAMP; } }
+    // gantry legs stand BEHIND the barrier (or at the pit wall on the pit side), never at the track edge
+    const legOff=s=>{ const W=s>0?WL[0]:WR[0]; return inPit(0,s) ? W+3.7 : W+wOff+0.8; };
+    const oL=legOff(1), oR=legOff(-1);
+    [[oL,1],[oR,-1]].forEach(([o,s])=>{ const post=new THREE.Mesh(new THREE.BoxGeometry(0.6,8,0.6),gantryMat); post.position.set(p.x+n.x*o*s,p.y+4,p.z+n.z*o*s); post.castShadow=true; trackGroup.add(post); });
+    const beam=new THREE.Mesh(new THREE.BoxGeometry(oL+oR,1.2,0.8),gantryMat); beam.position.set(p.x+n.x*(oL-oR)/2,p.y+8,p.z+n.z*(oL-oR)/2); beam.rotation.y=Math.atan2(n.x,n.z); beam.castShadow=true; trackGroup.add(beam); }
+  // pit lane — uses the pit stretch computed up front
+  { if(pitIdxs.length>1){ const side=pitSide, idxs=pitIdxs, w0=(i)=> side<0 ? WR[i] : WL[i];
       const PW=9;                       // pit road width
       // pit road: flat asphalt strip; inner edge ~3m outside track edge, centre offset = side*(W+7.5)
       if(idxs.length>1){ const pos=[],uvs=[],idx=[];
@@ -429,15 +456,17 @@ function buildTrack(tr){
         const geo=new THREE.BufferGeometry(); geo.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));
         geo.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2)); geo.setIndex(idx); geo.computeVertexNormals();
         const pw=new THREE.Mesh(geo,concreteMat); pw.castShadow=true; pw.receiveShadow=true; trackGroup.add(pw); }
-      // garage boxes along the outer side of the pit road, facing it
+      // garage row along the outer side of the pit road — near-continuous, so it reads as the pit building
       const garageMat=new THREE.MeshStandardMaterial({color:0x33363d,metalness:0.4,roughness:0.6});
-      const NG=8;
+      const NG=Math.max(8,Math.round(idxs.length*(TLEN/SAMP)/16));               // one ~15 m block per ~16 m of pit lane
       for(let g=0;g<NG;g++){ const k=Math.floor((g+0.5)/NG*(idxs.length-1)); const i=idxs[Math.max(0,Math.min(idxs.length-1,k))];
-        const p=P[i], n=Nn[i], W=w0(i), off=side*(W+3+PW+3.2), ang=Math.atan2(T[i].x,T[i].z), gx=p.x+n.x*off, gz=p.z+n.z*off;
-        if(!farFromOtherTrack(gx,gz,i,11)) continue;                            // skip a garage that lands on another track section
-        const box=new THREE.Mesh(new THREE.BoxGeometry(4,3,6),garageMat); box.position.set(gx,p.y+1.5,gz); box.rotation.y=ang; box.castShadow=true; box.receiveShadow=true; trackGroup.add(box); } } }
+        const p=P[i], n=Nn[i], W=w0(i), off=side*(W+3+PW+3.6), ang=Math.atan2(T[i].x,T[i].z), gx=p.x+n.x*off, gz=p.z+n.z*off;
+        if(!farFromOtherTrack(gx,gz,i,14)) continue;                            // skip a garage that lands on another track section
+        const gy0=Math.max(-0.05,p.y-8.6), gh=p.y+4.2-gy0;                      // rooted on the embankment ground, roof 4.2 m over the pit road
+        const box=new THREE.Mesh(new THREE.BoxGeometry(7,gh,15),garageMat); box.position.set(gx,gy0+gh/2,gz); box.rotation.y=ang; box.castShadow=true; box.receiveShadow=true; trackGroup.add(box); } } }
   // grandstands (crowd) + roofs — from per-track stands data
-  (tr.stands||[]).forEach(s=>{ const at=(((rev?(1-s.at+1)%1:s.at)-st0)%1+1)%1, sside=(rev?-s.side:s.side); const i0=Math.floor(at*SAMP)%SAMP, hl=s.len/2;
+  (tr.stands||[]).forEach(s=>{ const at=(((rev?(1-s.at+1)%1:s.at)-st0)%1+1)%1; let sside=(rev?-s.side:s.side); const i0=Math.floor(at*SAMP)%SAMP, hl=s.len/2;
+    if(pitSet&&pitSet.has(i0)&&sside===pitSide) sside=-sside;                    // never drop a grandstand onto the pit complex
     // place the stand beside the track, sliding it outward until no part of its long footprint pokes inside a barrier
     // (5 points along the length, each a half-width disc). A tight corner / figure-8 infield can block one side, so
     // try the requested side then the other; if a stand lands right on the crossover where both sides are blocked
@@ -469,8 +498,10 @@ function buildTrack(tr){
   for(let i=0;i<SAMP;i++){ if(drsZone[i]&&!drsZone[(i-1+SAMP)%SAMP]){ const p=P[i],n=Nn[i],wid=WL[i]+WR[i];
     const line=new THREE.Mesh(new THREE.PlaneGeometry(wid,2.6),new THREE.MeshStandardMaterial({color:0x18ff5a,emissive:0x10c040,emissiveIntensity:0.9,roughness:0.5}));
     line.rotation.x=-Math.PI/2; line.rotation.z=Math.atan2(n.x,n.z); line.position.set(p.x,p.y+0.06,p.z); trackGroup.add(line);
-    [1,-1].forEach(sd=>{ const b=new THREE.Mesh(new THREE.BoxGeometry(2.6,1.5,0.2),new THREE.MeshStandardMaterial({color:0x0c8a35,emissive:0x18ff5a,emissiveIntensity:0.5}));
-      b.position.set(p.x+n.x*(wid/2+4)*sd,p.y+2,p.z+n.z*(wid/2+4)*sd); b.rotation.y=Math.atan2(n.x,n.z); b.castShadow=true; trackGroup.add(b); }); } }   // boards well outside the kerb
+    [1,-1].forEach(sd=>{ const o=(sd>0?WL[i]:WR[i])+wOff-0.45, bx=p.x+n.x*o*sd, bz=p.z+n.z*o*sd;   // DRS boards on the barrier line, not on the run-off
+      if(inPit(i,sd)||!farFromOtherTrack(bx,bz,i,14)) return;
+      const b=new THREE.Mesh(new THREE.BoxGeometry(2.6,1.5,0.2),new THREE.MeshStandardMaterial({color:0x0c8a35,emissive:0x18ff5a,emissiveIntensity:0.5}));
+      b.position.set(bx,p.y+2,bz); b.rotation.y=Math.atan2(n.x,n.z); b.castShadow=true; trackGroup.add(b); }); } }
   // ---- Monaco: tunnel (roof + lit interior over the fast seafront section) ----
   if(tr.tunnel){ const i0=Math.floor(tr.tunnel[0]*SAMP), i1=Math.floor(tr.tunnel[1]*SAMP);
     const tunMat=new THREE.MeshStandardMaterial({color:0x33343a,roughness:0.92,metalness:0.05,side:THREE.DoubleSide});
@@ -573,13 +604,15 @@ function buildAI(){ ai.forEach(a=>scene.remove(a.mesh)); ai.length=0;
   for(let i=0;i<cfg.ai;i++){ const a={mesh:makeCarVisual(aiColors[i]), name:aiNames[i], col:aiColors[i], idx:0, prevIdx:0, lap:0, pLap:0, armed:false, prevHigh:false,
       x:0, z:0, heading:0, spd:0, lateral:0, stuck:0, passSide:0, passT:0, lane:((i%3)-1)*0.7, base:base+i*2.0};   // physics-driven; small offset from the racing line so they're not single-file
     a.mesh.add(makeLabel(a.name,aiColors[i])); ai.push(a); } }
-function gridSlot(slot){ return { idx:((SAMP-4-slot*4)%SAMP+SAMP)%SAMP, lane:(slot%2?1:-1)*2.6 }; }
+function gridSlot(slot){ const s=(10+slot*8)*SPM, i=Math.min(SAMP-2,Math.max(2,Math.ceil(s)));   // real F1 grid: 8 m slot pitch, two staggered columns, pole ~10 m before the line
+  const idx=((SAMP-i)%SAMP+SAMP)%SAMP, fwd=(i-s)/SPM, pole=RL[idx]>=0?1:-1;    // fwd: metres from P[idx] toward the line, so the pitch is exact (samples are ~6 m apart)
+  return { idx, fwd, lane:(slot%2?-pole:pole)*2.6 }; }
 function posAI(a){ a.mesh.position.set(a.x, trackHeightAt(a.idx), a.z); a.mesh.rotation.y=a.heading; }
 function updateIdxAI(a){ const c=((Math.round(a.idx)%SAMP)+SAMP)%SAMP; let bi=c,bd=1e9;
   for(let k=-6;k<=44;k++){ const i=((c+k)%SAMP+SAMP)%SAMP; const dx=a.x-P[i].x,dz=a.z-P[i].z,d=dx*dx+dz*dz; if(d<bd){bd=d;bi=i;} }
   a.prevIdx=a.idx; a.idx=bi; a.lateral=(a.x-P[bi].x)*Nn[bi].x+(a.z-P[bi].z)*Nn[bi].z; }
 function placeGrid(){ ai.forEach((a,i)=>{ const gs=gridSlot(i); a.idx=gs.idx; a.prevIdx=gs.idx; a.lap=0; a.pLap=0; a.armed=false; a.prevHigh=false; a.spd=0; a.stuck=0; a.passT=0; a.passSide=0;
-    a.x=P[gs.idx].x+Nn[gs.idx].x*gs.lane; a.z=P[gs.idx].z+Nn[gs.idx].z*gs.lane; a.heading=Math.atan2(T[gs.idx].x,T[gs.idx].z); a.lateral=gs.lane; posAI(a); }); }
+    a.x=P[gs.idx].x+Nn[gs.idx].x*gs.lane+T[gs.idx].x*gs.fwd; a.z=P[gs.idx].z+Nn[gs.idx].z*gs.lane+T[gs.idx].z*gs.fwd; a.heading=Math.atan2(T[gs.idx].x,T[gs.idx].z); a.lateral=gs.lane; posAI(a); }); }
 function updateAI(dt){
   const cars=[{x:car.position.x,z:car.position.z,idx:carIdx,spd:Math.abs(speed),lat:lateral,p:pLap*SAMP+carIdx,self:null}]
     .concat(ai.map(a=>({x:a.x,z:a.z,idx:a.idx,spd:Math.abs(a.spd),lat:a.lateral,p:a.pLap*SAMP+a.idx,self:a})));
@@ -628,7 +661,8 @@ function updateAI(dt){
     a.heading+=steer*1.35*grip*dt*Math.sign(a.spd||1);
     a.x+=Math.sin(a.heading)*a.spd*dt; a.z+=Math.cos(a.heading)*a.spd*dt;
     updateIdxAI(a);
-    const eL=WL[a.idx]+wallMargin,eR=WR[a.idx]+wallMargin;       // hit the Armco
+    const pmA=Math.min(wallMargin,2.6);                          // the concrete pit wall is the boundary along the pit stretch
+    const eL=WL[a.idx]+(inPit(a.idx,1)?pmA:wallMargin),eR=WR[a.idx]+(inPit(a.idx,-1)?pmA:wallMargin);   // hit the Armco
     if(a.lateral>eL||a.lateral<-eR){ const lim=a.lateral>0?eL:-eR,over=a.lateral-lim,s=Nn[a.idx]; a.x-=s.x*over; a.z-=s.z*over; a.spd*=0.45; }
     a.stuck = Math.abs(a.spd)<1.8 ? a.stuck+1 : 0;
     if(a.idx>SAMP*0.45&&a.idx<SAMP*0.6) a.armed=true;
@@ -659,8 +693,8 @@ function renderStandings(){ const list=orderList(); const myi=list.findIndex(s=>
 let speed,heading,carIdx,lateral,lap,pLap,lapStart,running,raf,lastT,prevIdx,countdown,armed,raceOver;
 let fpsSmooth=60, lastFpsUpd=0, carPitch=0;
 const gearTops=[12,24,38,54,70,95];
-function placeAtStart(){ const gs=gridSlot(cfg.ai), i0=((Math.floor(gs.idx))%SAMP+SAMP)%SAMP;
-  car.position.set(P[i0].x+Nn[i0].x*gs.lane,P[i0].y,P[i0].z+Nn[i0].z*gs.lane);
+function placeAtStart(){ const gs=gridSlot(cfg.ai), i0=gs.idx;
+  car.position.set(P[i0].x+Nn[i0].x*gs.lane+T[i0].x*gs.fwd,P[i0].y,P[i0].z+Nn[i0].z*gs.lane+T[i0].z*gs.fwd);
   heading=Math.atan2(T[i0].x,T[i0].z);
   speed=0; carIdx=i0; prevIdx=i0; lateral=0; lap=0; pLap=0; armed=false; carPitch=0; car.rotation.set(0,heading,0); }
 function updateIdx(){ let bi=carIdx,bd=1e9;
@@ -695,20 +729,21 @@ function frame(now){ if(!running) return; const dt=Math.min(0.05,(now-lastT)/100
   car.position.y = groundY();                                                  // glue to the interpolated road surface — no bounce
   carPitch += (Math.atan(gradeAt(carIdx)) - carPitch)*Math.min(1,dt*5);        // smooth nose-up/down on gradients
   car.rotation.x = -carPitch;
-  const eL=WL[carIdx]+wallMargin,eR=WR[carIdx]+wallMargin;   // hit the Armco wall (just inside the visible barrier)
+  const pm=Math.min(wallMargin,2.6);                         // the concrete pit wall is the boundary along the pit stretch
+  const eL=WL[carIdx]+(inPit(carIdx,1)?pm:wallMargin),eR=WR[carIdx]+(inPit(carIdx,-1)?pm:wallMargin);   // hit the Armco wall (just inside the visible barrier)
   if(lateral>eL||lateral<-eR){ const lim=lateral>0?eL:-eR,over=lateral-lim,s=Nn[carIdx]; car.position.x-=s.x*over; car.position.z-=s.z*over; if(Math.abs(speed)>16) SFX.hit(); speed*=0.4; }
   updateAI(dt);
   for(const a of ai){ const dx=car.position.x-a.mesh.position.x,dz=car.position.z-a.mesh.position.z,d=Math.hypot(dx,dz);
     if(d<3.4&&d>0.01){ const pu=(3.4-d)*0.6; car.position.x+=dx/d*pu; car.position.z+=dz/d*pu; speed*=0.985; } }
   renderStandings();
-  if(prevIdx>SAMP*0.82&&carIdx<SAMP*0.18) pLap++;
+  if(prevIdx>SAMP*0.82&&carIdx<SAMP*0.18){ pLap++; if(pLap===1&&lap===0) lapStart=now; }   // lap 1 is timed from the line, not from lights-out
   if(carIdx>SAMP*0.45&&carIdx<SAMP*0.6) armed=true;
   if(armed&&prevIdx>SAMP*0.82&&carIdx<SAMP*0.18){ armed=false;
-    if(lap>0){ const t=now-lapStart; if(!bestLap||t<bestLap){ bestLap=t; localStorage['neonBest_'+TRACKS[cfg.track].name]=Math.round(t); flash('FAST LAP '+fmt(t)); SFX.powerup(); } else { flash('LAP '+fmt(t)); SFX.tick(); } }
+    { const t=now-lapStart; if(!bestLap||t<bestLap){ bestLap=t; localStorage['neonBest_'+TRACKS[cfg.track].name]=Math.round(t); flash('FAST LAP '+fmt(t)); SFX.powerup(); } else { flash('LAP '+fmt(t)); SFX.tick(); } }
     lap++; lapStart=now;
     if(lap>=TOTAL_LAPS){ lapEl.textContent=TOTAL_LAPS; return finishRace(now); }
     lapEl.textContent=Math.min(lap+1,TOTAL_LAPS); }
-  if(lap>0) curEl.textContent=((now-lapStart)/1000).toFixed(3);
+  if(pLap>0) curEl.textContent=((now-lapStart)/1000).toFixed(3);
   kmhEl.textContent=Math.round(Math.abs(speed)*3.6);
   // FPS counter (smoothed, throttled to ~4x/sec)
   fpsSmooth += ((1/Math.max(dt,1e-3)) - fpsSmooth)*0.1;

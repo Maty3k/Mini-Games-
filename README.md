@@ -1,6 +1,6 @@
 # 🕹️ NEON ARCADE
 
-A retro **80s-arcade game hub** — 24 hand-built 2D mini-games plus a **3D HOLODECK** of WebGL games, all in one place. CRT scanlines, an Outrun sunset, a neon conveyor belt of cartridges, synthesized chiptune sound, and a full 3D racing game on the real Melbourne circuit.
+A retro **80s-arcade game hub** — 24 hand-built 2D mini-games plus a **3D HOLODECK** of six WebGL games, all in one place. CRT scanlines, an Outrun sunset, a neon conveyor belt of cartridges, synthesized chiptune sound, and a full 3D racing game on six real F1 circuits.
 
 Pure vanilla JavaScript + HTML/CSS, with [Three.js](https://threejs.org) for the 3D games. No build step, no framework, no runtime dependencies.
 
@@ -11,8 +11,8 @@ Pure vanilla JavaScript + HTML/CSS, with [Three.js](https://threejs.org) for the
 ## ✨ Highlights
 
 - **24 original 2D games** — every one self-contained vanilla JS, sharing one neon stylesheet and a Web-Audio sound library.
-- **4 real-time 3D games** (Three.js) in the **3D HOLODECK** tab.
-- **MELBOURNE** — a 3D racer on the **real Albert Park circuit** with a GLTF Ferrari, HDRI lighting, configurable AI rivals, live standings, DRS zones, and a race-setup menu.
+- **6 real-time 3D games** (Three.js) in the **3D HOLODECK** tab.
+- **GRAND PRIX** — a 3D racer on **six real F1 circuits** (verified against the real layouts, see `blueprints/`) with a GLTF Ferrari, HDRI lighting, configurable AI rivals, live standings, DRS zones, and a race-setup menu.
 - **Authentic CRT/Outrun look** — scan-lined sun, perspective grid, chrome lettering, screen-door scanlines, power-on sweep.
 - **Sound** — a tiny synthesized SFX engine (no audio files) + an ambient synth hum on the hub, with a global mute toggle.
 
@@ -70,7 +70,9 @@ Tab **3D HOLODECK** — built on Three.js.
 
 | Game | What it is |
 |------|------------|
-| **GRAND PRIX** | 3D racer on **5 real circuits** (Melbourne, Monza, Silverstone, Suzuka, Spa — real survey data, accurate lengths & racing direction). GLTF Ferrari + **downloaded PBR road/grass textures**, HDRI sky + reflections, soft shadows, bloom; **pit lanes**, continuous Armco barriers, grandstands at real positions; **1–7 named AI rivals**, selectable **track / laps / difficulty / FOV / camera**, a 3-2-1 start, live **standings with gap/interval timing**, colour-coded name tags, **DRS zones** (for you *and* the AI), an **FPS counter**, an **RPM + gear gauge**, and a finish screen. |
+| **GRAND PRIX** | 3D racer on **6 real circuits** (Melbourne, Monza, Silverstone, Suzuka, Spa, Monaco — real survey data, accurate lengths & racing direction). GLTF Ferrari + **downloaded PBR road/grass textures**, HDRI sky + reflections, soft shadows, bloom; **pit lanes**, continuous Armco barriers, grandstands at real positions; Monaco is a true **street circuit** — walls at the track edge, the tunnel, and the harbour with moored yachts; **1–7 named AI rivals**, selectable **track / laps / difficulty / FOV / camera**, a 3-2-1 start, live **standings with gap/interval timing**, colour-coded name tags, **DRS zones** (for you *and* the AI), an **FPS counter**, an **RPM + gear gauge**, and a finish screen. |
+| **SKYHAWK** | 3D flight sim — take off, fly through a procedural ring course, don't hit the deck. |
+| **IRON STORM** | Realistic 3D tank combat — mouse-aimed turret, enemy tanks, minimap and reload HUD. |
 | **NEONDRIFT** | First-person neon tunnel flyer — dodge blocks and fly through ring gates. |
 | **GRIDRUN** | Synthwave ground runner — strafe and jump over obstacles, grab orbs. |
 | **STARHAWK** | First-person space shooter — wave-based, multiple enemy types. |
@@ -88,10 +90,11 @@ index.html          hub (2D belt + 3D holodeck tabs)
 style.css           shared CRT/Outrun theme
 sfx.js              Web-Audio SFX library + mute toggle + ambient hum
 *.html              one file per 2D game
-neondrift / gridrun / starhawk / australia .html   3D games (australia = GRAND PRIX racer)
-tracks.js           5 real circuit centrelines (Melbourne, Monza, Silverstone, Suzuka, Spa)
+neondrift / gridrun / starhawk / skyhawk / ironstorm / australia .html   3D games (australia = GRAND PRIX racer)
+tracks.js           6 real circuit centrelines (Melbourne, Monza, Silverstone, Suzuka, Spa, Monaco)
+blueprints/         top-down SVG blueprints verifying each circuit vs the real layout
 lib/                vendored Three.js r128 addons (loaders, post-processing, sky)
-assets/             ferrari.glb, venice_sunset_1k.hdr
+assets/             ferrari.glb, venice_sunset_1k.hdr, PBR textures
 three.min.js        vendored Three.js r128
 screenshots/        images used in this README
 ```
