@@ -93,7 +93,7 @@
     <div class="race-wrap">
       <canvas id="c" width="700" height="438"></canvas>
       <canvas class="minimap" id="map" width="144" height="144"></canvas>
-      <div class="lap-info">LAP <b id="lap">1</b>/<span id="laptot">3</span> · POS <b id="pos">-</b>/<span id="postot">4</span><br>TIME <b id="cur">0.000</b> · TYRE <b id="tyreEl">100%</b></div>
+      <div class="lap-info">LAP <b id="lap">1</b>/<span id="laptot">3</span> · POS <b id="pos">-</b>/<span id="postot">4</span><br>TIME <b id="cur">0.000</b> · TYRE <b id="tyreEl">100%</b><b id="compEl"> M</b></div>
       <div class="standings" id="standings"></div>
       <div class="speedo"><b id="kmh">0</b><br><span>KM/H</span></div>
       <div class="drs" id="drs">DRS</div>
@@ -109,6 +109,8 @@
       <div class="setrow"><span class="lbl">TRACK</span><button class="sbtn" data-act="trk-1">‹</button><b id="setTrk" style="min-width:104px">MELBOURNE</b><button class="sbtn" data-act="trk+1">›</button></div>
       <div class="setrow"><span class="lbl">CAR</span><button class="sbtn" data-act="car-1">‹</button><b id="setCar" style="min-width:118px">GT ROSSO</b><button class="sbtn" data-act="car+1">›</button></div>
       <div class="setrow"><span class="lbl">PAINT</span><button class="sbtn" data-act="pnt-1">‹</button><b id="setPnt" style="min-width:80px">ROSSO</b><button class="sbtn" data-act="pnt+1">›</button></div>
+      <div class="setrow"><span class="lbl">TYRES</span><button class="sbtn" data-act="tyr-1">‹</button><b id="setTyr" style="min-width:88px">MEDIUM</b><button class="sbtn" data-act="tyr+1">›</button></div>
+      <div class="setrow"><span class="lbl">WEATHER</span><button class="dbtn on" data-wx="DRY">DRY</button><button class="dbtn" data-wx="RAIN">RAIN</button><button class="dbtn" data-wx="MIXED">MIXED</button></div>
       <div class="setrow"><span class="lbl">RIVALS</span><button class="sbtn" data-act="ai-1">−</button><b id="setAi">3</b><button class="sbtn" data-act="ai+1">+</button></div>
       <div class="setrow"><span class="lbl">LAPS</span><button class="sbtn" data-act="lap-1">−</button><b id="setLap">3</b><button class="sbtn" data-act="lap+1">+</button></div>
       <div class="setrow"><span class="lbl">LEVEL</span><button class="dbtn" data-diff="EASY">EASY</button><button class="dbtn on" data-diff="NORMAL">NORMAL</button><button class="dbtn" data-diff="HARD">HARD</button></div>
@@ -119,7 +121,7 @@
     <div class="missions" id="missionsPanel" style="display:none"></div>
     <p class="status" id="status">Loading circuit & car…</p>
     <button class="btn" id="start" disabled>LOADING…</button>
-    <p class="hint"><span class="key">↑</span> throttle · <span class="key">↓</span> brake · <span class="key">← →</span> steer · pads on mobile</p>
+    <p class="hint"><span class="key">↑</span> throttle · <span class="key">↓</span> brake · <span class="key">← →</span> steer · <span class="key">1-4</span> next tyres (fitted at your pit stop) · pads on mobile</p>
   </div>
 
 <script>
@@ -129,7 +131,7 @@ const lapEl=document.getElementById('lap'), curEl=document.getElementById('cur')
       flagEl=document.getElementById('flag'), gtitle=document.getElementById('gtitle'),
       fpsEl=document.getElementById('fps'), gearEl=document.getElementById('gear'), rpmEl=document.getElementById('rpm'), rpmFillEl=document.getElementById('rpmfill');
 const mapc=document.getElementById('map'), mapx=mapc.getContext('2d');
-const tyreEl=document.getElementById('tyreEl');
+const tyreEl=document.getElementById('tyreEl'), compEl=document.getElementById('compEl');
 let bestLap=0;
 const fmt=ms=>{ if(!ms) return '--'; return (ms/1000).toFixed(3); };
 
@@ -145,6 +147,7 @@ const MISSIONS=[
   {id:'endure',   name:'ENDURANCE',    desc:'Finish a race of 10 laps or more'},
   {id:'tourer',   name:'GRAND TOURER', desc:'Drive 100 km in total', prog:()=>Math.min(100,MS.km).toFixed(1)+'/100 km'},
   {id:'clean',    name:'NO SCRATCHES', desc:'Win without touching a wall'},
+  {id:'rainwin',  name:'RAIN MASTER',  desc:'Win a race in the rain'},
 ];
 let MS={done:{},wins:{},km:0};
 try{ const s=JSON.parse(localStorage.neonMissions||'{}'); MS={done:s.done||{},wins:s.wins||{},km:+s.km||0}; }catch(_){}
@@ -159,6 +162,29 @@ function renderMissions(){ const el=document.getElementById('missionsPanel'); if
       let desc=m.desc; if(m.id==='hotlap') desc+=' (this circuit: '+lapTarget()+'s)';
       return '<div class="mrow"><span class="'+(d?'mdone':'mtodo')+'">'+(d?'✔':'○')+'</span><span class="mname">'+m.name+'</span><span class="mdesc">'+desc+(m.prog&&!d?' — '+m.prog():'')+'</span></div>'; }).join(''); }
 
+// ---- tyre compounds + weather ----
+const COMPOUNDS=[
+  {id:'S', name:'SOFT',   col:'#ff4040', grip:1.07, wet:0.72, wearDry:1.65, wearWet:1.30},
+  {id:'M', name:'MEDIUM', col:'#ffd319', grip:1.00, wet:0.70, wearDry:1.00, wearWet:0.90},
+  {id:'H', name:'HARD',   col:'#e8e8ee', grip:0.94, wet:0.68, wearDry:0.60, wearWet:0.60},
+  {id:'W', name:'WETS',   col:'#2f86ff', grip:0.88, wet:1.02, wearDry:2.30, wearWet:0.75},
+];
+let curComp=1, nextComp=1;
+const WX={ wet:0, target:0, rained:false, rainAtP:-1, dryAtP:-1, warned:false };
+function gripFactor(){ const c=COMPOUNDS[curComp]; return c.grip*(1-WX.wet)+c.wet*WX.wet; }
+function wearRate(){ const c=COMPOUNDS[curComp]; return c.wearDry*(1-WX.wet)+c.wearWet*WX.wet; }
+let lastSkyWet=-1;
+function applyWeatherVisuals(){ const w=WX.wet;
+  if(Math.abs(w-lastSkyWet)>0.04||w===0||w===1){ if(w!==lastSkyWet){ drawSky(w); lastSkyWet=w; } }
+  sun.intensity=2.1-(1.0*w);
+  scene.fog.color.setRGB(0.81-0.26*w, 0.86-0.27*w, 0.92-0.27*w);
+  scene.fog.near=600-340*w; scene.fog.far=3400-1700*w;
+  roadMat.roughness=0.8-0.48*w; runoffMat.roughness=0.96-0.5*w; }                 // wet asphalt turns reflective
+function setWeatherImmediate(){ WX.target=(cfg.weather==='RAIN')?1:0; WX.wet=WX.target; WX.rained=cfg.weather==='RAIN'; applyWeatherVisuals(); updateRain(0.016); }
+function applyWeather(dt){ const d=WX.target-WX.wet;
+  if(d){ WX.wet+=Math.sign(d)*Math.min(Math.abs(d),dt/16); applyWeatherVisuals(); }
+  updateRain(dt); }
+
 const renderer=new THREE.WebGLRenderer({canvas:cv, antialias:true});
 renderer.setSize(W,H,false);
 renderer.outputEncoding=THREE.sRGBEncoding;
@@ -168,12 +194,17 @@ const scene=new THREE.Scene();
 scene.fog=new THREE.Fog(0xcfdceb, 600, 3400);
 const camera=new THREE.PerspectiveCamera(60,W/H,0.5,9000);
 
-// ---- clean gradient sky ----
-(function(){ const c=document.createElement('canvas'); c.width=4; c.height=512; const g=c.getContext('2d');
-  const grd=g.createLinearGradient(0,0,0,512);
-  grd.addColorStop(0,'#2e6fc8'); grd.addColorStop(0.5,'#7fa8da'); grd.addColorStop(0.82,'#bcd0e6'); grd.addColorStop(1,'#dfe7ee');
-  g.fillStyle=grd; g.fillRect(0,0,4,512);
-  const tx=new THREE.CanvasTexture(c); tx.encoding=THREE.sRGBEncoding; scene.background=tx; })();
+// ---- gradient sky (redrawable: clear <-> overcast for the weather system) ----
+const skyCanvas=document.createElement('canvas'); skyCanvas.width=4; skyCanvas.height=512;
+const skyTex=new THREE.CanvasTexture(skyCanvas); skyTex.encoding=THREE.sRGBEncoding; scene.background=skyTex;
+const SKY_CLEAR=[[0,0x2e6fc8],[0.5,0x7fa8da],[0.82,0xbcd0e6],[1,0xdfe7ee]];
+const SKY_RAIN =[[0,0x7b8693],[0.5,0x9ea7b1],[0.82,0xc0c6cd],[1,0xd9dde2]];   // light slate — a rainy DAY, not night (tone mapping darkens it on screen)
+function lerpHex(a,b,t){ const ar=a>>16&255,ag=a>>8&255,ab=a&255,br=b>>16&255,bg=b>>8&255,bb=b&255;
+  return 'rgb('+Math.round(ar+(br-ar)*t)+','+Math.round(ag+(bg-ag)*t)+','+Math.round(ab+(bb-ab)*t)+')'; }
+function drawSky(wet){ const g=skyCanvas.getContext('2d'); const grd=g.createLinearGradient(0,0,0,512);
+  for(let i=0;i<SKY_CLEAR.length;i++) grd.addColorStop(SKY_CLEAR[i][0], lerpHex(SKY_CLEAR[i][1],SKY_RAIN[i][1],wet));
+  g.fillStyle=grd; g.fillRect(0,0,4,512); skyTex.needsUpdate=true; }
+drawSky(0);
 // HDRI → PMREM environment for lighting + reflections
 let hdrReady=false, carReady=false;
 const pmrem=new THREE.PMREMGenerator(renderer); pmrem.compileEquirectangularShader();
@@ -191,6 +222,29 @@ scene.add(sun, sun.target);
 // permanent grass ground
 const grass=new THREE.Mesh(new THREE.PlaneGeometry(14000,14000),new THREE.MeshStandardMaterial({color:0x4a7a39,roughness:1,side:THREE.DoubleSide}));
 grass.rotation.x=-Math.PI/2; grass.position.y=-0.06; grass.receiveShadow=true; scene.add(grass);
+// rain: a particle box that follows the player
+const RN=3800, rainGeo=new THREE.BufferGeometry();
+{ const pos=new Float32Array(RN*3);
+  for(let i=0;i<RN;i++){ pos[i*3]=(Math.random()-0.5)*140; pos[i*3+1]=Math.random()*55; pos[i*3+2]=(Math.random()-0.5)*140; }
+  rainGeo.setAttribute('position',new THREE.Float32BufferAttribute(pos,3)); }
+const rainMat=new THREE.PointsMaterial({color:0xb8cee2,size:0.34,transparent:true,opacity:0,depthWrite:false});
+const rainPts=new THREE.Points(rainGeo,rainMat); rainPts.visible=false; rainPts.frustumCulled=false; scene.add(rainPts);
+function updateRain(dt){ if(WX.wet<=0.02){ rainPts.visible=false; return; }
+  rainPts.visible=true; rainMat.opacity=0.5*WX.wet;
+  rainPts.position.set(car.position.x,0,car.position.z);
+  const a=rainGeo.attributes.position.array;
+  for(let i=0;i<RN;i++){ a[i*3+1]-=(26+(i%7)*2)*dt;
+    if(a[i*3+1]<0){ a[i*3+1]=48+(i%11); a[i*3]=(Math.random()-0.5)*140; a[i*3+2]=(Math.random()-0.5)*140; } }
+  rainGeo.attributes.position.needsUpdate=true; }
+// spray: a soft billboard puff behind each car when the track is wet
+function sprayTex(){ const c=document.createElement('canvas'); c.width=c.height=64; const g=c.getContext('2d');
+  const r=g.createRadialGradient(32,38,4,32,38,30); r.addColorStop(0,'rgba(228,238,248,0.85)'); r.addColorStop(1,'rgba(228,238,248,0)');
+  g.fillStyle=r; g.fillRect(0,0,64,64); const t=new THREE.CanvasTexture(c); return t; }
+const SPRAY_TEX=sprayTex();
+function makeSpray(){ const s=new THREE.Sprite(new THREE.SpriteMaterial({map:SPRAY_TEX,transparent:true,opacity:0,depthWrite:false}));
+  s.position.set(0,0.7,-2.6); s.scale.set(2.5,1.6,1); return s; }
+function setSpray(s,sp){ if(!s) return; const o=WX.wet*Math.min(1,sp/26)*0.55; s.material.opacity=o;
+  if(o>0.01){ s.scale.set(2.2+sp*0.07, 1.2+sp*0.035, 1); } }
 
 // ---- shared textures / materials (created once, reused on every track) ----
 function asphaltTex(){ const c=document.createElement('canvas'); c.width=256;c.height=512; const g=c.getContext('2d');
@@ -702,6 +756,7 @@ function buildTrack(tr){
 
 // ---- garage: pick your car (Ferrari GLB, a built F1 single-seater, CC0 Kenney kit cars), fallback to box ----
 const car=new THREE.Group(); car.rotation.order='YXZ'; scene.add(car);   // YXZ so pitch (x) applies after heading (y)
+const playerSpray=makeSpray(); car.add(playerSpray);
 let wheels=[], frontWheels=[], carTemplate=null;
 const paint=new THREE.MeshPhysicalMaterial({color:0xd5102a,metalness:0.7,roughness:0.28,clearcoat:1,clearcoatRoughness:0.08});
 const glassMat=new THREE.MeshPhysicalMaterial({color:0x111418,metalness:0,roughness:0.05,transparent:true,opacity:0.45});
@@ -882,7 +937,7 @@ function drawMap(){ mapx.clearRect(0,0,144,144); mapx.strokeStyle='#25f4ee'; map
 
 // ---- AI opponents + race ----
 let TOTAL_LAPS=3;
-const cfg={track:0,ai:3,laps:3,diff:'NORMAL',fov:66,camDist:4.8,camHeight:2.0,camPreset:0,
+const cfg={track:0,ai:3,laps:3,diff:'NORMAL',fov:66,camDist:4.8,camHeight:2.0,camPreset:0,tyres:1,weather:'DRY',
   car:Math.max(0,CARS.findIndex(c=>c.id===localStorage.neonCar)), paint:Math.min(PAINTS.length-1,(+localStorage.neonPaint||0))};
 const aiNames=['FROST','BOLT','VIPER','ASH','NOVA','ROOK','ZEN'];
 const diffBase={EASY:50,NORMAL:60,HARD:70};
@@ -895,6 +950,7 @@ function makeCarVisual(color){ const g=new THREE.Group();
     cl.traverse(o=>{ if(o.isMesh) o.castShadow=true; }); g.add(cl);
   } else { const b=new THREE.Mesh(new THREE.BoxGeometry(1.8,1,4.4),new THREE.MeshStandardMaterial({color,metalness:0.4,roughness:0.5})); b.position.y=0.7; b.castShadow=true; g.add(b);
     [[-0.95,-1.5],[0.95,-1.5],[-0.95,1.5],[0.95,1.5]].forEach(([x,z])=>{ const w=new THREE.Mesh(new THREE.CylinderGeometry(0.35,0.35,0.4,12),new THREE.MeshStandardMaterial({color:0x111,roughness:0.9})); w.rotation.z=Math.PI/2; w.position.set(x,0.35,z); g.add(w); }); }
+  const spr=makeSpray(); g.add(spr); g.userData.spray=spr;
   scene.add(g); return g; }
 function makeLabel(text,color){
   const c=document.createElement('canvas'); c.width=256; c.height=72; const g=c.getContext('2d');
@@ -928,7 +984,7 @@ function updateAI(dt){
   for(const a of ai){ const i=a.idx; const sp=Math.abs(a.spd);
     // DRS (within ~1s of the car ahead in a DRS zone)
     let drs=false;
-    if(drsZone[i]){ const myp=a.pLap*SAMP+a.idx; let g=Infinity;
+    if(drsZone[i]&&WX.wet<0.3){ const myp=a.pLap*SAMP+a.idx; let g=Infinity;
       for(const c of cars){ if(c.self===a) continue; const d=c.p-myp; if(d>0.5&&d<g) g=d; }
       if(g<Infinity && (g/SPM)/Math.max(22,sp)<1.0) drs=true; }
     a.drs=drs;
@@ -955,10 +1011,11 @@ function updateAI(dt){
     const steerAngle = he + Math.atan2(2.8*(a.lateral-targetLat), Math.max(6,sp));
     let steer = steerAngle>0.015?1 : (steerAngle<-0.015?-1:0);
     // target speed: pre-baked speed-limit profile, this car's pace, and any follow-cap behind a car it can't pass
-    let tgt=Math.min(a.base*(drs?1.12:1), vSafe[(i+5)%SAMP], speedCap);
+    let tgt=Math.min(a.base*(drs?1.12:1), vSafe[(i+5)%SAMP], speedCap)*(1-0.15*WX.wet);   // everyone tiptoes in the rain
     // --- physics: identical model to the player ---
     const offTrack=a.lateral>WL[i]||a.lateral<-WR[i];
-    const maxSpd=offTrack?26:(drs?92:80), power=offTrack?7:(drs?15:12.5);
+    const maxSpd=(offTrack?26:(drs?92:80))*(1-0.06*WX.wet), power=(offTrack?7:(drs?15:12.5))*(1-0.12*WX.wet);
+    setSpray(a.mesh.userData.spray, sp);
     if(a.stuck>70){ steer=0; a.spd-=(a.spd>0?44:14)*dt; if(a.stuck>96) a.stuck=0; }   // genuinely pinned (~1.1s nearly stopped) -> reverse out; brief traffic slow-downs don't trigger it
     else if(a.spd<tgt) a.spd+=power*dt;
     else if(a.spd>tgt+1.5) a.spd-=44*dt;
@@ -1028,22 +1085,27 @@ function followCam(sp){ const fx=Math.sin(heading),fz=Math.cos(heading);
   camera.lookAt(car.position.x+fx*CA,car.position.y+CLY,car.position.z+fz*CA);
   camera.fov=cfg.fov; camera.updateProjectionMatrix(); sunFollow(); }
 function frame(now){ if(!running) return; const dt=Math.min(0.05,(now-lastT)/1000||0.016); lastT=now;
+  applyWeather(dt);
+  if(WX.rainAtP>=0){ const myP=pLap*SAMP+carIdx;                                  // MIXED: rain arrives mid-race
+    if(!WX.warned&&myP>WX.rainAtP-500){ WX.warned=true; flash('☔ RAIN INCOMING'); }
+    if(myP>WX.rainAtP){ WX.target=1; WX.rained=true; WX.rainAtP=-1; } }
+  if(WX.dryAtP>=0&&WX.rained&&(pLap*SAMP+carIdx)>WX.dryAtP){ WX.target=0; WX.dryAtP=-1; flash('TRACK DRYING'); }
   if(countdown>0){ countdown-=dt; flagEl.textContent=countdown>2.1?'3':countdown>1.05?'2':countdown>0.05?'1':'GO!'; flagEl.style.opacity=1;
     if(countdown<=0){ setTimeout(()=>flagEl.style.opacity=0,650); lapStart=now; SFX.coin(); } followCam(0); composer.render(); drawMap(); raf=requestAnimationFrame(frame); return; }
   const offTrack=lateral>WL[carIdx]||lateral<-WR[carIdx];
-  const drsOn = !offTrack && drsZone[carIdx] && gapAhead<1.0;
-  const maxSpd=offTrack?26:(drsOn?92:78), power=offTrack?7:(drsOn?15:12);
-  if(keyG&&pitPhase!=='service') speed+=power*dt; else if(keyB) speed-=(speed>0?40:15)*dt; else speed-=Math.sign(speed)*4*dt;
+  const drsOn = !offTrack && WX.wet<0.3 && drsZone[carIdx] && gapAhead<1.0;     // DRS disabled in the rain, like real F1
+  const maxSpd=offTrack?26:(drsOn?92:78), power=(offTrack?7:(drsOn?15:12))*(1-0.12*WX.wet);   // wheelspin off the line when wet
+  if(keyG&&pitPhase!=='service') speed+=power*dt; else if(keyB) speed-=(speed>0?40*Math.min(1,gripFactor()+0.06):15)*dt; else speed-=Math.sign(speed)*4*dt;
   speed -= (power/(maxSpd*maxSpd))*speed*Math.abs(speed)*dt;     // air+rolling drag -> top speed approached gradually, not instantly
   speed -= gradeAt(carIdx)*9.0*dt;                               // hills bite: climbing bleeds speed, descents add it
   if(pitPhase==='service') speed=0;                              // car is up on the jacks
-  // tyre wear: faster when cornering; worn tyres lose steering grip — pit for a fresh set
-  tyre=Math.max(0, tyre - dt*(Math.abs(speed)/78)*0.0014*((keyL||keyR)?1.5:1));
+  // tyre wear: compound- and weather-dependent, faster when cornering; worn tyres lose steering grip — pit for a fresh set
+  tyre=Math.max(0, tyre - dt*(Math.abs(speed)/78)*0.0014*wearRate()*((keyL||keyR)?1.5:1));
   if(tyre<0.5&&!warned50){ warned50=true; flash('BOX BOX — TYRES AT 50%'); }
   MS.km+=Math.abs(speed)*dt/1000;
   if(Math.abs(speed)<0.35&&!keyG&&!keyB) speed=0; if(speed>maxSpd*1.04) speed=maxSpd*1.04; if(speed<-15) speed=-15;
   const grip=Math.min(1,Math.abs(speed)/11);
-  heading+=((keyL?1:0)-(keyR?1:0))*1.35*grip*(0.55+0.45*tyre)*dt*Math.sign(speed||1);   // worn tyres steer lazily
+  heading+=((keyL?1:0)-(keyR?1:0))*1.35*grip*(0.55+0.45*tyre)*gripFactor()*dt*Math.sign(speed||1);   // worn tyres steer lazily; compound + weather set the grip
   const fx=Math.sin(heading),fz=Math.cos(heading); car.position.x+=fx*speed*dt; car.position.z+=fz*speed*dt;
   car.rotation.y=heading; car.rotation.z=-((keyL?1:0)-(keyR?1:0))*grip*0.03;
   const ws=speed*dt/0.35; wheels.forEach(w=>w.rotation.x+=ws); const st=((keyL?1:0)-(keyR?1:0))*0.4; frontWheels.forEach(w=>w.rotation.y=st);
@@ -1065,9 +1127,9 @@ function frame(now){ if(!running) return; const dt=Math.min(0.05,(now-lastT)/100
       wheels.forEach(w=>w.scale.setScalar(1-0.72*wp));
       if(pitCrew) pitCrew.children.forEach((f,q)=>{ f.position.y=playerPit.y+Math.abs(Math.sin(now*0.012+q*1.3))*0.08; });   // crew working
       flagEl.textContent=((DUR-el2)/1000).toFixed(1); flagEl.style.opacity=1;
-      if(el2>=DUR){ pitPhase='leave'; pitLift=0; tyre=1; warned50=false; pitted=true;
+      if(el2>=DUR){ pitPhase='leave'; pitLift=0; tyre=1; warned50=false; pitted=true; curComp=nextComp;   // the crew fits your chosen compound
         wheels.forEach(w=>w.scale.setScalar(1)); if(pitCrew) pitCrew.visible=false;
-        flash('TYRES FRESH — GO GO GO'); award('boxbox'); saveMS(); }
+        flash(COMPOUNDS[curComp].name+' TYRES ON — GO GO GO'); award('boxbox'); saveMS(); }
     } else if(pitPhase==='leave'&&pd>9){ pitPhase='idle'; }
   }
   const pm=Math.min(wallMargin,2.6);                         // the concrete pit wall is the boundary along the pit stretch
@@ -1104,6 +1166,8 @@ function frame(now){ if(!running) return; const dt=Math.min(0.05,(now-lastT)/100
   kmhEl.textContent=Math.round(Math.abs(speed)*3.6);
   if(Math.abs(speed)*3.6>=320) award('speed');
   tyreEl.textContent=Math.round(tyre*100)+'%'; tyreEl.style.color=tyre>0.6?'#18ff5a':(tyre>0.3?'#ffb020':'#ff2e3a');
+  compEl.textContent=' '+COMPOUNDS[curComp].id+(nextComp!==curComp?'→'+COMPOUNDS[nextComp].id:''); compEl.style.color=COMPOUNDS[curComp].col;
+  setSpray(playerSpray, Math.abs(speed));
   // FPS counter (smoothed, throttled to ~4x/sec)
   fpsSmooth += ((1/Math.max(dt,1e-3)) - fpsSmooth)*0.1;
   if(now-lastFpsUpd>250){ lastFpsUpd=now; fpsEl.textContent='FPS '+Math.round(fpsSmooth); }
@@ -1124,6 +1188,7 @@ function frame(now){ if(!running) return; const dt=Math.min(0.05,(now-lastT)/100
   followCam(speed); composer.render(); drawMap(); raf=requestAnimationFrame(frame); }
 let flashT; function flash(t){ flagEl.textContent=t; flagEl.style.opacity=1; clearTimeout(flashT); flashT=setTimeout(()=>flagEl.style.opacity=0,1700); }
 function setupRace(){ TOTAL_LAPS=cfg.laps; buildAI();
+  curComp=cfg.tyres; nextComp=cfg.tyres; setWeatherImmediate();   // preview the selected weather on the setup screen
   if(!youLabelAdded){ car.add(makeLabel('YOU',0xffd319)); youLabelAdded=true; }
   document.getElementById('laptot').textContent=cfg.laps; document.getElementById('postot').textContent=cfg.ai+1;
   placeAtStart(); placeGrid(); renderStandings(); snapCam(); composer.render(); drawMap(); }
@@ -1132,7 +1197,7 @@ function finishRace(now){ raceOver=true; running=false; cancelAnimationFrame(raf
   const pos=standings();
   if(pos===1){ award('firstwin'); MS.wins[TRACKS[cfg.track].name]=true;
     if(Object.keys(MS.wins).length>=TRACKS.length) award('sweep');
-    if(pitted) award('pitwin'); if(wallHits===0) award('clean'); }
+    if(pitted) award('pitwin'); if(wallHits===0) award('clean'); if(WX.rained) award('rainwin'); }
   if(TOTAL_LAPS>=10) award('endure');
   if(MS.km>=100) award('tourer');
   saveMS();
@@ -1143,6 +1208,11 @@ function finishRace(now){ raceOver=true; running=false; cancelAnimationFrame(raf
   startBtn.textContent='RACE AGAIN'; startBtn.style.display='inline-block'; settingsEl.style.display=''; followCam(0); composer.render(); }
 
 function begin(){ if(startBtn.disabled) return; SFX.select(); raceOver=false; setupRace();
+  curComp=cfg.tyres; nextComp=cfg.tyres;
+  WX.rained=(cfg.weather==='RAIN'); WX.warned=false; WX.rainAtP=-1; WX.dryAtP=-1;
+  WX.target=(cfg.weather==='RAIN')?1:0; WX.wet=WX.target; applyWeatherVisuals();
+  if(cfg.weather==='MIXED'){ const tot=cfg.laps*SAMP; WX.rainAtP=Math.floor(tot*(0.22+Math.random()*0.4));
+    if(Math.random()<0.5) WX.dryAtP=WX.rainAtP+Math.floor(tot*(0.25+Math.random()*0.3)); }
   settingsEl.style.display='none'; running=true; countdown=3.2; lapEl.textContent=1;
   statusEl.textContent='GET READY'; statusEl.style.color='var(--neon-lime)'; startBtn.style.display='none';
   cancelAnimationFrame(raf); lastT=performance.now(); raf=requestAnimationFrame(frame); }
@@ -1154,8 +1224,9 @@ const CAM_NAMES=['CLOSE','MID','FAR'];
 function refreshSettings(){ document.getElementById('setAi').textContent=cfg.ai; document.getElementById('setLap').textContent=cfg.laps;
   document.getElementById('setTrk').textContent=TRACKS[cfg.track].name;
   document.getElementById('setCar').textContent=CARS[cfg.car].name; document.getElementById('setPnt').textContent=PAINTS[cfg.paint][0];
+  document.getElementById('setTyr').textContent=COMPOUNDS[cfg.tyres].name;
   document.getElementById('setFov').textContent=cfg.fov; document.getElementById('setCam').textContent=CAM_NAMES[cfg.camPreset];
-  document.querySelectorAll('.dbtn').forEach(b=>b.classList.toggle('on', b.dataset.diff===cfg.diff)); }
+  document.querySelectorAll('.dbtn').forEach(b=>b.classList.toggle('on', b.dataset.diff===cfg.diff || b.dataset.wx===cfg.weather)); }
 settingsEl.addEventListener('click',e=>{ const b=e.target.closest('button'); if(!b||running) return;
   if(b.id==='missionsBtn'){ const p2=document.getElementById('missionsPanel'); const show=p2.style.display==='none';
     p2.style.display=show?'':'none'; if(show) renderMissions(); try{SFX.select();}catch(_){} return; }
@@ -1167,6 +1238,8 @@ settingsEl.addEventListener('click',e=>{ const b=e.target.closest('button'); if(
   else if(a==='car-1'||a==='car+1'){ cfg.car=(cfg.car+(a==='car+1'?1:-1)+CARS.length)%CARS.length; localStorage.neonCar=CARS[cfg.car].id; garage=true;
     setPlayerCar(cfg.car, ()=>{ if(!running){ garageCam(); composer.render(); } }); }
   else if(a==='pnt-1'||a==='pnt+1'){ cfg.paint=(cfg.paint+(a==='pnt+1'?1:-1)+PAINTS.length)%PAINTS.length; localStorage.neonPaint=cfg.paint; garage=true; applyPaint(); }
+  else if(a==='tyr-1'||a==='tyr+1'){ cfg.tyres=(cfg.tyres+(a==='tyr+1'?1:-1)+COMPOUNDS.length)%COMPOUNDS.length; curComp=cfg.tyres; nextComp=cfg.tyres; }
+  else if(b.dataset.wx){ cfg.weather=b.dataset.wx; }
   else if(a==='fov-1') cfg.fov=Math.max(50,cfg.fov-3); else if(a==='fov+1') cfg.fov=Math.min(95,cfg.fov+3);
   else if(a==='cam-1'||a==='cam+1'){ cfg.camPreset=Math.max(0,Math.min(2,cfg.camPreset+(a==='cam+1'?1:-1))); const cp=CAM_PRESETS[cfg.camPreset]; cfg.camDist=cp.dist; cfg.camHeight=cp.height; }
   else if(b.dataset.diff) cfg.diff=b.dataset.diff;
@@ -1175,7 +1248,9 @@ settingsEl.addEventListener('click',e=>{ const b=e.target.closest('button'); if(
   if(hdrReady&&carReady){ if(garage){ garageCam(); composer.render(); drawMap(); } else setupRace(); } });
 function setk(e,v){ const k=e.key.toLowerCase();
   if(k==='arrowleft'||k==='a'){keyL=v;e.preventDefault();} else if(k==='arrowright'||k==='d'){keyR=v;e.preventDefault();}
-  else if(k==='arrowup'||k==='w'){keyG=v;e.preventDefault();} else if(k==='arrowdown'||k==='s'){keyB=v;e.preventDefault();} }
+  else if(k==='arrowup'||k==='w'){keyG=v;e.preventDefault();} else if(k==='arrowdown'||k==='s'){keyB=v;e.preventDefault();}
+  else if(v&&k>='1'&&k<='4'){ nextComp=+k-1;                                       // pick the set your crew will fit at the next stop
+    if(!running){ curComp=nextComp; cfg.tyres=nextComp; refreshSettings(); } else flash('NEXT TYRES: '+COMPOUNDS[nextComp].name); } }
 addEventListener('keydown',e=>setk(e,true)); addEventListener('keyup',e=>setk(e,false));
 function hold(id,set){ const el=document.getElementById(id); el.addEventListener('pointerdown',e=>{e.preventDefault();set(true);}); el.addEventListener('pointerup',e=>{e.preventDefault();set(false);}); el.addEventListener('pointerleave',()=>set(false)); }
 hold('tL',v=>keyL=v); hold('tR',v=>keyR=v); hold('tG',v=>keyG=v); hold('tB',v=>keyB=v);
