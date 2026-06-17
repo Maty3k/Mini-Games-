@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WIPEOUT BAY — Neon Arcade</title>
+<link rel="stylesheet" href="style.css">
+<script src="sfx.js"></script>
+<script src="three.min.js"></script>
+<script src="lib/Sky.js"></script>
+<script src="lib/CopyShader.js"></script>
+<script src="lib/LuminosityHighPassShader.js"></script>
+<script src="lib/FXAAShader.js"></script>
+<script src="lib/EffectComposer.js"></script>
+<script src="lib/RenderPass.js"></script>
+<script src="lib/ShaderPass.js"></script>
+<script src="lib/UnrealBloomPass.js"></script>
+<style>:root{ --accent: var(--neon-cyan); }
+  .status{ font-family:'Press Start 2P',monospace; font-size:13px; color:var(--neon-pink);
+    text-align:center; min-height:16px; margin-top:14px; }
+  .d3-badge{ font-family:'Press Start 2P',monospace; font-size:9px; color:var(--neon-violet);
+    border:1px solid var(--neon-violet); border-radius:3px; padding:3px 6px; letter-spacing:1px; }
+  .hint b{ color:var(--neon-cyan); }
+  canvas#c{ border-radius:6px; box-shadow:0 0 22px rgba(0,0,0,.5); image-rendering:auto; width:100%; max-width:640px; height:auto; display:block; margin:0 auto; }
+  .storm-pill{ display:inline-flex; align-items:center; gap:5px; }
+  .storm-bar{ width:54px; height:8px; border:1px solid var(--neon-amber); border-radius:4px; overflow:hidden; background:rgba(0,0,0,.4); }
+  .storm-fill{ height:100%; width:25%; background:linear-gradient(90deg,#36d1ff,#ffd23a,#ff4d6d); transition:width .25s; }
+</style>
+</head>
+<body>
+  <div class="crt-on" aria-hidden="true"></div>
+  <div class="crt-lines" aria-hidden="true"></div>
+  <div class="crt-glass" aria-hidden="true"></div>
+
+  <nav class="gamebar">
+    <a class="back" href="index.html">‹ ARCADE</a>
+    <h1 class="game-title">WIPEOUT BAY</h1>
+    <span class="d3-badge">▣ 3D</span>
+  </nav>
+
+  <div class="stage">
+    <div class="hud">
+      <span>SCORE <b id="score">0</b></span>
+      <span>GATES <b id="gates">0</b></span>
+      <span>SPD <b id="spd">0</b></span>
+      <span>TIME <b id="time">30</b></span>
+      <span class="storm-pill">STORM <span class="storm-bar"><span class="storm-fill" id="stormfill"></span></span></span>
+      <span>BEST <b id="best">0</b></span>
+    </div>
+    <canvas id="c" width="640" height="480"></canvas>
+    <p class="status" id="status">Surf the swell. Thread the buoy gates before the clock runs out.</p>
+    <button class="btn" id="start">PRESS START</button>
+    <p class="hint"><span class="key">W ↑</span> throttle · <span class="key">S ↓</span> brake · <span class="key">A D ← →</span> steer · <span class="key">⇧</span> boost · launch off the crests</p>
+  </div>
+
+<script>
+// ============================================================
+//  WIPEOUT BAY — a jetski on a living, analytic ocean.
+//  The ocean is ONE sum-of-sines field, waveH(x,z,t), evaluated in TWO places
+//  that must never disagree: the GPU vertex shader (displaces the sea mesh) and
+//  the CPU sampler (buoyancy at the hull points). Both read the SAME wave table
+//  + the SAME storm scalar, so they can't drift. That shared field is the whole game.
+// ============================================================
+const cv=document.getElementById('c'); const VW=640, VH=480;
+const scoreEl=document.getElementById('score'), gatesEl=document.getElementById('gates'),
+      spdEl=document.getElementById('spd'), timeEl=document.getElementById('time'),
+      stormFill=document.getElementById('stormfill'),
+      bestEl=document.getElementById('best'), statusEl=document.getElementById('status'),
+      startBtn=document.getElementById('start');
+let best=+(localStorage.wipeoutBest||0); bestEl.textContent=best;
+
+// ---------- renderer / scene (sRGB, ACES tone-map, bloom) ----------
+const renderer=new THREE.WebGLRenderer({canvas:cv, antialias:true});
+const DPR=Math.min(2, window.devicePixelRatio||1);    // render the fixed 4:3 buffer at retina density → crisp neon, CSS box unchanged
+renderer.setSize(VW*DPR, VH*DPR, false);
+renderer.outputEncoding=THREE.sRGBEncoding;
+renderer.toneMapping=THREE.ACESFilmicToneMapping; renderer.toneMappingExposure=0.66;
+const scene=new THREE.Scene();
+let HAZE=new THREE.Color(0x9fb8cf);
+scene.fog=new THREE.Fog(HAZE.getHex(), 180, 1250);
+const camera=new THREE.PerspectiveCamera(64,VW/VH,0.4,30000);
+camera.position.set(0,14,-22);
+
+// ---------- physically-scattered sky + low golden sun ----------
+const sky=new THREE.Sky(); sky.scale.setScalar(20000); scene.add(sky);
+{ const u=sky.material.uniforms; u['turbidity'].value=6.5; u['rayleigh'].value=2.6; u['mieCoefficient'].value=0.008; u['mieDirectionalG'].value=0.82; }
+const sunDir=new THREE.Vector3();
+const sun=new THREE.DirectionalLight(0xfff0d8, 3.1); scene.add(sun, sun.target);
+const hemi=new THREE.HemisphereLight(0xbfe0ff, 0x12384e, 0.6); scene.add(hemi);
+function setSun(elevDeg, azimDeg){
+  const phi=THREE.MathUtils.degToRad(90-elevDeg), theta=THREE.MathUtils.degToRad(azimDeg);
+  sunDir.setFromSphericalCoords(1,phi,theta);
+  sky.material.uniforms['sunPosition'].value.copy(sunDir);
+  sun.position.copy(sunDir).multiplyScalar(400);
+}
+setSun(11, 95);
+// sky env-map so the wet sea actually reflects the real sky
+const pmrem=new THREE.PMREMGenerator(renderer); pmrem.compileEquirectangularShader();
+let envRT=null;
+function refreshEnv(){
+  const envScene=new THREE.Scene(); const skyEnv=new THREE.Sky(); skyEnv.scale.setScalar(20000);
+  skyEnv.material.uniforms['sunPosition'].value.copy(sunDir);
+  ['turbidity','rayleigh','mieCoefficient','mieDirectionalG'].forEach(k=>skyEnv.material.uniforms[k].value=sky.material.uniforms[k].value);
+  envScene.add(skyEnv);
+  if(envRT) envRT.dispose();
+  envRT=pmrem.fromScene(envScene); scene.environment=envRT.texture;
+  skyEnv.geometry.dispose(); skyEnv.material.dispose();   // temp sky was only needed to bake the env map
+}
+refreshEnv();
+
+// ============================================================
+//  THE WAVE FIELD — single source of truth.
+//  A wave = unit direction, wavenumber k=2π/λ, amplitude, angular speed ω
+//  (deep-water dispersion ω=spd·√(g·k) so long swells outrun the chop).
+// ============================================================
+const G_ACC=9.8;
+const WAVES=(function(){
+  const defs=[
+    {ang: 0.30, len:128, amp:2.45, spd:0.95},   // primary swell
+    {ang:-0.55, len: 88, amp:1.65, spd:1.00},
+    {ang: 1.15, len: 57, amp:1.05, spd:1.10},
+    {ang: 2.05, len: 35, amp:0.58, spd:1.25},
+    {ang:-1.45, len: 23, amp:0.34, spd:1.45},
+    {ang: 0.80, len: 15, amp:0.20, spd:1.70},   // fine chop
+  ];
+  return defs.map(d=>{ const k=2*Math.PI/d.len; return {
+    dir:[Math.cos(d.ang),Math.sin(d.ang)], k, amp:d.amp, w:d.spd*Math.sqrt(G_ACC*k) }; });
+})();
+const NW=WAVES.length;
+let storm=0.25;                                  // 0..1 — drives amplitude (CPU + GPU)
+const stormAmp=()=>0.40+0.60*storm;              // MUST match the GLSL expression below
+let gameT=0;                                     // seconds — the wave clock (CPU + GPU)
+
+// CPU sampler — the buoyancy truth. Returns surface height at world (x,z,t).
+function waveH(x,z,t){ let h=0; const sa=stormAmp();
+  for(let i=0;i<NW;i++){ const W=WAVES[i];
+    const ph=(W.dir[0]*x+W.dir[1]*z)*W.k - t*W.w; h+=W.amp*sa*Math.sin(ph); }
+  return h; }
+// analytic surface normal (no finite differences → exact, cheap)
+const _n=new THREE.Vector3();
+function waveN(x,z,t){ let dx=0,dz=0; const sa=stormAmp();
+  for(let i=0;i<NW;i++){ const W=WAVES[i];
+    const ph=(W.dir[0]*x+W.dir[1]*z)*W.k - t*W.w; const c=W.amp*sa*W.k*Math.cos(ph);
+    dx+=W.dir[0]*c; dz+=W.dir[1]*c; }
+  return _n.set(-dx,1,-dz).normalize(); }
+
+// ---------- the visible sea: a high-res plane displaced on the GPU by the SAME field ----------
+const SEG=320, SIZE=1850;                         // ~5.8 m cells; half-extent (925) clears the storm fog so no plane edge shows
+const seaGeo=new THREE.PlaneGeometry(SIZE,SIZE,SEG,SEG); seaGeo.rotateX(-Math.PI/2);
+const seaMat=new THREE.MeshStandardMaterial({ color:0x07304d, roughness:0.13, metalness:0.0, envMapIntensity:1.35 });
+let seaU=null;                                    // captured uniforms (set on first compile)
+seaMat.onBeforeCompile=(sh)=>{
+  sh.uniforms.uTime={value:0}; sh.uniforms.uStorm={value:storm}; sh.uniforms.uOffset={value:new THREE.Vector2()};
+  sh.uniforms.uWDir={value:WAVES.map(W=>new THREE.Vector2(W.dir[0],W.dir[1]))};
+  sh.uniforms.uWK={value:WAVES.map(W=>W.k)};
+  sh.uniforms.uWA={value:WAVES.map(W=>W.amp)};
+  sh.uniforms.uWW={value:WAVES.map(W=>W.w)};
+  seaU=sh.uniforms;
+  const head=`uniform float uTime; uniform float uStorm; uniform vec2 uOffset;
+    uniform vec2 uWDir[${NW}]; uniform float uWK[${NW}]; uniform float uWA[${NW}]; uniform float uWW[${NW}];
+    varying float vCrest;\n`;
+  sh.vertexShader=head+sh.vertexShader;
+  // compute height + analytic normal from WORLD xz, before normals are consumed
+  sh.vertexShader=sh.vertexShader.replace('#include <beginnormal_vertex>',`
+    #include <beginnormal_vertex>
+    vec2 wxz = position.xz + uOffset;
+    float gH=0.0; vec2 gD=vec2(0.0); float sa=0.40+0.60*uStorm;
+    for(int i=0;i<${NW};i++){
+      float ph = dot(uWDir[i], wxz)*uWK[i] - uTime*uWW[i];
+      float a = uWA[i]*sa;
+      gH += a*sin(ph);
+      gD += uWDir[i]*(a*uWK[i]*cos(ph));
+    }
+    objectNormal = normalize(vec3(-gD.x, 1.0, -gD.y));`);
+  sh.vertexShader=sh.vertexShader.replace('#include <begin_vertex>',`
+    #include <begin_vertex>
+    transformed.y += gH;
+    vCrest = gH;`);
+  const fhead=`uniform float uStorm; varying float vCrest;\n`;
+  sh.fragmentShader=fhead+sh.fragmentShader;
+  sh.fragmentShader=sh.fragmentShader.replace('#include <color_fragment>',`
+    #include <color_fragment>
+    float crest = vCrest/(0.40+0.60*uStorm);                 // normalise out the storm gain
+    float foam = smoothstep(2.2, 4.6, crest);                // whitecaps on the tallest crests
+    diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.86,0.93,0.98), foam*(0.45+0.4*uStorm));
+    float deep = smoothstep(-3.0, 1.5, vCrest);              // troughs read darker/greener
+    diffuseColor.rgb = mix(diffuseColor.rgb*vec3(0.55,0.85,0.95), diffuseColor.rgb, deep);`);
+};
+const sea=new THREE.Mesh(seaGeo,seaMat); scene.add(sea);
+
+// ============================================================
+//  BOAT — procedural jetski + rider
+// ============================================================
+const boat=new THREE.Group(); boat.rotation.order='YXZ'; scene.add(boat);
+const cyanMat=new THREE.MeshStandardMaterial({color:0x14e0ff, metalness:0.5, roughness:0.35, emissive:0x0a3a44, emissiveIntensity:0.6});
+const magMat =new THREE.MeshStandardMaterial({color:0xff2e8b, metalness:0.5, roughness:0.35, emissive:0x4a0a2a, emissiveIntensity:0.6});
+const darkMat=new THREE.MeshStandardMaterial({color:0x16181f, metalness:0.4, roughness:0.6});
+const skinMat=new THREE.MeshStandardMaterial({color:0xd9a07a, roughness:0.8});
+(function buildBoat(){
+  // hull — tapered with a raised nose
+  const hullShape=new THREE.Shape();
+  hullShape.moveTo(-2.4,0); hullShape.lineTo(1.7,0); hullShape.quadraticCurveTo(2.5,0,2.5,0.45);
+  hullShape.lineTo(2.4,1.0); hullShape.lineTo(-2.2,1.0); hullShape.quadraticCurveTo(-2.6,0.6,-2.4,0);
+  const hullGeo=new THREE.ExtrudeGeometry(hullShape,{depth:1.5,bevelEnabled:true,bevelThickness:0.18,bevelSize:0.18,bevelSegments:2,steps:1});
+  hullGeo.rotateY(Math.PI/2); hullGeo.translate(0.75,-0.35,-0.5);
+  const hull=new THREE.Mesh(hullGeo,cyanMat); hull.scale.set(0.62,0.8,0.62); boat.add(hull);
+  // deck stripe
+  const deck=new THREE.Mesh(new THREE.BoxGeometry(0.5,0.12,2.6),magMat); deck.position.set(0,0.42,0.1); boat.add(deck);
+  // handlebars
+  const col=new THREE.Mesh(new THREE.CylinderGeometry(0.07,0.09,0.7,8),darkMat); col.position.set(0,0.7,0.55); col.rotation.x=-0.5; boat.add(col);
+  const bar=new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.05,0.9,8),darkMat); bar.rotation.z=Math.PI/2; bar.position.set(0,0.98,0.78); boat.add(bar);
+  // rider — torso, head, arms reaching the bars
+  const torso=new THREE.Mesh(new THREE.CylinderGeometry(0.2,0.26,0.8,10),magMat); torso.position.set(0,0.78,-0.1); torso.rotation.x=0.35; boat.add(torso);
+  const head=new THREE.Mesh(new THREE.SphereGeometry(0.2,12,12),skinMat); head.position.set(0,1.18,0.05); boat.add(head);
+  const helmet=new THREE.Mesh(new THREE.SphereGeometry(0.23,12,12,0,6.3,0,1.7),cyanMat); helmet.position.set(0,1.2,0.03); boat.add(helmet);
+  [-1,1].forEach(s=>{ const arm=new THREE.Mesh(new THREE.CylinderGeometry(0.08,0.08,0.66,8),skinMat);
+    arm.position.set(s*0.22,0.92,0.32); arm.rotation.x=-0.9; boat.add(arm); });
+})();
+// engine glow under the stern (lights the spray)
+const sternGlow=new THREE.PointLight(0x18f0ff,0.0,12,2); sternGlow.position.set(0,0.2,-2.2); boat.add(sternGlow);
+
+// ---------- boat state ----------
+const B={ x:0,z:0,y:0, vy:0, heading:0, speed:0, pitch:0, roll:0, airborne:false, air:0 };
+let prevSurf=0;
+
+// ============================================================
+//  SPRAY / WAKE — one additive particle pool for bow spray, wake & splashdowns
+// ============================================================
+const sprayTex=(function(){ const c=document.createElement('canvas'); c.width=c.height=64; const g=c.getContext('2d');
+  const gr=g.createRadialGradient(32,32,0,32,32,32); gr.addColorStop(0,'rgba(255,255,255,1)'); gr.addColorStop(0.4,'rgba(220,245,255,0.7)'); gr.addColorStop(1,'rgba(180,230,255,0)');
+  g.fillStyle=gr; g.fillRect(0,0,64,64); const t=new THREE.CanvasTexture(c); return t; })();
+const MAXP=420; const pGeo=new THREE.BufferGeometry();
+const pPos=new Float32Array(MAXP*3); pGeo.setAttribute('position',new THREE.BufferAttribute(pPos,3));
+const pMat=new THREE.PointsMaterial({size:1.05,map:sprayTex,transparent:true,opacity:0.55,depthWrite:false,blending:THREE.AdditiveBlending,sizeAttenuation:true});
+const points=new THREE.Points(pGeo,pMat); points.frustumCulled=false; scene.add(points);
+const parts=[]; for(let i=0;i<MAXP;i++) parts.push({life:0,x:0,y:-999,z:0,vx:0,vy:0,vz:0,sz:1});
+let pHead=0;
+function emit(x,y,z,n,spd,spread,up){ for(let i=0;i<n;i++){ const p=parts[pHead]; pHead=(pHead+1)%MAXP;
+  const a=Math.random()*6.283, r=Math.random()*spread;
+  p.x=x; p.y=y; p.z=z; p.vx=Math.cos(a)*r; p.vz=Math.sin(a)*r; p.vy=up+Math.random()*spd;
+  p.life=0.5+Math.random()*0.5; p.sz=1.2+Math.random()*1.6; } }
+function updateParts(dt){ let k=0;
+  for(let i=0;i<MAXP;i++){ const p=parts[i];
+    if(p.life>0){ p.life-=dt; p.vy-=9.0*dt; p.x+=p.vx*dt; p.y+=p.vy*dt; p.z+=p.vz*dt;
+      const surf=waveH(p.x,p.z,gameT); if(p.y<surf){ p.life=0; }
+      if(p.life>0){ pPos[k*3]=p.x; pPos[k*3+1]=p.y; pPos[k*3+2]=p.z; k++; } } }
+  for(let i=k;i<MAXP;i++){ pPos[i*3+1]=-9999; }
+  pGeo.attributes.position.needsUpdate=true; }
+
+// ---------- rain (only in heavy storm) ----------
+const RN=1400; const rGeo=new THREE.BufferGeometry(); const rPos=new Float32Array(RN*3);
+for(let i=0;i<RN;i++){ rPos[i*3]=(Math.random()-0.5)*420; rPos[i*3+1]=Math.random()*220; rPos[i*3+2]=(Math.random()-0.5)*420; }
+rGeo.setAttribute('position',new THREE.BufferAttribute(rPos,3));
+const rain=new THREE.Points(rGeo,new THREE.PointsMaterial({color:0xbfe6ff,size:0.5,transparent:true,opacity:0.5,depthWrite:false}));
+rain.visible=false; scene.add(rain);
+function updateRain(dt){ if(!rain.visible) return; rain.position.set(B.x,0,B.z);
+  for(let i=0;i<RN;i++){ rPos[i*3+1]-=(150+120*storm)*dt; rPos[i*3]+=18*dt;
+    if(rPos[i*3+1]<0){ rPos[i*3+1]=200+Math.random()*30; rPos[i*3]=(Math.random()-0.5)*420; rPos[i*3+2]=(Math.random()-0.5)*420; } }
+  rGeo.attributes.position.needsUpdate=true; }
+
+// ============================================================
+//  GATES — a meandering buoy course generated on the fly
+// ============================================================
+const gateGroup=new THREE.Group(); scene.add(gateGroup);
+const buoyMat=new THREE.MeshStandardMaterial({color:0xffd23a,emissive:0xff8a00,emissiveIntensity:0.9,roughness:0.5});
+const ringMat=new THREE.MeshStandardMaterial({color:0x18f0ff,emissive:0x18f0ff,emissiveIntensity:1.4,roughness:0.4});
+const gateDoneMat=new THREE.MeshStandardMaterial({color:0x2ad17a,emissive:0x2ad17a,emissiveIntensity:1.2,roughness:0.4});
+// shared gate geometries — every gate reuses these (unit torus is scaled per gate), so nothing leaks
+const buoyBodyGeo=new THREE.CylinderGeometry(0.55,0.85,2.4,12);
+const buoyTopGeo=new THREE.SphereGeometry(0.5,10,10);
+const ringGeoUnit=new THREE.TorusGeometry(1,0.035,8,28);
+const GATES=[];               // {x,z,fx,fz,half,passed,meshes...}
+let pathX=0,pathZ=60,pathH=0; // course head
+let nextGate=0;
+function extendPath(){
+  pathH += (Math.random()-0.5)*0.9;                       // gentle meander
+  const step=55+Math.random()*15;
+  pathX+=Math.sin(pathH)*step; pathZ+=Math.cos(pathH)*step;
+  const half=7.5+Math.random()*2.5;
+  const fx=Math.sin(pathH), fz=Math.cos(pathH);           // gate-forward (course dir)
+  const rx=fz, rz=-fx;                                    // gate-right
+  const g={x:pathX,z:pathZ,fx,fz,rx,rz,half,passed:false,scored:false,grp:new THREE.Group()};
+  // two buoys + a glowing arch ring
+  [-1,1].forEach(s=>{ const b=new THREE.Group();
+    const body=new THREE.Mesh(buoyBodyGeo,buoyMat); body.position.y=1.0; b.add(body);
+    const top=new THREE.Mesh(buoyTopGeo,ringMat); top.position.y=2.4; b.add(top);
+    b.position.set(rx*half*s, 0, rz*half*s); g.grp.add(b); });
+  const ring=new THREE.Mesh(ringGeoUnit,ringMat); ring.scale.setScalar(half);   // unit torus → tube ≈0.035·half ≈0.28
+  ring.rotation.y=pathH; ring.position.y=3.2; ring.rotation.x=Math.PI/2; g.ring=ring; g.grp.add(ring);
+  gateGroup.add(g.grp); GATES.push(g);
+}
+for(let i=0;i<6;i++) extendPath();
+
+// ============================================================
+//  INPUT
+// ============================================================
+const keys={};
+addEventListener('keydown',e=>{ if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key))e.preventDefault();
+  keys[e.key.toLowerCase()]=true; if(e.key==='Shift')keys.shift=true; });
+addEventListener('keyup',e=>{ keys[e.key.toLowerCase()]=false; if(e.key==='Shift')keys.shift=false; });
+// touch: hold = throttle, drag horizontally = steer
+let touchSteer=0, touching=false;
+cv.addEventListener('touchstart',e=>{ touching=true; e.preventDefault(); },{passive:false});
+cv.addEventListener('touchmove',e=>{ if(!e.touches.length) return; const r=cv.getBoundingClientRect(); const x=(e.touches[0].clientX-r.left)/r.width;
+  touchSteer=THREE.MathUtils.clamp((x-0.5)*2.4,-1,1); e.preventDefault(); },{passive:false});
+cv.addEventListener('touchend',e=>{ touching=false; touchSteer=0; });
+cv.addEventListener('touchcancel',e=>{ touching=false; touchSteer=0; });   // interrupted touch must not jam throttle/steer on
+
+// ============================================================
+//  GAME STATE
+// ============================================================
+let running=false, gameOver=false, raf=0, lastT=0;
+let score=0, gatesHit=0, timeLeft=30, shake=0, fovSm=64;
+function reset(){
+  B.x=0;B.z=0;B.y=0;B.vy=0;B.heading=0;B.speed=0;B.pitch=0;B.roll=0;B.airborne=false;B.air=0;
+  storm=0.25; gameT=0; score=0; gatesHit=0; timeLeft=30; shake=0;
+  // wipe + regenerate course ahead of the boat
+  GATES.forEach(g=>gateGroup.remove(g.grp)); GATES.length=0;
+  pathX=0; pathZ=60; pathH=0; nextGate=0; for(let i=0;i<6;i++) extendPath();
+  for(let i=0;i<MAXP;i++){ parts[i].life=0; parts[i].y=-9999; }
+  prevSurf=waveH(0,0,0); fovSm=64;                  // avoid a first-frame surfVel spike / FOV pop on restart
+  syncHUD();
+}
+function syncHUD(){ scoreEl.textContent=score; gatesEl.textContent=gatesHit;
+  spdEl.textContent=Math.round(B.speed*3.0); timeEl.textContent=Math.max(0,Math.ceil(timeLeft));
+  stormFill.style.width=Math.round(storm*100)+'%'; }
+let hudAcc=0;
+
+function start(){ if(running) return; reset(); running=true; gameOver=false;
+  startBtn.style.display='none'; statusEl.textContent='GO! Hammer the throttle.';
+  SFX.startHum&&SFX.startHum(); SFX.powerup();
+  lastT=performance.now(); raf=requestAnimationFrame(frame); }
+function end(){ running=false; gameOver=true; cancelAnimationFrame(raf);
+  if(score>best){ best=score; localStorage.wipeoutBest=best; bestEl.textContent=best; statusEl.textContent='NEW BEST — '+score+'! Press start to ride again.'; SFX.win&&SFX.win(); }
+  else { statusEl.textContent='Wiped out at '+score+'. Press start to ride again.'; SFX.gameover&&SFX.gameover(); }
+  startBtn.textContent='RIDE AGAIN'; startBtn.style.display='inline-block';
+  requestAnimationFrame(idle); }                    // revive the ambient sea on the game-over screen (idle self-stops once running)
+startBtn.addEventListener('click',start);
+addEventListener('keydown',e=>{ if(e.key==='Enter'&&!running) start(); });
+
+// ============================================================
+//  MAIN LOOP
+// ============================================================
+const _f=new THREE.Vector3(), _camTarget=new THREE.Vector3();
+function frame(now){
+  raf=requestAnimationFrame(frame);
+  let dt=(now-lastT)/1000; lastT=now; if(dt>0.05)dt=0.05; if(dt<=0)dt=0.016;
+  gameT+=dt;
+
+  // ---- storm escalation: builds with time, jumps with gates ----
+  storm=Math.min(1, storm+dt*0.010);
+  // ---- input → throttle / steer ----
+  const thr=(keys['w']||keys['arrowup']||touching)?1:0;
+  const brk=(keys['s']||keys['arrowdown'])?1:0;
+  let steer=((keys['a']||keys['arrowleft'])?1:0)-((keys['d']||keys['arrowright'])?1:0)+ -touchSteer;
+  steer=THREE.MathUtils.clamp(steer,-1,1);
+  const boost=(keys['shift'])?1:0;
+  const maxSpd=22+boost*10;
+  const accel=thr*(30+boost*22) - brk*26 - 7;            // base drag -7
+  B.speed=THREE.MathUtils.clamp(B.speed+accel*dt, 0, maxSpd);
+  // steering bites more with speed; airborne steering is weak
+  const grip=B.airborne?0.25:1;
+  B.heading+=steer*dt*(1.1+B.speed*0.045)*grip;
+  _f.set(Math.sin(B.heading),0,Math.cos(B.heading));
+  B.x+=_f.x*B.speed*dt; B.z+=_f.z*B.speed*dt;
+
+  // ---- vertical: buoyancy vs ballistic flight, off the SAME wave field ----
+  const surf=waveH(B.x,B.z,gameT);
+  const surfVel=(surf-prevSurf)/dt; prevSurf=surf;
+  if(!B.airborne){
+    B.y=surf; B.vy=surfVel; B.air=0;
+    // launch off a crest: surface lifting fast + enough speed = airtime
+    if(surfVel>3.4 && B.speed>11){ B.airborne=true; B.vy=surfVel*1.25+B.speed*0.16+1.5; SFX.jump&&SFX.jump(); }
+  } else {
+    B.air+=dt; B.vy-=18*dt; B.y+=B.vy*dt;
+    if(B.y<=surf){                                          // splashdown
+      const impact=-B.vy;
+      B.y=surf; B.airborne=false;
+      if(impact>7){ emit(B.x,surf+0.3,B.z,46,7,2.6,5); SFX.explode&&SFX.explode(); shake=Math.min(1,impact*0.05);
+        if(B.air>0.45) score+=Math.round(B.air*40);        // reward big airtime with style points
+        B.speed*=0.86; }
+      else { emit(B.x,surf+0.2,B.z,18,4,1.8,2.5); SFX.bounce&&SFX.bounce(); }
+      B.vy=0;
+    }
+  }
+
+  // ---- orientation: hull conforms to the wave normal (or noses up in flight) ----
+  const n=waveN(B.x,B.z,gameT);
+  const rx=Math.cos(B.heading), rz=-Math.sin(B.heading);   // boat-right
+  let pitchT, rollT;
+  if(B.airborne){ pitchT=-B.vy*0.03; rollT=B.roll*0.95; }
+  else {
+    pitchT = Math.atan2(-(n.x*_f.x+n.z*_f.z), n.y);        // slope along forward
+    rollT  = Math.atan2(  (n.x*rx +n.z*rz ), n.y) - steer*0.18*Math.min(1,B.speed/12); // lean into turns
+  }
+  B.pitch+=(pitchT-B.pitch)*Math.min(1,dt*8);
+  B.roll +=(rollT -B.roll )*Math.min(1,dt*8);
+  boat.position.set(B.x,B.y,B.z); boat.rotation.set(B.pitch,B.heading,B.roll);
+
+  // ---- continuous bow/wake spray when planing on the water ----
+  if(!B.airborne && B.speed>6 && Math.random()<B.speed*0.02){
+    emit(B.x-_f.x*1.8,surf+0.2,B.z-_f.z*1.8, 1, 1.8, 1.0, 1.0+B.speed*0.035); }
+  sternGlow.intensity=0.4+B.speed*0.06+boost*1.2;
+  updateParts(dt);
+
+  // ---- gates: bob on the swell, detect pass/miss, recycle, score ----
+  for(let i=Math.max(0,nextGate-1);i<GATES.length;i++){ const g=GATES[i];
+    g.grp.position.y=waveH(g.x,g.z,gameT);
+    if(g.ring) g.ring.material=g.scored?gateDoneMat:ringMat; }
+  if(nextGate<GATES.length){ const g=GATES[nextGate];
+    const dx=B.x-g.x, dz=B.z-g.z;
+    const ahead=dx*g.fx+dz*g.fz;                            // >0 once boat crosses the gate line
+    const lateral=Math.abs(dx*g.rx+dz*g.rz);
+    if(ahead>0 && !g.passed){ g.passed=true;
+      if(lateral<g.half+1.2){ g.scored=true; gatesHit++; const bonus=Math.max(3,6-Math.floor(storm*3));
+        timeLeft+=bonus; score+=100+Math.round(B.speed*4)+Math.round(storm*60);
+        storm=Math.min(1,storm+0.05); shake=Math.max(shake,0.18);
+        emit(g.x,g.grp.position.y+1.5,g.z,24,5,g.half,4);
+        SFX.coin&&SFX.coin(); statusEl.textContent='GATE '+gatesHit+'  +'+bonus+'s'; }
+      else { SFX.hit&&SFX.hit(); statusEl.textContent='Missed the gate!'; }
+      nextGate++;
+      while(GATES.length-nextGate<5) extendPath();
+      // trim well-passed gates so GATES + scene graph stay bounded over a long run (geometries are shared → no dispose)
+      while(nextGate>6){ const old=GATES.shift(); gateGroup.remove(old.grp); nextGate--; }
+    }
+  }
+
+  // ---- clock ----
+  timeLeft-=dt;
+  if(timeLeft<=0){ timeLeft=0; syncHUD(); end(); return; }
+
+  // ---- weather visuals track the storm ----
+  rain.visible=storm>0.5; renderer.toneMappingExposure=0.66-0.16*storm;
+  HAZE.setHSL(0.58,0.30-0.12*storm,0.62-0.28*storm); scene.fog.color.copy(HAZE);
+  scene.fog.far=1250-420*storm;
+  updateRain(dt);
+
+  // ---- sea mesh follows the boat; feed the shared clock/offset to the GPU ----
+  sea.position.set(Math.round(B.x),0,Math.round(B.z));
+  if(seaU){ seaU.uTime.value=gameT; seaU.uStorm.value=storm; seaU.uOffset.value.set(sea.position.x,sea.position.z); }
+  rain.material.opacity=0.5;
+
+  // ---- chase camera with speed-FOV and impact shake ----
+  const camBack=10.5+B.speed*0.16, camUp=4.6+B.pitch*4;
+  _camTarget.set(B.x-_f.x*camBack, B.y+camUp, B.z-_f.z*camBack);
+  camera.position.lerp(_camTarget, Math.min(1,dt*4));
+  if(camera.position.y<surf+2) camera.position.y=surf+2;   // never dunk the camera
+  shake*=Math.pow(0.0001,dt);
+  camera.position.x+=(Math.random()-0.5)*shake*2.4; camera.position.y+=(Math.random()-0.5)*shake*2.0;
+  camera.lookAt(B.x+_f.x*10, B.y+1.5, B.z+_f.z*10);
+  fovSm+=((64+B.speed*0.7+boost*4)-fovSm)*Math.min(1,dt*3); camera.fov=fovSm; camera.updateProjectionMatrix();
+
+  // ---- HUD throttled ----
+  hudAcc+=dt; if(hudAcc>0.12){ hudAcc=0; syncHUD(); }
+
+  composer.render();
+}
+
+// ---------- post: bloom ----------
+const composer=new THREE.EffectComposer(renderer);
+composer.addPass(new THREE.RenderPass(scene,camera));
+const bloom=new THREE.UnrealBloomPass(new THREE.Vector2(VW,VH),0.42,0.6,0.9); composer.addPass(bloom);
+composer.setSize(VW*DPR, VH*DPR);                  // match the retina-density drawing buffer
+
+// ---------- idle: gently animate the sea before PRESS START so the menu looks alive ----------
+function idle(now){ if(running) return; raf=requestAnimationFrame(idle);
+  gameT=now/1000;
+  const surf=waveH(0,0,gameT); boat.position.set(0,surf,0);
+  const n=waveN(0,0,gameT); boat.rotation.set(Math.atan2(-n.z,n.y),now*0.0002,Math.atan2(n.x,n.y));
+  for(let i=0;i<GATES.length;i++) GATES[i].grp.position.y=waveH(GATES[i].x,GATES[i].z,gameT);
+  sea.position.set(0,0,0); if(seaU){ seaU.uTime.value=gameT; seaU.uStorm.value=storm; seaU.uOffset.value.set(0,0); }
+  camera.position.set(0,surf+8,-26); camera.lookAt(0,surf+2,18); camera.fov=64; camera.updateProjectionMatrix();
+  composer.render(); }
+requestAnimationFrame(idle);
+
+// keep the gl context warm on resize-independent fixed canvas; expose for headless tests
+window.__wb={B,WAVES,waveH,waveN,reset,frame,GATES,keys,composer,
+  get storm(){return storm;}, set storm(v){storm=v;}, get gameT(){return gameT;},
+  get gatesHit(){return gatesHit;}, get score(){return score;}, get nextGate(){return nextGate;},
+  get timeLeft(){return timeLeft;}, get fovSm(){return fovSm;},
+  get running(){return running;}, set running(v){running=v;}, set lastT(v){lastT=v;}, set gameOver(v){gameOver=v;}};
+</script>
+</body>
+</html>
