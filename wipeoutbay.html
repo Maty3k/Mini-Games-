@@ -67,6 +67,11 @@
     background:linear-gradient(180deg,#aef0ff,#52c6ff); border:none; border-radius:30px; padding:14px 40px; cursor:pointer;
     box-shadow:0 8px 24px rgba(40,170,230,.4); transition:.15s; }
   #go:hover{ transform:translateY(-2px); box-shadow:0 12px 30px rgba(40,170,230,.55); }
+  #modes{ display:flex; gap:14px; margin-top:8px; flex-wrap:wrap; justify-content:center; }
+  .modebtn{ pointer-events:auto; font-size:16px; font-weight:700; letter-spacing:.5px; color:#eaf6ff; cursor:pointer;
+    background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.25); border-radius:30px; padding:13px 30px; transition:.15s; }
+  .modebtn:hover{ background:rgba(255,255,255,.18); transform:translateY(-2px); }
+  .modebtn.primary{ color:#04121d; background:linear-gradient(180deg,#aef0ff,#52c6ff); border:none; box-shadow:0 8px 24px rgba(40,170,230,.4); }
   #loading{ position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:#0a1118;
     color:#7fb4d8; font-size:15px; letter-spacing:1px; z-index:5; }
   #sfx-toggle{ bottom:auto !important; top:16px; right:18px !important; }
@@ -94,9 +99,12 @@
 
   <div id="panel">
     <h1><span>WIPEOUT BAY</span></h1>
-    <p>Blast a jetski around the buoy course ringing the bay. Pass through <b>every lit gate</b> in order — each one buys you more time. Carve the swell, launch off the crests, and keep the run alive as the <b>storm</b> rolls in and the sea turns wild.</p>
-    <p class="keys"><b>W / ↑</b> throttle &nbsp; <b>S / ↓</b> brake &nbsp; <b>A D / ← →</b> steer &nbsp; <b>Shift</b> boost &nbsp;·&nbsp; follow the beam to the next gate</p>
-    <button id="go">START RUN</button>
+    <p id="ptext">Carve a jetski around the buoy course ringing the bay — pass through <b>every lit gate</b> in order, each one buys you more time, while the <b>storm</b> rolls in and the sea turns wild. Or just explore the bay, the islands and the port city in <b>free roam</b>.</p>
+    <p class="keys"><b>W / ↑</b> throttle &nbsp; <b>S / ↓</b> brake &nbsp; <b>A D / ← →</b> steer &nbsp; <b>Shift</b> boost</p>
+    <div id="modes">
+      <button id="goTrial" class="modebtn primary">⏱ TIME TRIAL</button>
+      <button id="goFree" class="modebtn">🧭 FREE ROAM</button>
+    </div>
   </div>
 
 <script>
@@ -109,7 +117,7 @@ const cv=document.getElementById('c');
 const el=id=>document.getElementById(id);
 const spdEl=el('spd'),timeEl=el('time'),gateEl=el('gate'),lapEl=el('lap'),bestEl=el('best'),
       distEl=el('dist'),stormFill=el('stormfill'),toastEl=el('toast'),panel=el('panel'),
-      goBtn=el('go'),loadingEl=el('loading'),timeStat=el('timeStat'),mapCv=el('map'),mapX=mapCv.getContext('2d');
+      loadingEl=el('loading'),timeStat=el('timeStat'),mapCv=el('map'),mapX=mapCv.getContext('2d');
 let best=+(localStorage.wipeoutBayBest||0); bestEl.textContent=best;
 
 // ---------- renderer ----------
@@ -182,6 +190,7 @@ const texL=new THREE.TextureLoader();
 function loadTex(f,rep){ const t=texL.load('assets/textures/'+f); t.wrapS=t.wrapT=THREE.RepeatWrapping; if(rep)t.repeat.set(rep,rep); t.anisotropy=8; t.encoding=THREE.sRGBEncoding; return t; }
 const waterNormal=texL.load('assets/textures/water_nor.jpg'); waterNormal.wrapS=waterNormal.wrapT=THREE.RepeatWrapping;
 const sandTex=loadTex('sand_diff.jpg',40), grassTex=loadTex('grass_diff.jpg',60), rockTex=loadTex('gravel_diff.jpg',50);
+const landNor=texL.load('assets/textures/asphalt_nor.jpg'); landNor.wrapS=landNor.wrapT=THREE.RepeatWrapping;   // rock surface detail normal
 
 let WATER=null, seaU=null;
 let started=false;
@@ -211,24 +220,33 @@ const ISLANDS=[];
   ring.forEach(o=>ISLANDS.push({x:Math.cos(o.a)*o.r, z:Math.sin(o.a)*o.r, h:o.h, s:o.s}));
   ISLANDS.push({x:90,z:70,h:20,s:85});       // one small rock well inside the loop, decoration
 })();
+const CITY={x:-1180,z:-360};      // port-city coastal shelf on the bay's rim (gap between islands)
 function fbm(x,z){ let v=0,a=0.5,fx=x,fz=z; for(let o=0;o<5;o++){ v+=a*Math.sin(fx)*Math.cos(fz); fx=fx*1.93+1.7; fz=fz*2.07-0.9; a*=0.5; } return v; }
 function ridged(x,z){ let v=0,a=0.5,fx=x,fz=z; for(let o=0;o<4;o++){ v+=a*(1.0-Math.abs(Math.sin(fx)*Math.cos(fz))); fx=fx*1.97+1.3; fz=fz*2.03-0.7; a*=0.5; } return v-0.62; }
 function landH(x,z){              // metres above sea (negative = seabed)
   let mass=0;
   for(const is of ISLANDS){ const dx=x-is.x,dz=z-is.z; mass += is.h*Math.exp(-(dx*dx+dz*dz)/(is.s*is.s*0.62)); }
   let h=-26+mass;                 // seabed + gaussian island masses
-  if(mass>1.5){ const m=Math.min(1,mass/40);                    // craggy ridged peaks ONLY on land (open sea stays flat)
-    h += ridged(x*0.0065,z*0.0065)*(12+mass*0.14)*m + fbm(x*0.02,z*0.02)*4*m; }
+  if(mass>1.5){ const m=Math.min(1,mass/40);                    // domain-warped craggy ridges ONLY on land
+    const wx=x+fbm(x*0.004,z*0.004)*38, wz=z+fbm(x*0.004+5.0,z*0.004-3.0)*38;
+    h += ridged(wx*0.0085,wz*0.0085)*(20+mass*0.22)*m + ridged(wx*0.022,wz*0.022)*7*m + fbm(x*0.05,z*0.05)*3*m; }
+  // city coastal shelf: flat plateau (~15 m) ramping down to the shoreline, deep water beyond
+  const cd=Math.hypot(x-CITY.x,z-CITY.z); let shelf=-26;
+  if(cd<300) shelf=15; else if(cd<452) shelf=15+(cd-300)/152*(-41);
+  if(shelf>-26){ h=Math.max(h, shelf + fbm(x*0.03,z*0.03)*1.4); }
   return h;
 }
+function slopeAt(x,z){ const e=8, hx=landH(x+e,z)-landH(x-e,z), hz=landH(x,z+e)-landH(x,z-e); return 2*e/Math.hypot(hx,2*e,hz); }
 // terrain material: sand→vegetation→rock blended by height & slope (no fake snow), env-lit
 function makeTerrainMat(){
-  const m=new THREE.MeshStandardMaterial({color:0xffffff, roughness:0.97, metalness:0, envMapIntensity:0.35});
+  const m=new THREE.MeshStandardMaterial({color:0xffffff, roughness:0.97, metalness:0, envMapIntensity:0.35,
+    normalMap:landNor, normalScale:new THREE.Vector2(0.55,0.55)});
   m.onBeforeCompile=(sh)=>{
     sh.uniforms.uSand={value:sandTex}; sh.uniforms.uGrass={value:grassTex}; sh.uniforms.uRock={value:rockTex};
     sh.vertexShader='varying vec2 vWXZ; varying float vHt; varying vec3 vWN;\n'+sh.vertexShader;
     sh.vertexShader=sh.vertexShader.replace('#include <beginnormal_vertex>','#include <beginnormal_vertex>\n  vWN=normal;');
     sh.vertexShader=sh.vertexShader.replace('#include <begin_vertex>','#include <begin_vertex>\n  vWXZ=position.xz; vHt=position.y;');
+    sh.vertexShader=sh.vertexShader.replace('#include <uv_vertex>','#include <uv_vertex>\n  vUv=position.xz*0.06;');   // world-tiled UV for the rock detail normal
     sh.fragmentShader='uniform sampler2D uSand,uGrass,uRock; varying vec2 vWXZ; varying float vHt; varying vec3 vWN;\n'+sh.fragmentShader;
     sh.fragmentShader=sh.fragmentShader.replace('#include <color_fragment>',`
       #include <color_fragment>
@@ -244,14 +262,82 @@ function makeTerrainMat(){
   return m;
 }
 
+// ---- instanced trees scattered on the island slopes (wooded, not bare humps) ----
+function buildTrees(){
+  const slots=[];
+  for(const is of ISLANDS){ if(is.h<60) continue;                 // only the big mountain islands
+    const n=Math.floor(is.s*0.75);
+    for(let k=0;k<n;k++){ const a=Math.random()*6.283, r=Math.sqrt(Math.random())*is.s*1.04;
+      const x=is.x+Math.cos(a)*r, z=is.z+Math.sin(a)*r, h=landH(x,z);
+      if(h<6||h>135) continue; if(slopeAt(x,z)<0.78) continue;     // skip beaches & cliffs
+      slots.push({x,z,h,s:0.85+Math.random()*1.3,rot:Math.random()*6.28}); } }
+  if(!slots.length) return;
+  const trunkGeo=new THREE.CylinderGeometry(0.32,0.5,4,6); trunkGeo.translate(0,2,0);
+  const folGeo=new THREE.ConeGeometry(2.3,7.5,7); folGeo.translate(0,7.2,0);
+  const tm=new THREE.InstancedMesh(trunkGeo,new THREE.MeshStandardMaterial({color:0x5a3d24,roughness:0.95}),slots.length);
+  const fm=new THREE.InstancedMesh(folGeo,new THREE.MeshStandardMaterial({color:0x2f5d2a,roughness:0.92}),slots.length);
+  fm.instanceColor=new THREE.InstancedBufferAttribute(new Float32Array(slots.length*3),3);
+  const mtx=new THREE.Matrix4(), q=new THREE.Quaternion(), sc=new THREE.Vector3(), p=new THREE.Vector3(), up=new THREE.Vector3(0,1,0);
+  for(let i=0;i<slots.length;i++){ const t=slots[i];
+    q.setFromAxisAngle(up,t.rot); sc.set(t.s,t.s*(0.9+Math.random()*0.5),t.s); p.set(t.x,t.h-0.6,t.z); mtx.compose(p,q,sc);
+    tm.setMatrixAt(i,mtx); fm.setMatrixAt(i,mtx);
+    const g=0.28+Math.random()*0.18; fm.setColorAt(i,new THREE.Color(g*0.55,g,g*0.5)); }
+  tm.instanceMatrix.needsUpdate=true; fm.instanceMatrix.needsUpdate=true; if(fm.instanceColor)fm.instanceColor.needsUpdate=true;
+  scene.add(tm,fm);
+}
+// ---- port city: skyline of window-lit buildings + a pier reaching into the bay ----
+function windowTex(lit){ const c=document.createElement('canvas'); c.width=64;c.height=128; const g=c.getContext('2d');
+  g.fillStyle='#2b3440'; g.fillRect(0,0,64,128);
+  for(let fy=6;fy<124;fy+=12) for(let fx=5;fx<60;fx+=14){ const on=Math.random()<lit;
+    g.fillStyle=on?(Math.random()<0.5?'#ffe6a8':'#ffd070'):'#10161e'; g.fillRect(fx,fy,9,7); }
+  const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; t.encoding=THREE.sRGBEncoding; return t; }
+function scaleBoxUV(geo,u,v){ const uv=geo.attributes.uv; for(let i=0;i<uv.count;i++) uv.setXY(i,uv.getX(i)*u,uv.getY(i)*v); uv.needsUpdate=true; }
+function buildCity(){
+  const cx=CITY.x, cz=CITY.z, grp=new THREE.Group(); scene.add(grp);
+  const variants=[]; for(let v=0;v<4;v++){ const t=windowTex(0.32+v*0.13);
+    variants.push(new THREE.MeshStandardMaterial({map:t,emissiveMap:t,emissive:0xffca73,emissiveIntensity:0.5,roughness:0.55,metalness:0.15,envMapIntensity:0.5})); }
+  for(let i=-7;i<=7;i++) for(let j=-7;j<=7;j++){
+    if((i+70)%3===0 || (j+70)%4===0) continue;                    // street grid gaps
+    const wx=cx+i*34+(Math.random()-0.5)*7, wz=cz+j*34+(Math.random()-0.5)*7, h0=landH(wx,wz);
+    if(h0<3.5) continue;                                          // only on the dry plateau
+    const cd=Math.hypot(wx-cx,wz-cz), bh=16+(1-Math.min(1,cd/300))*72*(0.5+Math.random()*0.7)+Math.random()*14;
+    const bw=12+Math.random()*9, bd=12+Math.random()*9, geo=new THREE.BoxGeometry(bw,bh,bd);
+    scaleBoxUV(geo,Math.max(1,Math.round(bw/6)),Math.max(2,Math.round(bh/6)));
+    const m=new THREE.Mesh(geo,variants[(Math.random()*4)|0]); m.position.set(wx,h0-1+bh/2,wz); m.castShadow=m.receiveShadow=true; grp.add(m);
+    if(Math.random()<0.5){ const r=new THREE.Mesh(new THREE.BoxGeometry(bw*0.4,2+Math.random()*4,bd*0.4),variants[0]); r.position.set(wx,h0-1+bh+1,wz); grp.add(r); }
+  }
+  buildDock(grp);
+}
+function buildDock(grp){
+  const cx=CITY.x, cz=CITY.z, d=new THREE.Vector2(-cx,-cz).normalize(), rg=new THREE.Vector2(d.y,-d.x);
+  const wood=new THREE.MeshStandardMaterial({color:0x6b4a2e,roughness:0.85}), dark=new THREE.MeshStandardMaterial({color:0x2a2620,roughness:0.7});
+  const lampMat=new THREE.MeshStandardMaterial({color:0xfff0c0,emissive:0xffcf73,emissiveIntensity:1.5,roughness:0.4});
+  const start=378, len=120, width=16, deckY=3.2, cxs=cx+d.x*(start+len/2), czs=cz+d.y*(start+len/2);
+  const deck=new THREE.Mesh(new THREE.BoxGeometry(width,0.5,len),wood); deck.position.set(cxs,deckY,czs);
+  deck.rotation.y=Math.atan2(d.x,d.y); deck.castShadow=deck.receiveShadow=true; grp.add(deck);
+  for(let s=0;s<=len;s+=12){ const px=cx+d.x*(start+s), pz=cz+d.y*(start+s);
+    [-1,1].forEach(side=>{ const ox=px+rg.x*width*0.5*side, oz=pz+rg.y*width*0.5*side;
+      const pil=new THREE.Mesh(new THREE.CylinderGeometry(0.5,0.5,deckY+28,8),dark); pil.position.set(ox,deckY-14,oz); grp.add(pil);
+      const post=new THREE.Mesh(new THREE.CylinderGeometry(0.16,0.16,1.6,6),wood); post.position.set(ox,deckY+0.8,oz); grp.add(post);
+      if(s%24===0){ const lp=new THREE.Mesh(new THREE.CylinderGeometry(0.11,0.11,3,6),dark); lp.position.set(ox,deckY+1.5,oz); grp.add(lp);
+        const lm=new THREE.Mesh(new THREE.SphereGeometry(0.4,10,10),lampMat); lm.position.set(ox,deckY+3,oz); grp.add(lm); } }); }
+  for(let k=0;k<6;k++){ const cr=new THREE.Mesh(new THREE.BoxGeometry(3,3,3),wood);
+    cr.position.set(cx+d.x*(start+9)+rg.x*(k*4-10), deckY+1.5, cz+d.y*(start+9)+rg.y*(k*4-10)); cr.castShadow=true; grp.add(cr); }
+  for(let b=0;b<2;b++){ const bm=new THREE.Mesh(new THREE.BoxGeometry(3,1.6,8),new THREE.MeshStandardMaterial({color:b?0xdedede:0xbf3a30,roughness:0.4,metalness:0.2}));
+    bm.position.set(cx+d.x*(start+len-8)+rg.x*(width*0.5+5)*(b?1:-1),1.2,cz+d.y*(start+len-8)+rg.y*(width*0.5+5)*(b?1:-1));
+    bm.rotation.y=Math.atan2(d.x,d.y); grp.add(bm); }
+}
+
 function buildWorld(){
   // ---- terrain (islands + seabed) ----
-  const TR=1900, TG=320;
+  const TR=1900, TG=440;
   const tGeo=new THREE.PlaneGeometry(TR*2,TR*2,TG,TG); tGeo.rotateX(-Math.PI/2);
   const pos=tGeo.attributes.position;
   for(let i=0;i<pos.count;i++) pos.setY(i, landH(pos.getX(i),pos.getZ(i)));
   tGeo.computeVertexNormals();
   const terrain=new THREE.Mesh(tGeo, makeTerrainMat()); terrain.receiveShadow=true; terrain.castShadow=true; scene.add(terrain);
+  buildTrees();
+  buildCity();
 
   // ---- the sea ----
   buildWater();
@@ -447,11 +533,12 @@ const rain=new THREE.Points(rGeo,new THREE.PointsMaterial({color:0xcfe6f5,size:0
 //  STATE + INPUT
 // ============================================================
 const B={x:0,z:0,y:0,vy:0,heading:0,speed:0,pitch:0,roll:0,airborne:false,air:0};
-let prevSurf=0, prevAhead=-1, running=false, gameOver=false, score=0, gatesPassed=0, timeLeft=45, shake=0, fovSm=62, hudAcc=0, mapAcc=0;
+let prevSurf=0, prevAhead=-1, running=false, gameOver=false, mode='trial', score=0, gatesPassed=0, timeLeft=45, shake=0, fovSm=62, hudAcc=0, mapAcc=0;
 const keys={};
 addEventListener('keydown',e=>{ const k=e.key.toLowerCase();
   if(['arrowup','arrowdown','arrowleft','arrowright',' '].includes(k))e.preventDefault();
-  keys[k]=true; if(k==='enter'&&!running&&started) start(); });
+  keys[k]=true; if(k==='enter'&&!running&&started) start();
+  if(k==='r'&&running&&mode==='free') recenter(); });
 addEventListener('keyup',e=>{ keys[e.key.toLowerCase()]=false; });
 let touchSteer=0, touching=false;
 cv.addEventListener('touchstart',e=>{touching=true;e.preventDefault();},{passive:false});
@@ -462,26 +549,33 @@ cv.addEventListener('touchcancel',()=>{touching=false;touchSteer=0;});
 addEventListener('resize',()=>{ VW=innerWidth; VH=innerHeight; camera.aspect=VW/VH; camera.updateProjectionMatrix();
   renderer.setSize(VW,VH); composer.setSize(VW,VH); });
 
+function applyModeUI(){ const free=(mode==='free');
+  el('obj').style.display=free?'none':'block'; timeStat.style.display=free?'none':'flex';
+  gateEl.closest('.stat').style.display=free?'none':'flex'; lapEl.closest('.stat').style.display=free?'none':'flex';
+  el('title').querySelector('small').textContent=free?'· free roam':'· time trial'; }
 function resetRun(){ const g=GATES[0]||{x:0,z:60,fx:0,fz:1};
   B.x=g.x-g.fx*48; B.z=g.z-g.fz*48; B.heading=Math.atan2(g.fx,g.fz);
   B.y=seaY(B.x,B.z,gameT); B.vy=0; B.speed=0; B.pitch=0; B.roll=0; B.airborne=false; B.air=0;
   nextGate=0; lap=1; storm=0.2; score=0; gatesPassed=0; timeLeft=45; shake=0; fovSm=62; prevSurf=B.y;
   prevAhead=g.fx?((B.x-g.x)*g.fx+(B.z-g.z)*g.fz):-1;
   running=false; gameOver=false; updateHUD(); }
-function start(){ if(running) return; resetRun(); running=true; gameOver=false;
+function recenter(){ B.x=0;B.z=0;B.heading=0;B.speed=0;B.vy=0;B.airborne=false;B.y=seaY(0,0,gameT);prevSurf=B.y; toast('RE-CENTRED','#aef0ff'); }
+function start(m){ if(running) return; mode=m||mode; applyModeUI(); resetRun(); running=true; gameOver=false;
   panel.style.display='none'; SFX.powerup&&SFX.powerup(); }
 function end(){ running=false; gameOver=true;
   if(score>best){ best=score; localStorage.wipeoutBayBest=best; bestEl.textContent=best; }
   el('panel').querySelector('h1').innerHTML='<span>RUN OVER</span>';
-  el('panel').querySelector('p').innerHTML='You cleared <b>'+gatesPassed+' gates</b> ('+lap+(lap>1?' laps':' lap')+') and scored <b>'+score+'</b>.'+(score>=best?'  New best!':'');
-  goBtn.textContent='RIDE AGAIN'; panel.style.display='flex'; SFX.gameover&&SFX.gameover(); }
-goBtn.addEventListener('click',()=>{ if(!started){ started=true; } start(); });
+  el('ptext').innerHTML='You cleared <b>'+gatesPassed+' gates</b> ('+lap+(lap>1?' laps':' lap')+') and scored <b>'+score+'</b>.'+(score>=best?'  New best!':'')+' &nbsp;Pick a mode to go again.';
+  panel.style.display='flex'; SFX.gameover&&SFX.gameover(); }
+el('goTrial').addEventListener('click',()=>{ started=true; start('trial'); });
+el('goFree').addEventListener('click',()=>{ started=true; start('free'); });
 
 function toast(msg,col){ toastEl.textContent=msg; toastEl.style.color=col||'#fff'; toastEl.style.opacity='1';
   clearTimeout(toast._t); toast._t=setTimeout(()=>toastEl.style.opacity='0',900); }
-function updateHUD(){ spdEl.textContent=Math.round(B.speed*3.6); timeEl.textContent=Math.max(0,Math.ceil(timeLeft));
-  timeEl.className=timeLeft<8?'warn':''; gateEl.textContent=gatesPassed; lapEl.textContent=lap;
-  stormFill.style.width=Math.round(storm*100)+'%';
+function updateHUD(){ spdEl.textContent=Math.round(B.speed*3.6); stormFill.style.width=Math.round(storm*100)+'%';
+  if(mode!=='trial') return;
+  timeEl.textContent=Math.max(0,Math.ceil(timeLeft)); timeEl.className=timeLeft<8?'warn':'';
+  gateEl.textContent=gatesPassed; lapEl.textContent=lap;
   const g=GATES[nextGate]; if(g) distEl.textContent=Math.round(Math.hypot(g.x-B.x,g.z-B.z)); }
 
 // ============================================================
@@ -495,7 +589,7 @@ function loop(now){
   gameT+=dt;
 
   if(running){
-    storm=Math.min(1, storm+dt*0.011);
+    storm = mode==='trial' ? Math.min(1, storm+dt*0.011) : Math.min(0.45, storm+dt*0.004);
     // input
     const thr=(keys['w']||keys['arrowup']||touching)?1:0, brk=(keys['s']||keys['arrowdown'])?1:0;
     let steer=((keys['a']||keys['arrowleft'])?1:0)-((keys['d']||keys['arrowright'])?1:0)-touchSteer;
@@ -517,21 +611,22 @@ function loop(now){
           if(B.air>0.5){ score+=Math.round(B.air*30); toast('+'+Math.round(B.air*30)+' AIR','#aef0ff'); } B.speed*=0.9; }
         else emit(spray,B.x,surf+0.2,B.z,14,3,1.6,0.5); B.vy=0; }
     }
-    // gate pass/miss — fire on the boat crossing the current gate's line (prevAhead<0 → ahead>=0)
-    const g=GATES[nextGate];
-    if(g){ const dx=B.x-g.x, dz=B.z-g.z, ahead=dx*g.fx+dz*g.fz, lat=Math.abs(dx*g.rx+dz*g.rz);
-      if(prevAhead<0 && ahead>=0){
-        if(lat<g.half+1.5){ gatesPassed++; const bonus=Math.max(3,7-Math.floor(storm*4)); timeLeft+=bonus;
-          score+=120+Math.round(B.speed*4); emit(spray,g.x,seaY(g.x,g.z,gameT)+1.5,g.z,20,4,g.half,0.8);
-          toast('GATE '+gatesPassed+'  +'+bonus+'s','#8effc0'); SFX.coin&&SFX.coin();
-          nextGate=(nextGate+1)%GATES.length;
-          if(nextGate===0){ lap++; storm=Math.min(1,storm+0.06); score+=300; toast('LAP '+lap+'!','#ffd23a'); SFX.win&&SFX.win(); }
-        } else { SFX.hit&&SFX.hit(); toast('MISSED','#ff7a7a'); nextGate=(nextGate+1)%GATES.length; }
-        const ng=GATES[nextGate]; prevAhead=(B.x-ng.x)*ng.fx+(B.z-ng.z)*ng.fz;   // re-seed for the new target (no instant trigger)
-      } else prevAhead=ahead;
+    if(mode==='trial'){
+      // gate pass/miss — fire on the boat crossing the current gate's line (prevAhead<0 → ahead>=0)
+      const g=GATES[nextGate];
+      if(g){ const dx=B.x-g.x, dz=B.z-g.z, ahead=dx*g.fx+dz*g.fz, lat=Math.abs(dx*g.rx+dz*g.rz);
+        if(prevAhead<0 && ahead>=0){
+          if(lat<g.half+1.5){ gatesPassed++; const bonus=Math.max(3,7-Math.floor(storm*4)); timeLeft+=bonus;
+            score+=120+Math.round(B.speed*4); emit(spray,g.x,seaY(g.x,g.z,gameT)+1.5,g.z,20,4,g.half,0.8);
+            toast('GATE '+gatesPassed+'  +'+bonus+'s','#8effc0'); SFX.coin&&SFX.coin();
+            nextGate=(nextGate+1)%GATES.length;
+            if(nextGate===0){ lap++; storm=Math.min(1,storm+0.06); score+=300; toast('LAP '+lap+'!','#ffd23a'); SFX.win&&SFX.win(); }
+          } else { SFX.hit&&SFX.hit(); toast('MISSED','#ff7a7a'); nextGate=(nextGate+1)%GATES.length; }
+          const ng=GATES[nextGate]; prevAhead=(B.x-ng.x)*ng.fx+(B.z-ng.z)*ng.fz;   // re-seed for the new target
+        } else prevAhead=ahead;
+      }
+      timeLeft-=dt; if(timeLeft<=0){ timeLeft=0; updateHUD(); end(); }
     }
-    // timer
-    timeLeft-=dt; if(timeLeft<=0){ timeLeft=0; updateHUD(); end(); }
   }
 
   // orientation (conform to wave normal, or nose with vertical speed in air)
@@ -559,7 +654,7 @@ function loop(now){
 
   // gates bob; active beacon bright, others dim
   for(let i=0;i<GATES.length;i++){ const g=GATES[i]; g.grp.position.y=seaY(g.x,g.z,gameT);
-    const active=(i===nextGate); if(g.beam){ g.beam.material.opacity=active?0.34:0.10; g.beam.material.color.setHex(active?0x4fe3ff:0x6f8a9a); }
+    const active=(mode==='trial' && i===nextGate); if(g.beam){ g.beam.material.opacity=active?0.34:0.10; g.beam.material.color.setHex(active?0x4fe3ff:0x6f8a9a); }
     if(g.ring){ g.ring.material.opacity=active?0.95:0.3; g.ring.rotation.z+=dt*(active?1.6:0.3); g.ring.position.y=8+Math.sin(gameT*2+i)*0.6; }
   }
 
@@ -597,7 +692,7 @@ function boostFov(){ return keys['shift']?4:0; }
 // ============================================================
 //  MINIMAP
 // ============================================================
-const MAPR=1450; let mapBase=null;
+const MAPR=1700; let mapBase=null;
 function w2m(x,z){ return [86+x/MAPR*82, 86+z/MAPR*82]; }
 function drawMapBase(){ const s=172, img=mapX.createImageData(s,s);
   for(let py=0;py<s;py++)for(let px=0;px<s;px++){ const wx=(px-86)/82*MAPR, wz=(py-86)/82*MAPR, h=landH(wx,wz);
@@ -606,12 +701,16 @@ function drawMapBase(){ const s=172, img=mapX.createImageData(s,s);
     const o=(py*s+px)*4; img.data[o]=r; img.data[o+1]=g; img.data[o+2]=b; img.data[o+3]=255; }
   const c=document.createElement('canvas'); c.width=c.height=s; c.getContext('2d').putImageData(img,0,0); mapBase=c; }
 function drawMap(){ if(!mapBase) return; mapX.clearRect(0,0,172,172); mapX.drawImage(mapBase,0,0);
-  // course
-  mapX.strokeStyle='rgba(120,200,255,0.5)'; mapX.lineWidth=1.5; mapX.beginPath();
-  GATES.forEach((g,i)=>{ const[mx,my]=w2m(g.x,g.z); i?mapX.lineTo(mx,my):mapX.moveTo(mx,my); });
-  if(GATES.length){ const[mx,my]=w2m(GATES[0].x,GATES[0].z); mapX.lineTo(mx,my); } mapX.stroke();
-  GATES.forEach((g,i)=>{ const[mx,my]=w2m(g.x,g.z); mapX.beginPath(); mapX.arc(mx,my,i===nextGate?4:2.3,0,7);
-    mapX.fillStyle=i===nextGate?'#4fe3ff':'rgba(200,230,255,0.7)'; mapX.fill(); });
+  // city marker
+  { const[cmx,cmy]=w2m(CITY.x,CITY.z); mapX.fillStyle='#ffd070'; mapX.fillRect(cmx-3,cmy-3,6,6);
+    mapX.fillStyle='rgba(255,240,180,.9)'; mapX.font='8px sans-serif'; mapX.fillText('CITY',cmx+5,cmy+3); }
+  if(mode==='trial'){
+    mapX.strokeStyle='rgba(120,200,255,0.5)'; mapX.lineWidth=1.5; mapX.beginPath();
+    GATES.forEach((g,i)=>{ const[mx,my]=w2m(g.x,g.z); i?mapX.lineTo(mx,my):mapX.moveTo(mx,my); });
+    if(GATES.length){ const[mx,my]=w2m(GATES[0].x,GATES[0].z); mapX.lineTo(mx,my); } mapX.stroke();
+    GATES.forEach((g,i)=>{ const[mx,my]=w2m(g.x,g.z); mapX.beginPath(); mapX.arc(mx,my,i===nextGate?4:2.3,0,7);
+      mapX.fillStyle=i===nextGate?'#4fe3ff':'rgba(200,230,255,0.7)'; mapX.fill(); });
+  }
   // boat
   const[bx,by]=w2m(B.x,B.z); mapX.save(); mapX.translate(bx,by); mapX.rotate(-B.heading);
   mapX.fillStyle='#ff5a2c'; mapX.beginPath(); mapX.moveTo(0,-5); mapX.lineTo(3.4,4); mapX.lineTo(-3.4,4); mapX.closePath(); mapX.fill(); mapX.restore(); }
@@ -629,7 +728,9 @@ composer.setSize(VW,VH);
 window.__wb={B,WAVES,seaY,seaNormal,GATES,keys,get composer(){return composer;},
   get storm(){return storm;},set storm(v){storm=v;}, get gameT(){return gameT;},
   get gatesPassed(){return gatesPassed;}, get score(){return score;}, get nextGate(){return nextGate;},
-  get running(){return running;},set running(v){running=v;}, set lastT(v){lastT=v;}, reset:resetRun, loopOnce:loop};
+  get running(){return running;},set running(v){running=v;}, set lastT(v){lastT=v;}, reset:resetRun, loopOnce:loop,
+  start:start, get mode(){return mode;}, set mode(v){mode=v;}, CITY, landH, recenter,
+  camera, THREE:window.THREE, renderRaw(){ composer.render(); }};
 </script>
 </body>
 </html>
