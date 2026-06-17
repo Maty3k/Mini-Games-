@@ -430,11 +430,14 @@ function buildTerrain(corrDrop,rollAmp){
         const t=Math.max(0,Math.min(1,(dl-BLEND0)/(BLEND1-BLEND0))), s=t*t*(3-2*t);
         const roll=(Math.sin(x*0.013)+Math.sin(z*0.017)+Math.sin((x+z)*0.0083))*rollAmp*s*(1-s);   // gentle rolls mid-blend only; 0 at the road and at the flat base
         v=ht*(1-s)+BASE*s+roll;
-        // hard safety: terrain may never rise above any road surface passing over this spot (grade-exact, any deck)
-        const seg2=(TLEN/SAMP)*2.3;
+        // hard safety: terrain may never rise above any road surface passing over this spot (grade-exact, any deck).
+        // Margins must exceed one grid cell (cx/cz) so the heightfield TRIANGLE spanning a road edge is bracketed by
+        // two clamped vertices — otherwise a vertex just beyond the old WL+2.5 reach (e.g. the other deck's embankment
+        // at the figure-8 crossover) stays high and the interpolated surface pokes up through the road edge (Suzuka underpass).
+        const cell=Math.max(cx,cz), seg2=Math.max((TLEN/SAMP)*2.3,cell*1.35), latM=cell+2.5;
         for(const i of cand){ const dx=x-P[i].x,dz=z-P[i].z;
           const along=dx*T[i].x+dz*T[i].z; if(Math.abs(along)>seg2) continue;
-          const lat=dx*Nn[i].x+dz*Nn[i].z; if(lat>WL[i]+2.5||lat<-(WR[i]+2.5)) continue;
+          const lat=dx*Nn[i].x+dz*Nn[i].z; if(lat>WL[i]+latM||lat<-(WR[i]+latM)) continue;
           const lim=P[i].y+along*(GR[i]||0)-0.22; if(v>lim) v=lim; }
       }
     }
