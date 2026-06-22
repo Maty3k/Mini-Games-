@@ -305,6 +305,58 @@ const GRID=48;   // city block spacing
 const pavementMat=new THREE.MeshStandardMaterial({color:0x8f9296, roughness:0.93, metalness:0, envMapIntensity:0.25});
 const roadMat=new THREE.MeshStandardMaterial({color:0x23262b, roughness:0.82, metalness:0, envMapIntensity:0.18});
 const roadLineMat=new THREE.MeshStandardMaterial({color:0xd8c25a, roughness:0.6, metalness:0});
+const sidewalkMat=new THREE.MeshStandardMaterial({color:0xb7b9bc, roughness:0.9, metalness:0, envMapIntensity:0.25});
+const parkMat=new THREE.MeshStandardMaterial({color:0x4f7d3a, roughness:0.95, metalness:0, envMapIntensity:0.2});
+const benchMat=new THREE.MeshStandardMaterial({color:0x6e4a2c, roughness:0.85});
+const lampPostMat=new THREE.MeshStandardMaterial({color:0x2c2f34, roughness:0.5, metalness:0.7, envMapIntensity:0.6});
+const lampGlowMat=new THREE.MeshStandardMaterial({color:0xfff2c0, emissive:0xffdf9a, emissiveIntensity:1.8, roughness:0.4});
+// paved + sidewalked causeway down the shore ramp from the city to the dock (was bare dirt)
+function buildCauseway(parent){
+  const cx=CITY.x,cz=CITY.z, c0=304,c1=364, mid=(c0+c1)/2;
+  const y0=landH(cx+DOCK.dx*c0,cz+DOCK.dz*c0), y1=landH(cx+DOCK.dx*c1,cz+DOCK.dz*c1);
+  const len=Math.hypot(c1-c0,y0-y1), tilt=-Math.atan2(y0-y1,c1-c0);
+  const mx=cx+DOCK.dx*mid, mz=cz+DOCK.dz*mid, my=(y0+y1)/2;
+  function tiltMesh(geo,mat,offRight,dy){ const m=new THREE.Mesh(geo,mat); m.rotation.order='YXZ'; m.rotation.y=DOCK.ang; m.rotation.x=tilt;
+    m.position.set(mx+DOCK.rx*offRight, my+dy, mz+DOCK.rz*offRight); m.receiveShadow=true; parent.add(m); return m; }
+  tiltMesh(new THREE.BoxGeometry(14,0.4,len), roadMat, 0, 0.2);
+  tiltMesh(new THREE.BoxGeometry(4.5,0.6,len), sidewalkMat, 9.2, 0.32);
+  tiltMesh(new THREE.BoxGeometry(4.5,0.6,len), sidewalkMat, -9.2, 0.32);
+  for(let s=-len/2+5;s<len/2-3;s+=7){ const cc=mid+s*(c1-c0)/len; const px=cx+DOCK.dx*cc, pz=cz+DOCK.dz*cc;
+    const d=new THREE.Mesh(new THREE.BoxGeometry(0.4,0.02,3.2),roadLineMat); d.rotation.order='YXZ'; d.rotation.y=DOCK.ang; d.rotation.x=tilt; d.position.set(px,landH(px,pz)+0.43,pz); parent.add(d); }
+  for(let s=-len/2+9;s<len/2;s+=18){ for(let sg=-1;sg<=1;sg+=2){ const cc=mid+s*(c1-c0)/len;
+    const px=cx+DOCK.dx*cc+DOCK.rx*10.6*sg, pz=cz+DOCK.dz*cc+DOCK.rz*10.6*sg, py=landH(px,pz);
+    const post=new THREE.Mesh(new THREE.CylinderGeometry(0.12,0.16,4,8),lampPostMat); post.position.set(px,py+2,pz); post.castShadow=true; parent.add(post);
+    const lamp=new THREE.Mesh(new THREE.SphereGeometry(0.3,10,8),lampGlowMat); lamp.position.set(px,py+4,pz); parent.add(lamp); } }
+}
+// ---- traffic: cars driving the road grid ----
+const TRAFFIC=[]; const NLO=-6, NHI=5;
+function makeTrafficCar(col){ const g=new THREE.Group();
+  const body=new THREE.Mesh(new THREE.BoxGeometry(1.9,0.8,4.2),new THREE.MeshStandardMaterial({color:col,roughness:0.35,metalness:0.3,envMapIntensity:0.8})); body.position.y=0.7; g.add(body);
+  const cab=new THREE.Mesh(new THREE.BoxGeometry(1.7,0.6,2.0),new THREE.MeshStandardMaterial({color:0x10141a,roughness:0.1,metalness:0.4,envMapIntensity:1})); cab.position.set(0,1.2,-0.2); g.add(cab);
+  const wm=new THREE.MeshStandardMaterial({color:0x16161a,roughness:0.7});
+  for(let wx=-1;wx<=1;wx+=2)for(let wz=-1;wz<=1;wz+=2){ const w=new THREE.Mesh(new THREE.CylinderGeometry(0.42,0.42,0.28,10),wm); w.rotation.z=Math.PI/2; w.position.set(wx*0.92,0.42,wz*1.35); g.add(w); }
+  const hl=new THREE.MeshStandardMaterial({color:0xfff6d8,emissive:0xfff0c0,emissiveIntensity:1.2});
+  for(let s=-1;s<=1;s+=2){ const h=new THREE.Mesh(new THREE.BoxGeometry(0.3,0.18,0.1),hl); h.position.set(s*0.6,0.7,2.1); g.add(h); }
+  g.traverse(function(o){if(o.isMesh)o.castShadow=true;}); return g; }
+const TCOLS=[0xd23b30,0x2f6fd0,0xe8e6e1,0x2a2c2e,0xd9b531,0x3a8a5a,0x9a4bd0,0xdd7a2a];
+function buildTraffic(parent){
+  const DIRS=[[1,0],[-1,0],[0,1],[0,-1]];
+  for(let k=0;k<8;k++){ const g=makeTrafficCar(TCOLS[k%TCOLS.length]); parent.add(g);
+    const si=(Math.random()*(NHI-NLO)|0)+NLO, sj=(Math.random()*(NHI-NLO)|0)+NLO, dr=DIRS[(Math.random()*4)|0];
+    TRAFFIC.push({grp:g, si:si, sj:sj, di:dr[0], dj:dr[1], t:Math.random(), speed:7+Math.random()*5, x:0, z:0, heading:0}); }
+}
+function updateTraffic(dt){ const cx=CITY.x,cz=CITY.z, lane=3.0;
+  for(const c of TRAFFIC){
+    c.t += c.speed*dt/GRID;
+    if(c.t>=1){ c.t-=1; c.si+=c.di; c.sj+=c.dj;                       // arrived at next node — choose a turn
+      const opts=[[c.di,c.dj],[c.dj,-c.di],[-c.dj,c.di]].filter(function(o){ const ni=c.si+o[0],nj=c.sj+o[1]; return ni>=NLO&&ni<=NHI&&nj>=NLO&&nj<=NHI; });
+      const o=opts.length?opts[(Math.random()*opts.length)|0]:[-c.di,-c.dj]; c.di=o[0]; c.dj=o[1]; }
+    const sx=cx+(c.si+0.5)*GRID, sz=cz+(c.sj+0.5)*GRID, tx=cx+(c.si+c.di+0.5)*GRID, tz=cz+(c.sj+c.dj+0.5)*GRID;
+    const rx=c.dj, rz=-c.di;                                          // right of travel → lane offset
+    c.x=sx+(tx-sx)*c.t+rx*lane; c.z=sz+(tz-sz)*c.t+rz*lane; c.heading=Math.atan2(c.di,c.dj);
+    c.grp.position.set(c.x, plateauY, c.z); c.grp.rotation.y=c.heading;
+  }
+}
 function buildStreets(parent){
   const cx=CITY.x, cz=CITY.z, R=310, RW=12, GR=GRID;
   const pav=new THREE.Mesh(new THREE.CircleGeometry(R,56), pavementMat);
@@ -321,20 +373,42 @@ function buildStreets(parent){
 function buildCity(){
   const cx=CITY.x, cz=CITY.z, grp=new THREE.Group(); scene.add(grp);
   buildStreets(grp);
+  buildCauseway(grp);
   const csx=cx+DOCK.dx*312, csz=cz+DOCK.dz*312;                   // the car parks here, in the open by the dock
+  const treeSlots=[];
   for(let i=-6;i<=6;i++) for(let j=-6;j<=6;j++){
-    if((i+70)%4===0 && (j+70)%5===0) continue;                    // occasional open plaza
-    const wx=cx+i*GRID, wz=cz+j*GRID;                             // align to blocks (no jitter) so nothing sits in the road
-    const cd=Math.hypot(wx-cx,wz-cz);
+    const wx=cx+i*GRID, wz=cz+j*GRID, cd=Math.hypot(wx-cx,wz-cz);
     if(cd>300) continue;                                          // FLAT paved core only
     const avLat=Math.abs((wx-cx)*DOCK.rx+(wz-cz)*DOCK.rz), avAlong=(wx-cx)*DOCK.dx+(wz-cz)*DOCK.dz;
     if(avLat<16 && avAlong>30) continue;                          // clear a harbour avenue from the dock into the city
     if(Math.hypot(wx-csx,wz-csz)<22) continue;                    // keep the car spot clear
     if(LANDMARK_DEFS.some(function(L){return !L.abs && Math.hypot(wx-(cx+L.dx),wz-(cz+L.dz))<L.clear;})) continue;  // leave room for plateau landmarks
-    placeBuilding(grp, wx, plateauY, wz, cd);                     // sit every building on the flat plateau height
+    const roll=Math.random();
+    if(roll<0.14){                                                // a green PARK block — breaks up the perfect grid
+      const gp=new THREE.Mesh(new THREE.PlaneGeometry(GRID-13,GRID-13),parkMat); gp.rotation.x=-Math.PI/2; gp.position.set(wx,plateauY+0.05,wz); gp.receiveShadow=true; grp.add(gp);
+      const nt=2+(Math.random()*3|0); for(let t=0;t<nt;t++) treeSlots.push({x:wx+(Math.random()-0.5)*(GRID-20), z:wz+(Math.random()-0.5)*(GRID-20), s:0.6+Math.random()*0.35});
+      for(let b=0;b<2;b++){ const bn=new THREE.Mesh(new THREE.BoxGeometry(2.2,0.5,0.6),benchMat); bn.position.set(wx+(Math.random()-0.5)*11,plateauY+0.4,wz+(Math.random()-0.5)*11); bn.rotation.y=Math.random()*6.28; bn.castShadow=true; grp.add(bn); }
+    } else if(roll<0.22){                                         // open plaza (leave paved), maybe a tree
+      if(Math.random()<0.6) treeSlots.push({x:wx,z:wz,s:0.7});
+    } else {
+      placeBuilding(grp, wx, plateauY, wz, cd);
+    }
   }
+  // street lamps + trees along the sidewalks at intersections
+  for(let i=-5;i<=5;i++) for(let j=-5;j<=5;j++){
+    const wx=cx+(i+0.5)*GRID, wz=cz+(j+0.5)*GRID; if(Math.hypot(wx-cx,wz-cz)>288) continue;
+    if(Math.random()<0.5){ const post=new THREE.Mesh(new THREE.CylinderGeometry(0.1,0.14,4,8),lampPostMat); post.position.set(wx+8.5,plateauY+2,wz+8.5); post.castShadow=true; grp.add(post);
+      const lamp=new THREE.Mesh(new THREE.SphereGeometry(0.26,8,8),lampGlowMat); lamp.position.set(wx+8.5,plateauY+4,wz+8.5); grp.add(lamp); }
+    if(Math.random()<0.4) treeSlots.push({x:wx-8.5,z:wz-8.5,s:0.55+Math.random()*0.25});
+  }
+  // instance the city trees (small) from the loaded tree model
+  if(treeProto && treeSlots.length){ const box=new THREE.Box3().setFromObject(treeProto), th=Math.max(0.01,box.max.y-box.min.y), minY=box.min.y, up=new THREE.Vector3(0,1,0);
+    const mats=treeSlots.map(function(sl){ const s=(8/th)*sl.s;
+      return new THREE.Matrix4().compose(new THREE.Vector3(sl.x, plateauY-minY*s, sl.z), new THREE.Quaternion().setFromAxisAngle(up,sl.rot||0), new THREE.Vector3(s,s,s)); });
+    grp.add(instanceModel(treeProto, mats, false)); }
   buildDock(grp);
   LM_ANIMS=buildLandmarks(grp);
+  buildTraffic(grp);
 }
 function buildDock(grp){
   const cx=CITY.x, cz=CITY.z, d=new THREE.Vector2(-cx,-cz).normalize(), rg=new THREE.Vector2(d.y,-d.x), ang=Math.atan2(d.x,d.y);
@@ -2759,7 +2833,9 @@ function placeBuilding(parent, wx, baseY, wz, cd){
   const w=Math.min(CAP,A.wMin+Math.random()*(A.wMax-A.wMin)), d=Math.min(CAP,A.wMin+Math.random()*(A.wMax-A.wMin));
   const g=new THREE.Group();
   try{ A.build(g,w,d,h); }catch(e){ console.warn('arch '+A.name+' build failed:', e.message); return; }
-  g.position.set(wx, baseY, wz);
+  g.updateMatrixWorld(true);
+  const bb=new THREE.Box3().setFromObject(g);                                     // seat the lowest point on the ground (fixes buildings sunk/floating)
+  g.position.set(wx, baseY - THREE.MathUtils.clamp(bb.min.y, -3, 0.4), wz);
   g.rotation.y=(Math.random()<0.5?0:Math.PI/2)+(Math.random()-0.5)*0.12;
   parent.add(g);
 }
@@ -4489,6 +4565,7 @@ function loop(now){
   hudAcc+=dt; if(hudAcc>0.1){ hudAcc=0; updateHUD(); }
   mapAcc+=dt; if(mapAcc>0.08){ mapAcc=0; drawMap(); }
   for(let i=0;i<LM_ANIMS.length;i++){ try{ LM_ANIMS[i].fn(LM_ANIMS[i].g, gameT, dt); }catch(e){} }
+  updateTraffic(dt);
   composer.render();
 }
 function boostFov(){ return keys['shift']?4:0; }
