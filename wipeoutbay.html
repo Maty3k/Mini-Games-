@@ -297,18 +297,13 @@ function windowTex(lit){ const c=document.createElement('canvas'); c.width=64;c.
 function scaleBoxUV(geo,u,v){ const uv=geo.attributes.uv; for(let i=0;i<uv.count;i++) uv.setXY(i,uv.getX(i)*u,uv.getY(i)*v); uv.needsUpdate=true; }
 function buildCity(){
   const cx=CITY.x, cz=CITY.z, grp=new THREE.Group(); scene.add(grp);
-  const variants=[]; for(let v=0;v<4;v++){ const t=windowTex(0.32+v*0.13);
-    variants.push(new THREE.MeshStandardMaterial({map:t,emissiveMap:t,emissive:0xffca73,emissiveIntensity:0.5,roughness:0.55,metalness:0.15,envMapIntensity:0.5})); }
   for(let i=-7;i<=7;i++) for(let j=-7;j<=7;j++){
     if((i+70)%3===0 || (j+70)%4===0) continue;                    // street grid gaps
     const wx=cx+i*34+(Math.random()-0.5)*7, wz=cz+j*34+(Math.random()-0.5)*7, h0=landH(wx,wz);
     if(h0<3.5) continue;                                          // only on the dry plateau
     if(LANDMARK_DEFS.some(function(L){return Math.hypot(wx-(cx+L.dx),wz-(cz+L.dz))<L.clear;})) continue;  // leave room for landmarks
-    const cd=Math.hypot(wx-cx,wz-cz), bh=16+(1-Math.min(1,cd/300))*72*(0.5+Math.random()*0.7)+Math.random()*14;
-    const bw=12+Math.random()*9, bd=12+Math.random()*9, geo=new THREE.BoxGeometry(bw,bh,bd);
-    scaleBoxUV(geo,Math.max(1,Math.round(bw/6)),Math.max(2,Math.round(bh/6)));
-    const m=new THREE.Mesh(geo,variants[(Math.random()*4)|0]); m.position.set(wx,h0-1+bh/2,wz); m.castShadow=m.receiveShadow=true; grp.add(m);
-    if(Math.random()<0.5){ const r=new THREE.Mesh(new THREE.BoxGeometry(bw*0.4,2+Math.random()*4,bd*0.4),variants[0]); r.position.set(wx,h0-1+bh+1,wz); grp.add(r); }
+    const cd=Math.hypot(wx-cx,wz-cz);
+    placeBuilding(grp, wx, h0-1, wz, cd);
   }
   buildDock(grp);
   LM_ANIMS=buildLandmarks(grp);
@@ -330,6 +325,1047 @@ function buildDock(grp){
   const endCd=startCd+rows*segZ*0.98;
   for(let b=0;b<2;b++){ const bm=new THREE.Mesh(new THREE.BoxGeometry(3,1.6,8),new THREE.MeshStandardMaterial({color:b?0xdedede:0xbf3a30,roughness:0.4,metalness:0.2}));
     bm.position.set(cx+d.x*(endCd-12)+rg.x*(segX*cols*0.5+5)*(b?1:-1),1.2,cz+d.y*(endCd-12)+rg.y*(segX*cols*0.5+5)*(b?1:-1)); bm.rotation.y=ang; grp.add(bm); }
+}
+
+// ===== CITY BUILDING ARCHETYPES (designed + r128-verified by the buildings workflow) =====
+const ARCHES=[
+{name:"Helio Glass Tower", district:"core", wMin:12, wMax:26, hMin:40, hMax:90, build:(function(){
+// ---- shared assets (built ONCE) ----
+const RW = THREE.RepeatWrapping;
+
+// curtain-wall glass texture: dark glass base, thin mullion grid, scatter of lit windows.
+// 1 tile = a block of floors; build() UV-tiles it to ~one window per 3-4 m.
+function curtainTex(litChance, tint){
+  const c=document.createElement('canvas'); c.width=128; c.height=256; const g=c.getContext('2d');
+  // base glass gradient (top a touch lighter -> reads as sky reflection even where envMap is weak)
+  const grd=g.createLinearGradient(0,0,0,256);
+  grd.addColorStop(0, tint.top); grd.addColorStop(1, tint.bot);
+  g.fillStyle=grd; g.fillRect(0,0,128,256);
+  const cols=8, rows=16, cw=128/cols, ch=256/rows;
+  // lit windows (warm mostly, a few cool) drawn as solid glow cells
+  for(let r=0;r<rows;r++) for(let cI=0;cI<cols;cI++){
+    if(Math.random()<litChance){
+      const cool=Math.random()<0.18;
+      g.fillStyle = cool ? '#bcd2ff' : (Math.random()<0.5?'#ffe2a6':'#ffcf78');
+      g.globalAlpha = 0.55+Math.random()*0.4;
+      g.fillRect(cI*cw+1.5, r*ch+1.5, cw-3, ch-3);
+      g.globalAlpha = 1;
+    }
+  }
+  // mullion grid (thin frame lines) on top
+  g.strokeStyle='#0c141c'; g.lineWidth=1.4;
+  for(let cI=0;cI<=cols;cI++){ g.beginPath(); g.moveTo(cI*cw,0); g.lineTo(cI*cw,256); g.stroke(); }
+  for(let r=0;r<=rows;r++){ g.beginPath(); g.moveTo(0,r*ch); g.lineTo(128,r*ch); g.stroke(); }
+  // spandrel shadow line per floor (gives depth between glass panels)
+  g.strokeStyle='rgba(0,0,0,0.30)'; g.lineWidth=2.2;
+  for(let r=0;r<rows;r++){ const y=r*ch+ch*0.74; g.beginPath(); g.moveTo(0,y); g.lineTo(128,y); g.stroke(); }
+  const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=RW; t.anisotropy=4; t.encoding=THREE.sRGBEncoding; return t;
+}
+// emissive companion: ONLY the lit windows are bright (black elsewhere) so the
+// facade itself never blooms — pass through the colour glow on black.
+function litTex(litChance){
+  const c=document.createElement('canvas'); c.width=128; c.height=256; const g=c.getContext('2d');
+  g.fillStyle='#000'; g.fillRect(0,0,128,256);
+  const cols=8, rows=16, cw=128/cols, ch=256/rows;
+  for(let r=0;r<rows;r++) for(let cI=0;cI<cols;cI++){
+    if(Math.random()<litChance){
+      const cool=Math.random()<0.18;
+      g.fillStyle = cool ? '#9fc0ff' : '#ffcb6e';
+      g.globalAlpha = 0.6+Math.random()*0.4;
+      g.fillRect(cI*cw+1.5, r*ch+1.5, cw-3, ch-3);
+      g.globalAlpha=1;
+    }
+  }
+  const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=RW; t.anisotropy=4; t.encoding=THREE.sRGBEncoding; return t;
+}
+
+// three glass tints (blue, green, silver) so repeats vary
+const TINTS=[
+  {top:'#3a5e74', bot:'#16303f', col:0x274a5e}, // blue
+  {top:'#3a6a60', bot:'#163029', col:0x224a40}, // green
+  {top:'#5a6a74', bot:'#2a3640', col:0x46555f}  // silver
+];
+const glassMats = TINTS.map((tn,i)=>{
+  const map=curtainTex(0.10+i*0.02, tn);
+  const emap=litTex(0.10+i*0.02);
+  return new THREE.MeshStandardMaterial({
+    color: tn.col, map: map, emissive:0xffd28a, emissiveMap: emap, emissiveIntensity:1.15,
+    roughness:0.10, metalness:0.62, envMapIntensity:1.25
+  });
+});
+
+// glowing accent band (lit-floor ring near the top) — blooms
+const bandMat = new THREE.MeshStandardMaterial({ color:0xfff0d0, emissive:0xffd27a, emissiveIntensity:2.2, roughness:0.35, metalness:0.2, envMapIntensity:0.6 });
+// slim crown / metal frame & antenna
+const crownMat = new THREE.MeshStandardMaterial({ color:0xd6dde3, roughness:0.22, metalness:0.92, envMapIntensity:1.1 });
+const mechMat  = new THREE.MeshStandardMaterial({ color:0x6b7178, roughness:0.55, metalness:0.7, envMapIntensity:0.5 });
+const beaconMat= new THREE.MeshStandardMaterial({ color:0xff3a2a, emissive:0xff2a18, emissiveIntensity:3.0, roughness:0.4, metalness:0.1 });
+
+// shared unit geometries (the glass shell gets a UV-scaled CLONE per build; everything
+// else reuses these unit geometries scaled via mesh.scale)
+const boxGeo = new THREE.BoxGeometry(1,1,1);
+const antGeo = new THREE.CylinderGeometry(0.06,0.16,1,6);
+const beaconGeo = new THREE.SphereGeometry(0.4,8,6);
+
+function scaleUV(geo,u,v){ const uv=geo.attributes.uv; for(let i=0;i<uv.count;i++) uv.setXY(i,uv.getX(i)*u,uv.getY(i)*v); uv.needsUpdate=true; }
+
+return function build(g,w,d,h){
+  const ti=(Math.random()*TINTS.length)|0, glass=glassMats[ti];
+
+  // Keep the WHOLE building (glass shell + cap + crown + mech + antenna + beacon) within
+  // ~h. Reserve a roof budget proportional to h so short buildings don't sprout a giant
+  // mast and tall towers still read as towers. Everything below is sized against this budget.
+  const roof = Math.max(2.4, h*0.16);   // total vertical budget for cap+mech+crown+antenna+beacon
+  const bodyH = h - roof;               // glass shell height -> top of body at y=bodyH
+
+  // main glass shell — its own UV-scaled geometry (clone so we don't disturb the shared one)
+  const shellGeo = boxGeo.clone();
+  // ~one window per ~3.5 m horizontally, ~one floor per ~3.5 m vertically
+  scaleUV(shellGeo, Math.max(1,Math.round(w/7)), Math.max(2,Math.round(bodyH/14)));
+  const shell=new THREE.Mesh(shellGeo, glass);
+  shell.scale.set(w,bodyH,d); shell.position.y=bodyH/2;
+  shell.castShadow=shell.receiveShadow=true; g.add(shell);
+
+  // subtle vertical fins / corner mullions: slim metal edges to read the curtain-wall frame
+  const finW=0.35;
+  for(let s=0;s<2;s++){
+    const fx=(s? 1:-1)*(w/2);
+    const fin=new THREE.Mesh(boxGeo, crownMat);
+    fin.scale.set(finW,bodyH,d*1.01); fin.position.set(fx,bodyH/2,0); g.add(fin);
+  }
+
+  // one or two glowing lit-floor bands near the top of the body (blooms)
+  const nBands=1+(Math.random()<0.5?1:0);
+  for(let b=0;b<nBands;b++){
+    const by=bodyH*(0.78+b*0.09);
+    const band=new THREE.Mesh(boxGeo, bandMat);
+    band.scale.set(w*1.012,1.1,d*1.012); band.position.y=Math.min(by, bodyH-0.6); g.add(band);
+  }
+
+  // parapet / cornice cap (slightly proud metal frame) sits right on top of the body
+  const capH=Math.min(1.0, roof*0.22);
+  const cap=new THREE.Mesh(boxGeo, crownMat);
+  cap.scale.set(w*1.02,capH,d*1.02); cap.position.y=bodyH+capH/2; cap.castShadow=true; g.add(cap);
+  const roofY=bodyH+capH;               // working roof deck height
+
+  // rooftop mechanical box (sized within the roof budget)
+  const mh=Math.min(roof*0.42, 3.4)*(0.7+Math.random()*0.3);
+  const mw=w*(0.34+Math.random()*0.16), md=d*(0.34+Math.random()*0.16);
+  const mech=new THREE.Mesh(boxGeo, mechMat);
+  mech.scale.set(mw,mh,md);
+  mech.position.set((Math.random()-0.5)*w*0.25, roofY+mh/2, (Math.random()-0.5)*d*0.25);
+  mech.castShadow=true; g.add(mech);
+
+  // a smaller secondary roof box sometimes
+  if(Math.random()<0.6){
+    const s2h=Math.min(mh*0.7, 1.8);
+    const m2=new THREE.Mesh(boxGeo, mechMat);
+    m2.scale.set(w*0.18,s2h,d*0.18);
+    m2.position.set((Math.random()-0.5)*w*0.4, roofY+s2h/2, (Math.random()-0.5)*d*0.4); g.add(m2);
+  }
+
+  // slim metal crown frame sitting on the roof deck (signature top), capped to the budget
+  const crownH=Math.min(roof*0.55, h*0.05+1.6);
+  for(let s=0;s<2;s++){
+    const cf=new THREE.Mesh(boxGeo, crownMat);
+    cf.scale.set(0.5, crownH, d*0.9); cf.position.set((s?1:-1)*w*0.42, roofY+crownH/2, 0); g.add(cf);
+  }
+
+  // slim antenna + blooming beacon — antenna fills the remaining roof budget so the
+  // total height lands at ~h (never an oversized mast on a short building)
+  const antH=Math.max(2.0, roof - mh - 0.8);
+  const ant=new THREE.Mesh(antGeo, crownMat);
+  ant.scale.set(1,antH,1); ant.position.set(0, roofY+mh+antH/2, 0); g.add(ant);
+  const beacon=new THREE.Mesh(beaconGeo, beaconMat);
+  beacon.scale.setScalar(Math.min(1, w*0.04+0.5));
+  beacon.position.set(0, roofY+mh+antH, 0); g.add(beacon);
+};
+})()},
+{name:"Stonecourt Office Mid-Rise", district:"mid", wMin:12, wMax:26, hMin:24, hMax:55, build:(function(){
+  // ===== SHARED ASSETS (built ONCE) =====
+
+  // --- Facade window canvas: warm stone with punched windows, sills, mullions, scattered lit windows ---
+  // Returns {map, emis}: emis is black except over lit windows so only those bloom.
+  function facadePair(litFrac, base){
+    const c=document.createElement('canvas'); c.width=128; c.height=256; const g=c.getContext('2d');
+    const e=document.createElement('canvas'); e.width=128; e.height=256; const ge=e.getContext('2d');
+    g.fillStyle=base; g.fillRect(0,0,128,256);
+    ge.fillStyle='#000'; ge.fillRect(0,0,128,256);
+    // faint stone courses
+    for(let y=0;y<256;y+=4){ g.fillStyle='rgba(0,0,0,'+(0.015+Math.random()*0.02)+')'; g.fillRect(0,y,128,2); }
+    const cols=4, rows=8, mx=10, my=10;                       // grid: 4 windows wide, 8 tall per tile
+    const cw=(128-mx*2)/cols, ch=(256-my*2)/rows;
+    for(let r=0;r<rows;r++) for(let col=0;col<cols;col++){
+      const x=mx+col*cw, y=my+r*ch;
+      const wpad=cw*0.22, hpadT=ch*0.20, hpadB=ch*0.30;
+      const wx=x+wpad, wy=y+hpadT, ww=cw-wpad*2, wh=ch-hpadT-hpadB;
+      g.fillStyle='#2a2620'; g.fillRect(wx-2,wy-2,ww+4,wh+4);    // recessed reveal
+      const on=Math.random()<litFrac, cool=Math.random()<0.18;
+      let gl;
+      if(on){ gl = cool ? '#bcd6ff' : (Math.random()<0.5?'#ffe6a8':'#ffd27a'); }
+      else  { gl = Math.random()<0.5 ? '#1a2330' : '#222a33'; }
+      g.fillStyle=gl; g.fillRect(wx,wy,ww,wh);                   // glass
+      if(on){ ge.fillStyle = cool ? '#5b86c8' : '#ffcf73'; ge.fillRect(wx,wy,ww,wh); } // emissive only when lit
+      g.fillStyle='#1d2228';                                     // mullions (one + one)
+      g.fillRect(wx+ww/2-0.8,wy,1.6,wh);
+      g.fillRect(wx,wy+wh/2-0.8,ww,1.6);
+      g.fillStyle='#cabfa6'; g.fillRect(wx-3,wy+wh+1,ww+6,3);    // stone sill
+      g.fillStyle='rgba(0,0,0,0.18)'; g.fillRect(wx-3,wy+wh+4,ww+6,1.5);
+    }
+    const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; t.encoding=THREE.sRGBEncoding; t.anisotropy=4;
+    const te=new THREE.CanvasTexture(e); te.wrapS=te.wrapT=THREE.RepeatWrapping; // emissive map: linear encoding, correct
+    return {map:t, emis:te};
+  }
+
+  const stoneTones=['#d8cdb0','#cabd9c','#ddd2bb','#c4b896'];
+  const facadeMats=[];
+  for(let v=0;v<4;v++){
+    const p=facadePair(0.20+v*0.10, stoneTones[v]);
+    facadeMats.push(new THREE.MeshStandardMaterial({
+      map:p.map, emissiveMap:p.emis, emissive:0xffca78, emissiveIntensity:0.9,
+      roughness:0.86, metalness:0.0, envMapIntensity:0.55                       // base facade non-emissive (black emissiveMap); only lit windows bloom
+    }));
+  }
+
+  // Solid stone + metal materials (shared)
+  const STONE      = new THREE.MeshStandardMaterial({color:0xd6cbb0, roughness:0.88, metalness:0.0, envMapIntensity:0.5});
+  const STONE_DARK = new THREE.MeshStandardMaterial({color:0xb9ac8d, roughness:0.9,  metalness:0.0, envMapIntensity:0.45});
+  const STONE_TRIM = new THREE.MeshStandardMaterial({color:0xe6ddc7, roughness:0.75, metalness:0.0, envMapIntensity:0.55});
+  const METAL      = new THREE.MeshStandardMaterial({color:0x9aa1a8, roughness:0.5,  metalness:0.7, envMapIntensity:0.7}); // low-rough metal catches HDRI sky
+  const METAL_DARK = new THREE.MeshStandardMaterial({color:0x53585f, roughness:0.55, metalness:0.65,envMapIntensity:0.6});
+  const TANKMAT    = new THREE.MeshStandardMaterial({color:0x6f5a44, roughness:0.7,  metalness:0.15,envMapIntensity:0.4});
+  const TANKBAND   = new THREE.MeshStandardMaterial({color:0x3a3026, roughness:0.7,  metalness:0.2, envMapIntensity:0.4});
+  const VENT       = new THREE.MeshStandardMaterial({color:0xc9cdd2, roughness:0.45, metalness:0.6, envMapIntensity:0.7});
+
+  // shared rooftop geometries (reused across all buildings)
+  const acGeo   = new THREE.BoxGeometry(1,1,1);
+  const ventGeo = new THREE.CylinderGeometry(0.18,0.18,1,8);
+  const legGeo  = new THREE.BoxGeometry(0.18,1,0.18);
+
+  function addMesh(g,geo,mat,x,y,z,shadow){ const m=new THREE.Mesh(geo,mat); m.position.set(x,y,z);
+    if(shadow){m.castShadow=true;m.receiveShadow=true;} g.add(m); return m; }
+
+  // ===== PER-BUILDING BUILD (called ~10-15x) =====
+  return function build(g,w,d,h){
+    const fm=facadeMats[(Math.random()*facadeMats.length)|0];
+
+    // ground-floor stone base (slightly proud, darker)
+    const baseH=Math.min(4.5, h*0.16);
+    addMesh(g,new THREE.BoxGeometry(w*1.03,baseH,d*1.03),STONE_DARK,0,baseH/2,0,true); // base at y=0
+
+    // main shaft with the punched-window facade
+    const shaftH=h-baseH;
+    const shaft=new THREE.BoxGeometry(w,shaftH,d);
+    const uTiles=Math.max(1,Math.round(w/13.6));    // ~4 windows per 13.6 m  -> one window per ~3.4 m
+    const vTiles=Math.max(1,Math.round(shaftH/27)); // ~8 windows per 27 m
+    const uv=shaft.attributes.uv; for(let i=0;i<uv.count;i++) uv.setXY(i,uv.getX(i)*uTiles,uv.getY(i)*vTiles); uv.needsUpdate=true;
+    addMesh(g,shaft,fm,0,baseH+shaftH/2,0,true);
+
+    // string-course belt at base/shaft junction
+    addMesh(g,new THREE.BoxGeometry(w*1.04,0.5,d*1.04),STONE_TRIM,0,baseH,0,true);
+
+    // ---- defined CORNICE + PARAPET ----
+    const corY=h;
+    addMesh(g,new THREE.BoxGeometry(w*1.07,0.9,d*1.07),STONE_TRIM,0,corY-0.45,0,true); // overhanging cornice
+    addMesh(g,new THREE.BoxGeometry(w*1.10,0.4,d*1.10),STONE,0,corY,0,true);            // cornice cap
+    const pH=1.4, pt=0.4, top=corY+0.2;                                                  // recessed parapet ring
+    addMesh(g,new THREE.BoxGeometry(w,pH,pt),STONE,0,top+pH/2,(d/2-pt/2),true);
+    addMesh(g,new THREE.BoxGeometry(w,pH,pt),STONE,0,top+pH/2,-(d/2-pt/2),true);
+    addMesh(g,new THREE.BoxGeometry(pt,pH,d-pt*2),STONE,(w/2-pt/2),top+pH/2,0,true);
+    addMesh(g,new THREE.BoxGeometry(pt,pH,d-pt*2),STONE,-(w/2-pt/2),top+pH/2,0,true);
+    addMesh(g,new THREE.BoxGeometry(w+0.2,0.18,d+0.2),STONE_TRIM,0,top+pH,0,false);      // coping cap
+
+    const roofY=top+0.05;
+
+    // ---- ROOFTOP: water tank + AC units + vent stacks ----
+    if(Math.random()<0.85){                                                              // wooden water tank on a frame
+      const tr=Math.min(w,d)*0.13+0.5, tankH=tr*1.6, legH=0.9+Math.random()*0.6;
+      const tx=(Math.random()-0.5)*(w*0.3), tz=(Math.random()-0.5)*(d*0.3);
+      addMesh(g,new THREE.CylinderGeometry(tr,tr,tankH,12),TANKMAT,tx,roofY+legH+tankH/2,tz,true);
+      addMesh(g,new THREE.CylinderGeometry(0.05,tr*1.05,tr*0.7,12),TANKMAT,tx,roofY+legH+tankH+tr*0.32,tz,true); // conical lid
+      addMesh(g,new THREE.CylinderGeometry(tr*1.02,tr*1.02,0.18,12),TANKBAND,tx,roofY+legH+tankH*0.25,tz,false); // hoops
+      addMesh(g,new THREE.CylinderGeometry(tr*1.02,tr*1.02,0.18,12),TANKBAND,tx,roofY+legH+tankH*0.75,tz,false);
+      for(let lx=-1;lx<=1;lx+=2) for(let lz=-1;lz<=1;lz+=2){                              // four legs
+        const leg=new THREE.Mesh(legGeo,METAL_DARK); leg.scale.y=legH;
+        leg.position.set(tx+lx*tr*0.62,roofY+legH/2,tz+lz*tr*0.62); leg.castShadow=true; g.add(leg);
+      }
+    }
+
+    const nAC=2+(Math.random()*3|0);                                                     // AC condenser units
+    for(let a=0;a<nAC;a++){
+      const aw=1.2+Math.random()*1.0, ah=0.8+Math.random()*0.6, ad=1.0+Math.random()*0.8;
+      const ax=(Math.random()-0.5)*Math.max(0,(w-aw-1.0)), az=(Math.random()-0.5)*Math.max(0,(d-ad-1.0)); // clamp range so units never spawn outside small roofs
+      const u=new THREE.Mesh(acGeo,METAL); u.scale.set(aw,ah,ad);
+      u.position.set(ax,roofY+ah/2,az); u.castShadow=u.receiveShadow=true; g.add(u);
+      const fan=new THREE.Mesh(ventGeo,METAL_DARK); fan.scale.set(aw*1.3,0.12,aw*1.3);   // fan grille cap
+      fan.position.set(ax,roofY+ah+0.05,az); g.add(fan);
+    }
+
+    const nV=1+(Math.random()*3|0);                                                      // vent stacks
+    for(let v=0;v<nV;v++){
+      const vh=0.8+Math.random()*1.3;
+      const vx=(Math.random()-0.5)*(w*0.7), vz=(Math.random()-0.5)*(d*0.7);
+      const vp=new THREE.Mesh(ventGeo,VENT); vp.scale.y=vh;
+      vp.position.set(vx,roofY+vh/2,vz); vp.castShadow=true; g.add(vp);
+      addMesh(g,new THREE.SphereGeometry(0.22,8,6),VENT,vx,roofY+vh,vz,false);           // cap elbow
+    }
+
+    if(Math.random()<0.6){                                                               // small stair bulkhead
+      const bw=2.5+Math.random()*2, bd=2.5+Math.random()*2, bh=1.8+Math.random()*1.2;
+      addMesh(g,new THREE.BoxGeometry(bw,bh,bd),STONE_DARK,(Math.random()-0.5)*w*0.3,roofY+bh/2,(Math.random()-0.5)*d*0.3,true);
+    }
+  };
+})()},
+{name:"Deco Stepwork Tower", district:"core", wMin:14, wMax:30, hMin:45, hMax:92, build:(function(){
+  // ===== ART-DECO STEPPED SKYSCRAPER (core district, 45-90 m) =====
+  // Shared assets created ONCE. build() reuses them for every plot.
+
+  // -- palette --
+  const TAN   = 0xe7dcc4;   // limestone / tan body
+  const TAN_D = 0xcdbf9f;   // shadowed setback faces
+  const BRONZE= 0x7a5a2e;   // bronze spandrel / accents
+  const CROWNC= 0xb98a3e;   // crown stone (warm)
+
+  // -- shared facade textures (map + matching emissive mask) built ONCE in a single pass --
+  // We draw the limestone+windows once and RECORD every lit window (rect + warm/cool flag),
+  // then paint the emissive canvas from that SAME data so the bloom lines up with the lit cells.
+  function buildFacade(){
+    const W=256,H=512;
+    const cMap=document.createElement('canvas'); cMap.width=W; cMap.height=H;
+    const cEm =document.createElement('canvas'); cEm.width=W;  cEm.height=H;
+    const m=cMap.getContext('2d'), e=cEm.getContext('2d');
+
+    // limestone base (subtle vertical grain)
+    m.fillStyle='#e7dcc4'; m.fillRect(0,0,W,H);
+    for(let i=0;i<70;i++){ const gx=Math.random()*W; m.globalAlpha=0.05+Math.random()*0.06;
+      m.fillStyle=Math.random()<0.5?'#d8ccb0':'#f1e8d4'; m.fillRect(gx,0,1+Math.random()*2,H); }
+    m.globalAlpha=1;
+
+    // emissive base is BLACK so the limestone body does NOT glow
+    e.fillStyle='#000'; e.fillRect(0,0,W,H);
+
+    // strong vertical PIERS (Art-Deco) with bronze-shadowed recessed bays between them
+    const bays=4, bayW=W/bays;
+    for(let b=0;b<bays;b++){
+      const bx=b*bayW;
+      m.fillStyle='#3a3327'; m.fillRect(bx+bayW*0.22,0,bayW*0.56,H);   // recessed window channel
+      m.fillStyle='#f1e8d4'; m.fillRect(bx+bayW*0.16,0,bayW*0.06,H);   // pier highlight edge
+      m.fillStyle='#c7b896'; m.fillRect(bx+bayW*0.78,0,bayW*0.06,H);   // pier shadow edge
+    }
+
+    // windows + bronze spandrels inside each recessed channel; record lit cells for the emissive pass
+    const floors=16, fh=H/floors;
+    for(let b=0;b<bays;b++){
+      const bx=b*bayW, wx0=bx+bayW*0.27, ww=bayW*0.46;
+      for(let f=0;f<floors;f++){
+        const wy=f*fh+fh*0.18, wh=fh*0.6;
+        m.fillStyle='#6e5026'; m.fillRect(wx0-2,f*fh+fh*0.82,ww+4,fh*0.16);   // bronze spandrel band
+        const r=Math.random();
+        if(r<0.30){                                                          // warm lit
+          m.fillStyle=(Math.random()<0.8)?'#ffe6ad':'#ffd27a';
+          m.fillRect(wx0,wy,ww,wh);
+          e.fillStyle='#ffd9a0'; e.fillRect(wx0,wy,ww,wh);                   // matching warm glow
+        } else if(r<0.36){                                                   // cool lit
+          m.fillStyle='#bfe2ff';
+          m.fillRect(wx0,wy,ww,wh);
+          e.fillStyle='#9fd0ff'; e.fillRect(wx0,wy,ww,wh);                   // matching cool glow
+        } else {                                                            // dark glass (no glow)
+          m.fillStyle=(Math.random()<0.5)?'#26303a':'#1b232c';
+          m.fillRect(wx0,wy,ww,wh);
+        }
+        m.fillStyle='#15110a'; m.fillRect(wx0+ww*0.5-0.5,wy,1,wh);           // Deco mullion split
+      }
+    }
+
+    const tMap=new THREE.CanvasTexture(cMap);
+    tMap.wrapS=tMap.wrapT=THREE.RepeatWrapping; tMap.encoding=THREE.sRGBEncoding; tMap.anisotropy=8;
+    const tEm=new THREE.CanvasTexture(cEm);
+    tEm.wrapS=tEm.wrapT=THREE.RepeatWrapping; tEm.encoding=THREE.sRGBEncoding;
+    return { map:tMap, em:tEm };
+  }
+  const FAC=buildFacade(), fTex=FAC.map, eTex=FAC.em;
+
+  // -- shared materials (created ONCE) --
+  const bodyMat = new THREE.MeshStandardMaterial({
+    map:fTex, emissiveMap:eTex, emissive:0xffcaa0, emissiveIntensity:0.9,
+    roughness:0.62, metalness:0.12, envMapIntensity:0.7 });
+  const stoneMat  = new THREE.MeshStandardMaterial({ color:TAN,    roughness:0.70, metalness:0.05, envMapIntensity:0.55 });
+  const stoneDMat = new THREE.MeshStandardMaterial({ color:TAN_D,  roughness:0.74, metalness:0.05, envMapIntensity:0.50 });
+  const bronzeMat = new THREE.MeshStandardMaterial({ color:BRONZE, roughness:0.34, metalness:0.85, envMapIntensity:1.0 });
+  const crownMat  = new THREE.MeshStandardMaterial({ color:CROWNC, roughness:0.40, metalness:0.60, envMapIntensity:0.9 });
+  const finialMat = new THREE.MeshStandardMaterial({ color:0xfff6d8, emissive:0xffdf8c, emissiveIntensity:3.4, roughness:0.3, metalness:0.4 });
+  const uplitMat  = new THREE.MeshStandardMaterial({ color:0xffe9b0, emissive:0xffcf72, emissiveIntensity:1.6, roughness:0.5, metalness:0.2 });
+  const acMat     = new THREE.MeshStandardMaterial({ color:0x9aa0a6, roughness:0.6,  metalness:0.5, envMapIntensity:0.6 });
+
+  // -- shared unit geometries (reused & scaled via mesh.scale) --
+  const boxGeo  = new THREE.BoxGeometry(1,1,1);
+  const coneGeo = new THREE.ConeGeometry(0.5,1,6);
+  const cylGeo  = new THREE.CylinderGeometry(0.5,0.5,1,8);
+
+  // UV-scale a fresh facade box so windows tile ~1 window per ~3.2 m (side faces only).
+  function makeBody(w,d,h){
+    const geo=new THREE.BoxGeometry(w,h,d);
+    const uv=geo.attributes.uv;
+    const uH=Math.max(1,Math.round(d/3.2)), vH=Math.max(2,Math.round(h/3.5)), uW=Math.max(1,Math.round(w/3.2));
+    for(let i=0;i<uv.count;i++){
+      const face=Math.floor(i/4); let su=1,sv=1;
+      if(face===0||face===1){ su=uH; sv=vH; }       // +x / -x
+      else if(face===4||face===5){ su=uW; sv=vH; }  // +z / -z
+      else { su=uW; sv=uH; }                         // top/bottom (capped by stone)
+      uv.setXY(i, uv.getX(i)*su, uv.getY(i)*sv);
+    }
+    uv.needsUpdate=true; return geo;
+  }
+  function addBox(g,mat,px,py,pz,sx,sy,sz,shadow){
+    const m=new THREE.Mesh(boxGeo,mat); m.position.set(px,py,pz); m.scale.set(sx,sy,sz);
+    if(shadow){ m.castShadow=true; m.receiveShadow=true; } g.add(m); return m;
+  }
+
+  return function build(g,w,d,h){
+    h=Math.max(45,Math.min(92,h));
+    const rnd=Math.random;
+    // ---- height budget: reserve crown + spire + finial tip so the built total stays ~h ----
+    const crownH = 3.0+rnd()*1.5;
+    const spireH = h*(0.10+rnd()*0.06);
+    const finialTip = 3.3;                      // tip + orb rise above the spire cone
+    const bodyH  = h-crownH-spireH-finialTip;
+    // ---- setbacks: base block + 2-3 inward steps ----
+    const steps = rnd()<0.5 ? 2 : 3;
+    const weights=[]; let sum=0;
+    for(let i=0;i<=steps;i++){ const wgt=steps+1-i; weights.push(wgt); sum+=wgt; }
+    let y=0, curW=w, curD=d; const tierTops=[];
+    for(let i=0;i<=steps;i++){
+      const th=bodyH*weights[i]/sum;
+      const m=new THREE.Mesh(makeBody(curW,curD,th),bodyMat);
+      m.position.set(0,y+th/2,0); m.castShadow=true; m.receiveShadow=true; g.add(m);
+      // limestone cornice ledge capping each tier (the Deco step shelf)
+      addBox(g, i===0?stoneMat:stoneDMat, 0, y+th+0.25, 0, curW+0.5, 0.5, curD+0.5, true);
+      // bronze vertical pier accents on front/back of the base tier
+      if(i===0){
+        const piers=3, span=curW*0.7;
+        for(let p=0;p<piers;p++){
+          const px=-span/2+span*(p/(piers-1));
+          addBox(g, bronzeMat, px, th*0.5,  curD/2+0.06, 0.5, th*0.92, 0.12, false);
+          addBox(g, bronzeMat, px, th*0.5, -curD/2-0.06, 0.5, th*0.92, 0.12, false);
+        }
+      }
+      tierTops.push({y:y+th, w:curW, d:curD});
+      y+=th; curW*=0.70+rnd()*0.06; curD*=0.70+rnd()*0.06;
+    }
+    const top=tierTops[tierTops.length-1], tw=top.w, td=top.d, ty=top.y;
+
+    // ---- decorative CROWN: stacked stepped blocks alternating stone/bronze ----
+    let cy=ty, cw=tw*0.92, cd=td*0.92; const crownSteps=3;
+    for(let i=0;i<crownSteps;i++){
+      const ch=crownH/crownSteps;
+      addBox(g, i%2?bronzeMat:crownMat, 0, cy+ch/2, 0, cw, ch, cd, true);
+      cy+=ch; cw*=0.78; cd*=0.78;
+    }
+    // corner buttress finlets (Deco fins) on the crown
+    for(let sx=-1;sx<=1;sx+=2) for(let sz=-1;sz<=1;sz+=2)
+      addBox(g, crownMat, sx*tw*0.42, ty+crownH*0.5, sz*td*0.42, 0.6, crownH*1.25, 0.6, false);
+
+    // ---- warm uplight plate ringing the crown base (uplit look, blooms gently) ----
+    const up=new THREE.Mesh(boxGeo,uplitMat); up.position.set(0,ty+0.4,0); up.scale.set(tw*0.96,0.8,td*0.96); g.add(up);
+
+    // ---- SPIRE / FINIAL with emissive tip ----
+    let sw=Math.min(cw,cd)*0.5, sy0=cy; const segs=3, segH=spireH*0.78/segs;
+    for(let i=0;i<segs;i++){
+      const m=new THREE.Mesh(cylGeo, i%2?crownMat:bronzeMat);
+      m.position.set(0,sy0+segH/2,0); m.scale.set(sw,segH,sw); m.castShadow=true; g.add(m);
+      sy0+=segH; sw*=0.6;
+    }
+    const coneH=spireH*0.22;
+    const cone=new THREE.Mesh(coneGeo,crownMat); cone.position.set(0,sy0+coneH/2,0); cone.scale.set(sw*2.2,coneH,sw*2.2); g.add(cone); sy0+=coneH;
+    const tip=new THREE.Mesh(cylGeo,finialMat);  tip.position.set(0,sy0+0.9,0);  tip.scale.set(0.5,1.8,0.5); g.add(tip);
+    const orb=new THREE.Mesh(coneGeo,finialMat); orb.position.set(0,sy0+2.4,0);  orb.scale.set(0.9,1.4,0.9); g.add(orb);
+
+    // ---- rooftop detail on a lower setback shelf (water tank + AC units) ----
+    if(tierTops.length>=2){
+      const shelf=tierTops[tierTops.length-2];
+      const off=shelf.w*0.28*(rnd()<0.5?-1:1), offz=shelf.d*0.28*(rnd()<0.5?-1:1);
+      const tankH=3.2+rnd()*1.4, tankR=1.4+rnd()*0.5;
+      const tank=new THREE.Mesh(cylGeo,acMat); tank.position.set(off,shelf.y+tankH/2,offz); tank.scale.set(tankR*2,tankH,tankR*2); tank.castShadow=true; g.add(tank);
+      const cap=new THREE.Mesh(coneGeo,acMat); cap.position.set(off,shelf.y+tankH+0.8,offz); cap.scale.set(tankR*2.3,1.6,tankR*2.3); g.add(cap);
+      for(let a=0;a<2;a++) addBox(g, acMat, -off*0.6+a*2.2, shelf.y+0.9, offz*-0.6, 2,1.8,2.4, true);
+    }
+  };
+})()},
+{name:"Cream Terraces", district:"mid", wMin:12, wMax:26, hMin:20, hMax:45, build:(function(){
+  // ---------- SHARED ASSETS (built ONCE, reused by every build call) ----------
+  const rnd=(a,b)=>a+Math.random()*(b-a);
+
+  // Scale a BoxGeometry's UVs in place so a shared facade texture tiles per building
+  // WITHOUT cloning the texture (cloning would re-upload a GPU texture per building).
+  function scaleBoxUV(geo,u,v){ const uv=geo.attributes.uv;
+    for(let i=0;i<uv.count;i++) uv.setXY(i, uv.getX(i)*u, uv.getY(i)*v); uv.needsUpdate=true; }
+
+  // Facade texture: white floor SLABS alternating with dark glass strips + a scatter of lit panes.
+  function bandTex(seed){
+    const c=document.createElement('canvas'); c.width=128; c.height=128;
+    const g=c.getContext('2d');
+    g.fillStyle='#1c2630'; g.fillRect(0,0,128,128);
+    g.fillStyle='#f4f1ea'; g.fillRect(0,0,128,46);
+    g.fillStyle='#d8d4c8'; g.fillRect(0,44,128,3);
+    const x0=4,x1=124,gy=52,gh=62, cols=8, cw=(x1-x0)/cols;
+    for(let i=0;i<cols;i++){
+      const px=x0+i*cw; let col;
+      if(Math.random()<0.18) col=Math.random()<0.7?'#ffe6a8':'#9fd0ff';
+      else col='#0e1820';
+      g.fillStyle=col; g.fillRect(px+1.2, gy, cw-2.4, gh);
+      g.fillStyle='rgba(255,255,255,0.06)'; g.fillRect(px+1.2, gy, (cw-2.4)*0.4, gh);
+    }
+    g.strokeStyle='#0a1016'; g.lineWidth=1.2;
+    for(let i=0;i<=cols;i++){ const px=x0+i*cw; g.beginPath(); g.moveTo(px,gy); g.lineTo(px,gy+gh); g.stroke(); }
+    g.fillStyle='rgba(0,0,0,0.18)'; g.fillRect(0,47,128,5);
+    const t=new THREE.CanvasTexture(c);
+    t.wrapS=t.wrapT=THREE.RepeatWrapping; t.encoding=THREE.sRGBEncoding; t.anisotropy=8;
+    return t;
+  }
+  // Emissive companion: black everywhere except the lit panes, so ONLY windows bloom.
+  function bandEmis(){
+    const c=document.createElement('canvas'); c.width=128; c.height=128;
+    const g=c.getContext('2d'); g.fillStyle='#000'; g.fillRect(0,0,128,128);
+    const x0=4,x1=124,gy=52,gh=62, cols=8, cw=(x1-x0)/cols;
+    for(let i=0;i<cols;i++){ const px=x0+i*cw;
+      if(Math.random()<0.18){ g.fillStyle=Math.random()<0.7?'#ffd27a':'#7fb8ff'; g.fillRect(px+1.2, gy, cw-2.4, gh); } }
+    const t=new THREE.CanvasTexture(c);
+    t.wrapS=t.wrapT=THREE.RepeatWrapping; t.encoding=THREE.sRGBEncoding;
+    return t;
+  }
+
+  // A few facade VARIANTS (built ONCE) so repeats differ. Tiling is done per-building via
+  // geometry UVs, so all buildings can SHARE these materials & textures (no per-building clones).
+  const facadeMats=[];
+  for(let v=0; v<4; v++){
+    facadeMats.push(new THREE.MeshStandardMaterial({
+      map:bandTex(v), emissiveMap:bandEmis(), emissive:0xffca73, emissiveIntensity:0.85,
+      color:0xffffff, roughness:0.62, metalness:0.08, envMapIntensity:0.7
+    }));
+  }
+
+  // Reflective GLASS corners — low roughness so they mirror the sky env map (the key to good glass).
+  const cornerGlass=new THREE.MeshStandardMaterial({ color:0x223443, roughness:0.12, metalness:0.55, envMapIntensity:1.25, emissive:0x0c1822, emissiveIntensity:0.18 });
+  // Bright white concrete (slabs, parapet, penthouse) — matte, takes the sun.
+  const concrete=new THREE.MeshStandardMaterial({ color:0xf2efe7, roughness:0.74, metalness:0.0, envMapIntensity:0.55 });
+  const concreteSoft=new THREE.MeshStandardMaterial({ color:0xe6e2d8, roughness:0.8, metalness:0.0, envMapIntensity:0.45 });
+  const railMat=new THREE.MeshStandardMaterial({ color:0xbfc6cc, roughness:0.4, metalness:0.7, envMapIntensity:0.85 });
+  const balcGlass=new THREE.MeshStandardMaterial({ color:0xbfe0ef, roughness:0.1, metalness:0.0, transparent:true, opacity:0.32, envMapIntensity:1.1 });
+  const solarMat=new THREE.MeshStandardMaterial({ color:0x14233a, roughness:0.22, metalness:0.45, envMapIntensity:0.9, emissive:0x0a1530, emissiveIntensity:0.12 });
+  const solarFrame=new THREE.MeshStandardMaterial({ color:0x9aa3aa, roughness:0.4, metalness:0.7, envMapIntensity:0.7 });
+  const roofDeck=new THREE.MeshStandardMaterial({ color:0x394049, roughness:0.85, metalness:0.1, envMapIntensity:0.4 });
+  const acMat=new THREE.MeshStandardMaterial({ color:0xd6dade, roughness:0.55, metalness:0.3, envMapIntensity:0.6 });
+
+  // ---- shared geometries for the small repeated DETAILS (scaled per-instance) ----
+  const unitBox=new THREE.BoxGeometry(1,1,1);
+  const railPost=new THREE.CylinderGeometry(0.05,0.05,1,6);
+  const acFan=new THREE.CylinderGeometry(0.5,0.5,0.18,10);
+
+  function addBox(g,mat,sx,sy,sz,x,y,z,shadow){
+    const m=new THREE.Mesh(unitBox,mat); m.scale.set(sx,sy,sz); m.position.set(x,y,z);
+    if(shadow){ m.castShadow=true; m.receiveShadow=true; }
+    g.add(m); return m;
+  }
+
+  // ---------- PER-BUILDING BUILD ----------
+  return function build(g,w,d,h){
+    const facade=facadeMats[(Math.random()*facadeMats.length)|0];   // SHARED material, no clone
+    const floorH=rnd(3.0,3.6);
+    const floors=Math.max(4, Math.round(h/floorH));
+    const bw=w-1.0, bd=d-1.0;
+
+    // Main facade: its OWN BoxGeometry so we can scale UVs per building (one V-tile == one floor,
+    // U gives ~one window-group per ~3.5 m) while SHARING the texture+material across all buildings.
+    const towerGeo=new THREE.BoxGeometry(bw, h, bd);
+    const uRep=Math.max(2,Math.round((w+d)/2/3.5)), vRep=floors;
+    scaleBoxUV(towerGeo, uRep, vRep);
+    const tower=new THREE.Mesh(towerGeo, facade);
+    tower.position.set(0, h/2, 0);
+    tower.castShadow=tower.receiveShadow=true;
+    g.add(tower);
+
+    // GLASS CORNERS — four slim reflective pilasters at the building edges.
+    const cw=Math.min(2.2, w*0.16), cd=Math.min(2.2, d*0.16);
+    const hx=bw/2, hz=bd/2;
+    for(const sx of [-1,1]) for(const sz of [-1,1]){
+      addBox(g, cornerGlass, cw, h*0.995, cd, sx*hx, h/2, sz*hz, true);
+    }
+
+    // BALCONIES — protruding white slabs with glass balustrades on the long (z) faces.
+    const faceZ=bd/2, balW=Math.min(4.0, w*0.34), balD=0.8;
+    for(let f=2; f<floors; f+=2){
+      const by=f*floorH; if(by>h-floorH) break;
+      for(const sgn of [1,-1]){
+        if(Math.random()<0.3) continue;
+        const ox=rnd(-(w*0.2),(w*0.2));
+        addBox(g, concrete, balW, 0.16, balD, ox, by-0.1, sgn*(faceZ+balD/2), true);
+        addBox(g, balcGlass, balW, 0.7, 0.06, ox, by+0.25, sgn*(faceZ+balD-0.02), false);
+        addBox(g, railMat, 0.06, 0.7, balD, ox-balW/2, by+0.25, sgn*(faceZ+balD/2), false);
+        addBox(g, railMat, 0.06, 0.7, balD, ox+balW/2, by+0.25, sgn*(faceZ+balD/2), false);
+      }
+    }
+
+    // CORNICE / PARAPET — clean white crown slab + a parapet wall with a thin metal top rail.
+    const capY=h, paraH=1.1;
+    addBox(g, concrete, w-0.4, 0.5, d-0.4, 0, capY-0.25, 0, true);
+    addBox(g, concreteSoft, w-0.6, paraH, 0.2, 0, capY+paraH/2, bd/2, false);
+    addBox(g, concreteSoft, w-0.6, paraH, 0.2, 0, capY+paraH/2, -bd/2, false);
+    addBox(g, concreteSoft, 0.2, paraH, d-0.6, bw/2, capY+paraH/2, 0, false);
+    addBox(g, concreteSoft, 0.2, paraH, d-0.6, -bw/2, capY+paraH/2, 0, false);
+    addBox(g, railMat, w-0.4, 0.06, 0.06, 0, capY+paraH, bd/2, false);
+    addBox(g, railMat, w-0.4, 0.06, 0.06, 0, capY+paraH, -bd/2, false);
+
+    // ROOF DECK + set-back PENTHOUSE with a glass front and roof lip.
+    addBox(g, roofDeck, w-0.8, 0.1, d-0.8, 0, capY+0.05, 0, false);
+    const phW=Math.min(w*0.5,7), phD=Math.min(d*0.5,6), phH=rnd(2.6,3.4);
+    const phX=rnd(-(w*0.12),(w*0.12)), phZ=-d*0.12;
+    addBox(g, concrete, phW, phH, phD, phX, capY+0.1+phH/2, phZ, true);
+    addBox(g, cornerGlass, phW*0.9, phH*0.7, 0.1, phX, capY+0.1+phH*0.45, phZ+phD/2+0.02, false);
+    addBox(g, concreteSoft, phW+0.3, 0.18, phD+0.3, phX, capY+0.1+phH+0.09, phZ, false);
+
+    // SOLAR PANELS — tilted dark-blue array on the open roof, skipping the penthouse footprint.
+    const arrX=w*0.18, arrZ=d*0.2, panW=Math.min(2.6,w*0.2), panD=1.4, rows=2;
+    const colsP=Math.max(1,Math.floor((w*0.5)/(panW+0.3)));
+    for(let r=0;r<rows;r++) for(let cI=0;cI<colsP;cI++){
+      const px=arrX+(cI-(colsP-1)/2)*(panW+0.35), pz=arrZ+r*(panD+0.3);
+      if(Math.abs(px-phX)<phW/2+0.5 && Math.abs(pz-phZ)<phD/2+0.5) continue;
+      const panel=addBox(g, solarMat, panW, 0.08, panD, px, capY+0.55, pz, false); panel.rotation.x=-0.42;
+      addBox(g, solarFrame, 0.1, 0.45, 0.1, px, capY+0.32, pz+panD*0.35, false);
+    }
+
+    // AC PLANT + antenna mast on the opposite roof side.
+    const nAC=1+(Math.random()*2|0);
+    for(let a=0;a<nAC;a++){
+      const ax=-w*0.22+rnd(-1,1), az=rnd(-d*0.15,d*0.2);
+      addBox(g, acMat, 1.6, 0.9, 1.6, ax, capY+0.55, az, true);
+      const fan=new THREE.Mesh(acFan, roofDeck); fan.position.set(ax, capY+1.02, az); g.add(fan);
+    }
+    const mast=new THREE.Mesh(railPost, railMat); mast.scale.set(1, rnd(2.5,4.5), 1);
+    mast.position.set(-w*0.28, capY+0.1+mast.scale.y/2, -d*0.25); g.add(mast);
+  };
+})()},
+{name:"Brick Low-Rise Apartments", district:"edge", wMin:12, wMax:30, hMin:14, hMax:30, build:(function(){
+const rand=(a,b)=>a+Math.random()*(b-a);
+const pick=a=>a[(Math.random()*a.length)|0];
+
+// ---- per-variant LIT-PANE LAYOUT computed ONCE so diffuse map & emissive map agree ----
+// returns a 2x4 grid of {on, warm} so a glowing pane is exactly a warm-/cool-lit diffuse pane.
+const COLS=2, ROWSW=4;
+function litGrid(litFrac){
+  const grid=[];
+  for(let r=0;r<ROWSW;r++) for(let cc=0;cc<COLS;cc++){
+    const on=Math.random()<litFrac;
+    grid.push({on, warm: Math.random()<0.78});
+  }
+  return grid;
+}
+
+// ---- shared BRICK facade texture (canvas, drawn ONCE per variant) ----
+// Brick courses + mortar, stone-silled windows with mullions; lit panes taken from `grid`.
+function brickTex(grid, brickHex){
+  const c=document.createElement('canvas'); c.width=256; c.height=512;
+  const x=c.getContext('2d');
+  x.fillStyle='#6b5d52'; x.fillRect(0,0,256,512);            // mortar wash
+  const base=brickHex, courseH=8, brickW=34, mortar=2;
+  for(let cy=0, row=0; cy<512; cy+=courseH, row++){
+    const off=(row%2)? brickW/2 : 0;
+    for(let bx=-brickW; bx<256+brickW; bx+=brickW){
+      const v=(Math.random()*22-11)|0;
+      const r=Math.max(0,Math.min(255,((base>>16)&255)+v));
+      const g=Math.max(0,Math.min(255,((base>>8)&255)+v));
+      const b=Math.max(0,Math.min(255,(base&255)+v));
+      x.fillStyle='rgb('+r+','+g+','+b+')';
+      x.fillRect(bx+off+mortar, cy+mortar, brickW-mortar*2, courseH-mortar*2);
+    }
+  }
+  const cellW=256/COLS, cellH=512/ROWSW;
+  const winW=cellW*0.5, winH=cellH*0.62;
+  for(let r=0;r<ROWSW;r++) for(let cc=0;cc<COLS;cc++){
+    const cell=grid[r*COLS+cc];
+    const px=cc*cellW+(cellW-winW)/2, py=r*cellH+(cellH-winH)*0.4;
+    x.fillStyle='#d8cdbb'; x.fillRect(px-4, py-3, winW+8, winH+8);   // stone surround
+    const on=cell.on;
+    let pane = on ? (cell.warm?'#ffd98a':'#bcd4ff') : ((Math.random()<0.5)?'#243038':'#1b252c');
+    x.fillStyle=pane; x.fillRect(px,py,winW,winH);
+    if(on){
+      const grd=x.createRadialGradient(px+winW/2,py+winH/2,1,px+winW/2,py+winH/2,winW*0.8);
+      grd.addColorStop(0, cell.warm?'rgba(255,240,200,0.85)':'rgba(210,228,255,0.8)');
+      grd.addColorStop(1,'rgba(0,0,0,0)');
+      x.fillStyle=grd; x.fillRect(px,py,winW,winH);
+    }
+    x.strokeStyle='#3a2f28'; x.lineWidth=2; x.beginPath();
+    x.moveTo(px+winW/2,py); x.lineTo(px+winW/2,py+winH);
+    x.moveTo(px,py+winH/2); x.lineTo(px+winW,py+winH/2); x.stroke();
+    x.strokeStyle='rgba(0,0,0,0.5)'; x.lineWidth=1; x.strokeRect(px,py,winW,winH);
+  }
+  const t=new THREE.CanvasTexture(c);
+  t.wrapS=t.wrapT=THREE.RepeatWrapping; t.encoding=THREE.sRGBEncoding; t.anisotropy=4;
+  return t;
+}
+// emissive mask: brick stays black (no glow), only the SAME lit panes bloom (warm/cool matched).
+function emberTex(grid){
+  const c=document.createElement('canvas'); c.width=256; c.height=512;
+  const x=c.getContext('2d'); x.fillStyle='#000'; x.fillRect(0,0,256,512);
+  const cellW=256/COLS, cellH=512/ROWSW, winW=cellW*0.5, winH=cellH*0.62;
+  for(let r=0;r<ROWSW;r++) for(let cc=0;cc<COLS;cc++){
+    const cell=grid[r*COLS+cc];
+    if(!cell.on) continue;
+    const px=cc*cellW+(cellW-winW)/2, py=r*cellH+(cellH-winH)*0.4;
+    x.fillStyle=cell.warm?'#ffce7a':'#9cc2ff'; x.fillRect(px,py,winW,winH);
+  }
+  const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; t.encoding=THREE.sRGBEncoding; return t;
+}
+
+const brickHexes=[0x9c4a32,0x8a3f2c,0xa85a3c,0x7d4733,0xb05c3a];
+const FAC=[];
+for(let v=0; v<4; v++){
+  const lit=0.18+v*0.07, bh=brickHexes[v%brickHexes.length];
+  const grid=litGrid(lit);                       // ONE layout shared by map + emissiveMap
+  FAC.push(new THREE.MeshStandardMaterial({
+    map:brickTex(grid,bh), emissiveMap:emberTex(grid), emissive:0xffb866, emissiveIntensity:1.0,
+    roughness:0.92, metalness:0.0, envMapIntensity:0.45 }));
+}
+
+// shared solid materials (allocated ONCE)
+const CORNICE =new THREE.MeshStandardMaterial({color:0xb89a78, roughness:0.8,  metalness:0.0, envMapIntensity:0.5});
+const ROOF    =new THREE.MeshStandardMaterial({color:0x3a3530, roughness:0.95, metalness:0.0, envMapIntensity:0.25});
+const WOOD    =new THREE.MeshStandardMaterial({color:0x6e4a2c, roughness:0.9,  metalness:0.0, envMapIntensity:0.3});
+const WOODHOOP=new THREE.MeshStandardMaterial({color:0x46505a, roughness:0.5,  metalness:0.7, envMapIntensity:0.6});
+const METAL   =new THREE.MeshStandardMaterial({color:0x4a4540, roughness:0.55, metalness:0.75,envMapIntensity:0.6});
+const RUST    =new THREE.MeshStandardMaterial({color:0x2c3338, roughness:0.6,  metalness:0.6, envMapIntensity:0.5});
+const BRICKCHIM=new THREE.MeshStandardMaterial({color:0x7d4733, roughness:0.92, metalness:0.0, envMapIntensity:0.4});
+
+const unitBox=new THREE.BoxGeometry(1,1,1); // reused & scaled for roof props
+
+function addBox(g,geo,mat,sx,sy,sz,px,py,pz,shadow){
+  const m=new THREE.Mesh(geo,mat);
+  if(sx!==undefined) m.scale.set(sx,sy,sz);
+  m.position.set(px,py,pz);
+  if(shadow){ m.castShadow=true; m.receiveShadow=true; }
+  g.add(m); return m;
+}
+
+return function build(g,w,d,h){
+  h=Math.max(14,Math.min(30,h));
+  const fac=pick(FAC);
+  const floors=Math.max(4,Math.round(h/3.2));
+
+  // ---- main brick mass (UV-tiled to ~1 window / 3.5m) ----
+  const bodyH=h-0.9;
+  const bodyGeo=new THREE.BoxGeometry(w,bodyH,d);
+  const uTile=Math.max(1,Math.round(w/7)), vTile=Math.max(1,Math.round(floors/4));
+  { const uv=bodyGeo.attributes.uv; for(let i=0;i<uv.count;i++) uv.setXY(i,uv.getX(i)*uTile,uv.getY(i)*vTile); uv.needsUpdate=true; }
+  const body=new THREE.Mesh(bodyGeo,fac);
+  body.position.y=bodyH/2; body.castShadow=true; body.receiveShadow=true; g.add(body);
+
+  // ---- cornice + recessed parapet roof slab ----
+  addBox(g,unitBox,CORNICE, w+0.5,0.5,d+0.5, 0, bodyH+0.25, 0, true);
+  addBox(g,unitBox,ROOF,    w-0.6,0.4,d-0.6, 0, bodyH+0.45, 0, true);
+  const roofY=bodyH+0.65;
+
+  // ---- rooftop wooden WATER TANK on legs (capped human-scale) ----
+  const tankR=Math.min(Math.min(w,d)*0.16, rand(1.6,2.2));
+  const tankH=tankR*1.7, legH=rand(1.0,1.5);
+  const tx=rand(-w*0.18,w*0.18), tz=rand(-d*0.18,d*0.18);
+  const legGeo=new THREE.BoxGeometry(0.16,legH,0.16);
+  for(let s=0;s<4;s++){
+    const lx=tx+(s&1?1:-1)*tankR*0.72, lz=tz+(s&2?1:-1)*tankR*0.72;
+    addBox(g,legGeo,WOOD, undefined,undefined,undefined, lx, roofY+legH/2, lz, true);
+  }
+  const tank=new THREE.Mesh(new THREE.CylinderGeometry(tankR,tankR,tankH,14,1), WOOD);
+  tank.position.set(tx, roofY+legH+tankH/2, tz); tank.castShadow=true; tank.receiveShadow=true; g.add(tank);
+  for(let hp=0;hp<2;hp++){
+    const hoop=new THREE.Mesh(new THREE.TorusGeometry(tankR*1.02,0.05,5,10), WOODHOOP);
+    hoop.rotation.x=Math.PI/2; hoop.position.set(tx, roofY+legH+tankH*(0.28+hp*0.44), tz); g.add(hoop);
+  }
+  const lid=new THREE.Mesh(new THREE.ConeGeometry(tankR*1.05, tankR*0.7, 14), WOOD);
+  lid.position.set(tx, roofY+legH+tankH+tankR*0.33, tz); lid.castShadow=true; g.add(lid);
+
+  // ---- brick chimney + cap ----
+  const chW=rand(0.7,1.1), chH=rand(1.6,2.6);
+  const chx=-w*rand(0.22,0.34), chz=d*rand(0.18,0.32);
+  addBox(g,unitBox,BRICKCHIM, chW,chH,chW, chx, roofY+chH/2, chz, true);
+  addBox(g,unitBox,ROOF, chW+0.18,0.18,chW+0.18, chx, roofY+chH+0.09, chz, true);
+
+  // ---- antenna with cross-bars ----
+  const antH=rand(2.5,4.2), antx=w*rand(0.2,0.32), antz=-d*rand(0.15,0.3);
+  const ant=new THREE.Mesh(new THREE.CylinderGeometry(0.035,0.05,antH,5,1), METAL);
+  ant.position.set(antx, roofY+antH/2, antz); ant.castShadow=true; g.add(ant);
+  for(let a=0;a<2;a++){
+    const bar=new THREE.Mesh(new THREE.BoxGeometry(0.5-a*0.15,0.03,0.03), METAL);
+    bar.position.set(antx, roofY+antH*(0.7+a*0.15), antz); g.add(bar);
+  }
+
+  // ---- occasional roof AC/vent box ----
+  if(Math.random()<0.6){
+    addBox(g,unitBox,RUST, rand(0.8,1.4),rand(0.5,0.8),rand(0.8,1.4),
+      w*rand(-0.3,0.0), roofY+0.4, d*rand(0.0,0.3), true);
+  }
+
+  // ---- fire-escape hint on one facade ----
+  if(Math.random()<0.75){
+    const side=Math.random()<0.5?1:-1;
+    const fe=new THREE.Mesh(new THREE.BoxGeometry(0.16,bodyH*0.78,0.9),RUST);
+    fe.position.set(side*(w/2+0.18), bodyH*0.46, d*rand(-0.18,0.18)); fe.castShadow=true; g.add(fe);
+    const lvls=Math.min(4,floors-1);
+    const platGeo=new THREE.BoxGeometry(0.7,0.05,1.1);
+    for(let l=1;l<=lvls;l++){
+      const py=bodyH*(0.18+l*0.18); if(py>bodyH*0.9) break;
+      const p=new THREE.Mesh(platGeo,RUST); p.position.set(side*(w/2+0.35), py, fe.position.z); g.add(p);
+    }
+  }
+
+  // ---- stone ground-floor base band ----
+  addBox(g,unitBox,CORNICE, w+0.2,1.2,d+0.2, 0, 0.6, 0, true);
+};
+})()},
+{name:"Harbourside Mixed-Use Block", district:"edge", wMin:12, wMax:22, hMin:16, hMax:36, build:(function(){
+// ---------- SHARED ASSETS (built ONCE) ----------
+const rnd=(a,b)=>a+Math.random()*(b-a), pick=a=>a[(Math.random()*a.length)|0];
+
+// --- apartment facade window textures (a few warm/cool-lit variants) ---
+// Build matched map+emissive pairs so glow lines up with the lit windows.
+function facadePair(litFrac, base){
+  const c=document.createElement('canvas'); c.width=128; c.height=256; const g=c.getContext('2d');
+  const e=document.createElement('canvas'); e.width=128; e.height=256; const ge=e.getContext('2d');
+  g.fillStyle=base; g.fillRect(0,0,128,256);
+  ge.fillStyle='#000'; ge.fillRect(0,0,128,256);
+  for(let fy=0;fy<256;fy+=32){ g.fillStyle='rgba(0,0,0,0.16)'; g.fillRect(0,fy+27,128,4); }
+  for(let fy=4;fy<252;fy+=32) for(let fx=8;fx<120;fx+=28){
+    const lit=Math.random()<litFrac, cool=Math.random()<0.32;
+    if(lit){ const cm=cool?(Math.random()<0.5?'#bcdcff':'#9fc6ff'):(Math.random()<0.5?'#ffe3a6':'#ffcf78');
+      g.fillStyle=cm; g.fillRect(fx,fy,20,22);
+      ge.fillStyle=cool?'#7fb4ff':'#ffce82'; ge.fillRect(fx,fy,20,22);
+    } else { g.fillStyle=Math.random()<0.5?'#10161f':'#161d27'; g.fillRect(fx,fy,20,22); }
+    g.fillStyle='rgba(0,0,0,0.35)'; g.fillRect(fx+9,fy,2,22); g.fillRect(fx,fy+10,20,2);
+    if(lit){ ge.fillStyle='#000'; ge.fillRect(fx+9,fy,2,22); ge.fillRect(fx,fy+10,20,2); }
+    g.fillStyle='rgba(255,255,255,0.07)'; g.fillRect(fx-2,fy-2,24,2);
+  }
+  const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; t.encoding=THREE.sRGBEncoding;
+  const te=new THREE.CanvasTexture(e); te.wrapS=te.wrapT=THREE.RepeatWrapping; te.encoding=THREE.sRGBEncoding; // emissive map must be sRGB too
+  return {map:t, emis:te};
+}
+
+const facadeVariants=[];
+for(let v=0;v<4;v++){
+  const base = pick(['#7a6f63','#6f6a62','#8a7d6e','#736b66']);
+  const p=facadePair(0.30+v*0.12, base);
+  facadeVariants.push(new THREE.MeshStandardMaterial({
+    map:p.map, emissiveMap:p.emis, emissive:0xffd28a, emissiveIntensity:0.9,
+    roughness:0.74, metalness:0.04, envMapIntensity:0.5 }));
+}
+
+// --- shopfront strip texture: big glass + bright signage band ---
+function shopTex(){
+  const c=document.createElement('canvas'); c.width=256; c.height=64; const g=c.getContext('2d');
+  g.fillStyle='#1c2630'; g.fillRect(0,0,256,64);                 // dark storefront base
+  // big shop windows (lower 70%)
+  for(let x=6;x<250;x+=40){
+    g.fillStyle=Math.random()<0.7?'#cfe6f2':'#dfe9ee'; g.fillRect(x,18,32,40);   // glass
+    g.fillStyle='rgba(255,255,255,0.18)'; g.fillRect(x,18,32,3);                 // top glare
+    g.fillStyle='#0d141b'; g.fillRect(x+15,18,2,40);                            // door/frame
+  }
+  // signage band on top
+  const signCols=['#ff5a3c','#ffb43c','#39d98a','#3ca0ff','#ff5fb0','#ffe14d'];
+  for(let x=2;x<254;x+=40){ g.fillStyle=pick(signCols); g.fillRect(x,2,36,12); }
+  const t=new THREE.CanvasTexture(c); t.wrapS=THREE.RepeatWrapping; t.wrapT=THREE.ClampToEdgeWrapping; t.encoding=THREE.sRGBEncoding;
+  return t;
+}
+function shopEmis(){
+  const c=document.createElement('canvas'); c.width=256; c.height=64; const g=c.getContext('2d');
+  g.fillStyle='#000'; g.fillRect(0,0,256,64);
+  const signCols=['#ff5a3c','#ffb43c','#39d98a','#3ca0ff','#ff5fb0','#ffe14d'];
+  for(let x=2;x<254;x+=40){ g.fillStyle=pick(signCols); g.fillRect(x,2,36,12); }   // glowing signs
+  for(let x=6;x<250;x+=40){ g.fillStyle='#9fd8ee'; g.fillRect(x,20,32,30); }       // glowing shop windows
+  const t=new THREE.CanvasTexture(c); t.wrapS=THREE.RepeatWrapping; t.wrapT=THREE.ClampToEdgeWrapping; t.encoding=THREE.sRGBEncoding; // sRGB emissive
+  return t;
+}
+const shopMatVariants=[];
+for(let v=0;v<3;v++){ const m=shopTex(), e=shopEmis();
+  // low roughness + strong envMapIntensity so the shopfront glass reflects the HDRI sky
+  shopMatVariants.push(new THREE.MeshStandardMaterial({
+    map:m, emissiveMap:e, emissive:0xffffff, emissiveIntensity:1.35,
+    roughness:0.18, metalness:0.35, envMapIntensity:1.1 })); }
+
+// --- awning material (bright striped, soft lit accent) ---
+function awningTex(){
+  const c=document.createElement('canvas'); c.width=64; c.height=32; const g=c.getContext('2d');
+  const a=pick(['#d33','#1a8','#247','#c63','#7a3']), b='#f4efe6';
+  for(let x=0;x<64;x+=10){ g.fillStyle=(x/10)%2?a:b; g.fillRect(x,0,10,32); }
+  const t=new THREE.CanvasTexture(c); t.encoding=THREE.sRGBEncoding; return t;
+}
+const awningMats=[]; for(let i=0;i<4;i++){ const t=awningTex();
+  awningMats.push(new THREE.MeshStandardMaterial({map:t, emissive:0xffffff, emissiveMap:t, emissiveIntensity:0.25, roughness:0.7, metalness:0.0, side:THREE.DoubleSide})); }
+
+// --- billboard panel textures (emissive ads) ---
+function adTex(){
+  const c=document.createElement('canvas'); c.width=128; c.height=64; const g=c.getContext('2d');
+  const bg=pick(['#102a43','#3b0d2e','#0d2e1f','#2a1605','#1a0d3b']);
+  g.fillStyle=bg; g.fillRect(0,0,128,64);
+  const fg=pick(['#ff5a3c','#ffd24d','#39d98a','#3ca0ff','#ff5fb0']);
+  g.fillStyle=fg;
+  for(let i=0;i<5;i++){ g.fillRect(rnd(8,90),rnd(10,46),rnd(14,34),rnd(5,12)); }
+  g.fillStyle='#ffffff'; g.fillRect(10,50,108,5);
+  const t=new THREE.CanvasTexture(c); t.encoding=THREE.sRGBEncoding; return t;
+}
+const billboardMats=[]; for(let i=0;i<4;i++){ const t=adTex();
+  billboardMats.push(new THREE.MeshStandardMaterial({map:t, emissiveMap:t, emissive:0xffffff, emissiveIntensity:1.5, roughness:0.3, metalness:0.1, envMapIntensity:0.6, side:THREE.DoubleSide})); }
+
+// --- plain materials reused across all buildings ---
+const parapetMat = new THREE.MeshStandardMaterial({color:0x5e564d, roughness:0.8, metalness:0.05, envMapIntensity:0.4});
+const trimMat    = new THREE.MeshStandardMaterial({color:0x3a3530, roughness:0.55, metalness:0.4, envMapIntensity:0.6});
+const tankMat    = new THREE.MeshStandardMaterial({color:0x6b5b46, roughness:0.85, metalness:0.1, envMapIntensity:0.35});
+const acMat      = new THREE.MeshStandardMaterial({color:0xb9bcc0, roughness:0.6, metalness:0.5, envMapIntensity:0.6});
+const steelMat   = new THREE.MeshStandardMaterial({color:0x9aa0a6, roughness:0.45, metalness:0.85, envMapIntensity:0.8});
+const roofMat    = new THREE.MeshStandardMaterial({color:0x33302c, roughness:0.9, metalness:0.05, envMapIntensity:0.3});
+const frameMat   = new THREE.MeshStandardMaterial({color:0x2a2622, roughness:0.5, metalness:0.5, envMapIntensity:0.6});
+const redLight   = new THREE.MeshStandardMaterial({color:0x550000, emissive:0xff2222, emissiveIntensity:1.4, roughness:0.5, metalness:0.0});
+
+// shared geometries reused at varied scale (cheap)
+const boxGeo  = new THREE.BoxGeometry(1,1,1);
+const cylGeo  = new THREE.CylinderGeometry(0.5,0.5,1,12);
+const sphGeo  = new THREE.SphereGeometry(0.5,12,8);
+const planeGeo= new THREE.PlaneGeometry(1,1);
+
+function scaleBoxUV(geo,u,v){ const uv=geo.attributes.uv; for(let i=0;i<uv.count;i++) uv.setXY(i,uv.getX(i)*u,uv.getY(i)*v); uv.needsUpdate=true; }
+
+// ---------- PER-BUILDING BUILD ----------
+return function build(g, w, d, h){
+  const shopH = Math.min(5.5, h*0.22);     // ground retail band height
+  const bodyH = h - shopH;                  // apartments above
+  const fv = facadeVariants[(Math.random()*facadeVariants.length)|0];
+  const sv = shopMatVariants[(Math.random()*shopMatVariants.length)|0];
+
+  // --- main apartment body (own geometry so we can UV-tile windows) ---
+  // tile to roughly one window per ~3.5 m horizontally / ~3.2 m vertically
+  const bodyGeo = new THREE.BoxGeometry(w, bodyH, d);
+  scaleBoxUV(bodyGeo, Math.max(1,Math.round(w/3.5)), Math.max(1,Math.round(bodyH/3.2)));
+  const body = new THREE.Mesh(bodyGeo, fv);
+  body.position.y = shopH + bodyH/2;
+  body.castShadow = body.receiveShadow = true;
+  g.add(body);
+
+  // --- ground-floor shopfront band (slightly wider, big glowing windows/signs) ---
+  const shopGeo = new THREE.BoxGeometry(w*1.02, shopH, d*1.02);
+  scaleBoxUV(shopGeo, Math.max(1,Math.round(w/6)), 1);
+  const shop = new THREE.Mesh(shopGeo, sv);
+  shop.position.y = shopH/2;
+  shop.castShadow = shop.receiveShadow = true;
+  g.add(shop);
+
+  // sidewalk plinth
+  const plinth = new THREE.Mesh(boxGeo, trimMat);
+  plinth.scale.set(w*1.08, 0.4, d*1.08); plinth.position.y=0.2; plinth.receiveShadow=true; g.add(plinth);
+
+  // --- awnings over the shopfront on the two long faces ---
+  for(const sgn of [1,-1]){
+    if(Math.random()<0.25) continue;
+    const aw = new THREE.Mesh(boxGeo, awningMats[(Math.random()*awningMats.length)|0]);
+    aw.scale.set(w*0.9, 0.12, 1.6);
+    aw.position.set(0, shopH*0.62, sgn*(d/2+0.7));
+    aw.rotation.x = sgn*0.32;
+    aw.castShadow=true; g.add(aw);
+  }
+
+  // --- cornice line between shops and apartments ---
+  const cornice = new THREE.Mesh(boxGeo, trimMat);
+  cornice.scale.set(w*1.05, 0.45, d*1.05); cornice.position.y=shopH; cornice.castShadow=true; g.add(cornice);
+
+  // --- parapet / crown at the top (main mass tops exactly at y=h) ---
+  const parH = 0.8+Math.random()*0.6;
+  const par = new THREE.Mesh(boxGeo, parapetMat);
+  par.scale.set(w*1.04, parH, d*1.04); par.position.y=h-parH/2; par.castShadow=true; g.add(par);
+  // inner recessed roof deck
+  const deck = new THREE.Mesh(boxGeo, roofMat);
+  deck.scale.set(w*0.94, 0.3, d*0.94); deck.position.y=h-parH-0.15; deck.receiveShadow=true; g.add(deck);
+
+  // ===== ROOFTOP DETAIL (kept close to h so the silhouette reads ~h) =====
+  const roofY = h-parH;
+  const pickRoof = Math.random();
+
+  if(pickRoof < 0.5){
+    // rooftop BILLBOARD on a steel frame
+    const bw = Math.min(w*0.9, 6+Math.random()*3), bh = bw*0.45;
+    const billY = roofY + bh/2 + 1.0;
+    // legs
+    for(const sx of [-1,1]){
+      const leg=new THREE.Mesh(cylGeo, steelMat);
+      leg.scale.set(0.18, billY-roofY, 0.18);
+      leg.position.set(sx*bw*0.32, (roofY+billY)/2, (Math.random()-0.5)*d*0.2);
+      g.add(leg);
+    }
+    // panel
+    const panel=new THREE.Mesh(planeGeo, billboardMats[(Math.random()*billboardMats.length)|0]);
+    panel.scale.set(bw, bh, 1); panel.position.set(0, billY, 0.05);
+    panel.rotation.y = Math.random()<0.5?0:Math.PI;
+    g.add(panel);
+    // frame behind
+    const fr=new THREE.Mesh(boxGeo, frameMat);
+    fr.scale.set(bw*1.06, bh*1.1, 0.25); fr.position.set(0, billY, 0); g.add(fr);
+  } else {
+    // water tank + housing
+    const tank=new THREE.Mesh(cylGeo, tankMat);
+    const tR=1.1+Math.random()*0.6, tH=1.6+Math.random()*0.9;
+    tank.scale.set(tR*2, tH, tR*2);
+    tank.position.set((Math.random()-0.5)*w*0.4, roofY+tH/2+1.2, (Math.random()-0.5)*d*0.4);
+    tank.castShadow=true; g.add(tank);
+    // conical lid
+    const lid=new THREE.Mesh(new THREE.ConeGeometry(tR*1.05, tH*0.45, 12), tankMat);
+    lid.position.set(tank.position.x, roofY+tH+1.2+tH*0.2, tank.position.z); lid.castShadow=true; g.add(lid);
+    // support legs
+    for(let l=0;l<4;l++){ const a=l*Math.PI/2+0.78;
+      const leg=new THREE.Mesh(boxGeo, steelMat);
+      leg.scale.set(0.15,1.2,0.15);
+      leg.position.set(tank.position.x+Math.cos(a)*tR*0.7, roofY+0.6, tank.position.z+Math.sin(a)*tR*0.7);
+      g.add(leg); }
+  }
+
+  // AC / mechanical units scattered on the deck (cheap boxes)
+  const nAC = 2+(Math.random()*2|0);
+  for(let i=0;i<nAC;i++){
+    const ac=new THREE.Mesh(boxGeo, acMat);
+    ac.scale.set(0.8+Math.random()*0.8, 0.5+Math.random()*0.4, 0.8+Math.random()*0.8);
+    ac.position.set((Math.random()-0.5)*w*0.7, roofY+ac.scale.y/2, (Math.random()-0.5)*d*0.7);
+    ac.castShadow=true; g.add(ac);
+  }
+
+  // antenna with a red aircraft light
+  if(Math.random()<0.6){
+    const mast=new THREE.Mesh(cylGeo, steelMat);
+    const mh=1.6+Math.random()*1.8;
+    mast.scale.set(0.12,mh,0.12);
+    const mx=(Math.random()-0.5)*w*0.5, mz=(Math.random()-0.5)*d*0.5;
+    mast.position.set(mx, roofY+mh/2, mz); g.add(mast);
+    const tip=new THREE.Mesh(sphGeo, redLight); tip.scale.set(0.5,0.5,0.5);
+    tip.position.set(mx, roofY+mh, mz); g.add(tip);
+  }
+
+  // a small neon roof sign sometimes (vertical emissive bar)
+  if(pickRoof>=0.5 && Math.random()<0.5){
+    const sign=new THREE.Mesh(boxGeo, billboardMats[(Math.random()*billboardMats.length)|0]);
+    sign.scale.set(0.5, 2.0+Math.random()*1.4, 0.5);
+    sign.position.set((Math.random()-0.5)*w*0.5, roofY+sign.scale.y/2, d*0.35);
+    g.add(sign);
+  }
+};
+})()},
+];
+function pickDistrict(cd){ const r=Math.random();
+  if(cd<120) return r<0.82?'core':'mid';
+  if(cd<210) return r<0.7?'mid':(r<0.86?'core':'edge');
+  return r<0.8?'edge':'mid'; }
+function placeBuilding(parent, wx, baseY, wz, cd){
+  const dist=pickDistrict(cd);
+  let pool=ARCHES.filter(function(a){return a.district===dist;}); if(!pool.length) pool=ARCHES;
+  const A=pool[(Math.random()*pool.length)|0];
+  let h; if(dist==='core') h=46+Math.random()*40; else if(dist==='mid') h=25+Math.random()*22; else h=15+Math.random()*13;
+  h=Math.max(A.hMin,Math.min(A.hMax,h));
+  const w=A.wMin+Math.random()*(A.wMax-A.wMin), d=A.wMin+Math.random()*(A.wMax-A.wMin);
+  const g=new THREE.Group();
+  try{ A.build(g,w,d,h); }catch(e){ console.warn('arch '+A.name+' build failed:', e.message); return; }
+  g.position.set(wx, baseY, wz);
+  g.rotation.y=(Math.random()<0.5?0:Math.PI/2)+(Math.random()-0.5)*0.12;
+  parent.add(g);
 }
 
 // ===== CITY LANDMARKS (designed + r128-verified by the landmarks workflow) =====
