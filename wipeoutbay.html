@@ -175,13 +175,16 @@ let storm=0.2;                         // 0..1
 const stormAmp=()=>0.45+0.55*storm;    // MUST equal the GLSL "0.45+0.55*uStorm"
 let gameT=0;
 
+// waves flatten as they approach the harbour shore (sheltered water; stops big swells washing over
+// the low causeway/dock road). MUST equal the GLSL "sf" below. (CITY is defined later; only read at runtime.)
+function shoreFall(x,z){ const cd=Math.hypot(x-CITY.x,z-CITY.z); return THREE.MathUtils.smoothstep(cd,372,540)*0.85+0.15; }
 // CPU height (vertical component) for buoyancy — mirrors the GPU y-displacement
-function seaY(x,z,t){ let h=0; const sa=stormAmp();
+function seaY(x,z,t){ let h=0; const sa=stormAmp()*shoreFall(x,z);
   for(let i=0;i<NW;i++){ const W=WAVES[i]; const ph=(W.dx*x+W.dz*z)*W.k - t*W.w; h+=W.amp*sa*Math.sin(ph); }
   return h; }
 // CPU Gerstner normal (matches the GLSL normal)
 const _N=new THREE.Vector3();
-function seaNormal(x,z,t){ let nx=0,nz=0,ny=1; const sa=stormAmp();
+function seaNormal(x,z,t){ let nx=0,nz=0,ny=1; const sa=stormAmp()*shoreFall(x,z);
   for(let i=0;i<NW;i++){ const W=WAVES[i]; const ph=(W.dx*x+W.dz*z)*W.k - t*W.w; const WA=W.k*W.amp*sa;  // k*A — matches the GLSL; w*A folded the normal and flipped the boat
     nx-=W.dx*WA*Math.cos(ph); nz-=W.dz*WA*Math.cos(ph); ny-=W.q*WA*Math.sin(ph); }
   return _N.set(nx,Math.max(ny,0.3),nz).normalize(); }
@@ -453,11 +456,11 @@ function buildDock(grp){
   // bollards + crates near the seaward end
   for(let b=0;b<4;b++){ const bol=new THREE.Mesh(new THREE.CylinderGeometry(0.3,0.36,1.3,8),railMat);
     bol.position.set(cx+d.x*(endCd-7)+rg.x*(b*3-4.5),deckY+dt/2+0.65,cz+d.y*(endCd-7)+rg.y*(b*3-4.5)); grp.add(bol); }
-  for(let k=0;k<4;k++){ const cr=new THREE.Mesh(new THREE.BoxGeometry(2.4,2.4,2.4),deckMat);
-    cr.position.set(cx+d.x*(start+14)+rg.x*(k*3-4.5),deckY+dt/2+1.2,cz+d.y*(start+14)+rg.y*(k*3-4.5)); cr.castShadow=true; grp.add(cr); }
-  // moored boats alongside
-  for(let b=0;b<2;b++){ const bm=new THREE.Mesh(new THREE.BoxGeometry(3,1.6,8),new THREE.MeshStandardMaterial({color:b?0xdedede:0xbf3a30,roughness:0.4,metalness:0.2}));
-    bm.position.set(cx+d.x*(endCd-16)+rg.x*(width*0.5+5)*(b?1:-1),1.2,cz+d.y*(endCd-16)+rg.y*(width*0.5+5)*(b?1:-1)); bm.rotation.y=ang; grp.add(bm); }
+  // a small cargo stack tucked against ONE rail near the seaward end — out of the entrance/walkway
+  const crSpots=[[endCd-16,5.4,0],[endCd-13.4,5.4,0],[endCd-14.7,5.4,2.3]];
+  for(const sp of crSpots){ const cr=new THREE.Mesh(new THREE.BoxGeometry(2.1,2.1,2.1),deckMat);
+    cr.position.set(cx+d.x*sp[0]+rg.x*sp[1], deckY+dt/2+1.05+sp[2], cz+d.y*sp[0]+rg.y*sp[1]); cr.rotation.y=ang+0.05; cr.castShadow=true; grp.add(cr); }
+  // (moored boats are added as real boat models near the dock by the boat system)
 }
 
 // ===== CITY BUILDING ARCHETYPES (designed + r128-verified by the buildings workflow) =====
@@ -4264,6 +4267,762 @@ function buildLandmarks(parent){ const out=[]; const yaw=Math.atan2(-CITY.x,-CIT
   return out; }
 
 
+function buildYacht(g){
+  // ~30m luxury motor yacht. BOW +Z, centred X/Z, waterline y=0.
+  // Materials
+  var hullMat   = new THREE.MeshStandardMaterial({color:0xf3f4f6, roughness:0.32, metalness:0.05, envMapIntensity:0.9});
+  var bootMat   = new THREE.MeshStandardMaterial({color:0x1c2a3a, roughness:0.4,  metalness:0.1,  envMapIntensity:0.6}); // boot stripe / hull below WL
+  var deckMat   = new THREE.MeshStandardMaterial({color:0xc8a779, roughness:0.85, metalness:0.0,  envMapIntensity:0.3}); // teak
+  var superMat  = new THREE.MeshStandardMaterial({color:0xf6f7f8, roughness:0.28, metalness:0.06, envMapIntensity:1.0});
+  var glassMat  = new THREE.MeshStandardMaterial({color:0x0c1b22, emissive:0x18414f, emissiveIntensity:0.55, roughness:0.12, metalness:0.3, envMapIntensity:1.2});
+  var chromeMat = new THREE.MeshStandardMaterial({color:0xc9ced4, roughness:0.22, metalness:0.95, envMapIntensity:1.1});
+  var darkMat   = new THREE.MeshStandardMaterial({color:0x2a2f35, roughness:0.5,  metalness:0.5,  envMapIntensity:0.6});
+  var lightMat  = new THREE.MeshStandardMaterial({color:0xfff4d8, emissive:0xffe9b0, emissiveIntensity:1.6, roughness:0.4});
+
+  function add(geo,mat,x,y,z){ var m=new THREE.Mesh(geo,mat); m.position.set(x,y,z); g.add(m); return m; }
+
+  // tiny deck people (~0.5m), box torso + sphere head + box legs
+  function tinyPerson(px,py,pz,shirt){
+    var p=new THREE.Group();
+    var sk=new THREE.MeshStandardMaterial({color:0xe8b48c, roughness:0.7});
+    var sh=new THREE.MeshStandardMaterial({color:shirt, roughness:0.7});
+    var lg=new THREE.MeshStandardMaterial({color:0x32383f, roughness:0.8});
+    var legs=new THREE.Mesh(new THREE.BoxGeometry(0.16,0.22,0.1),lg); legs.position.y=0.11; p.add(legs);
+    var torso=new THREE.Mesh(new THREE.BoxGeometry(0.18,0.22,0.11),sh); torso.position.y=0.32; p.add(torso);
+    var head=new THREE.Mesh(new THREE.SphereGeometry(0.07,8,7),sk); head.position.y=0.48; p.add(head);
+    p.position.set(px,py,pz);
+    g.add(p); return p;
+  }
+
+  // ---- HULL ----
+  // Box hull shaped with a tapered, raked bow. Build as a few Box segments scaled, plus a wedge bow.
+  var L=30, BEAM=6.4;
+  // main hull mid-body (below + at waterline). dips below y=0.
+  var hullMid=add(new THREE.BoxGeometry(BEAM,2.6,20), hullMat, 0,0.2,-2);
+  hullMid.scale.set(1,1,1);
+  // boot stripe near waterline
+  var boot=add(new THREE.BoxGeometry(BEAM*1.005,0.55,20.2), bootMat, 0,-0.55,-2);
+  // submerged keel block (below waterline, tapers)
+  var keel=add(new THREE.BoxGeometry(BEAM*0.7,1.4,18), hullMat, 0,-1.4,-2); keel.scale.set(1,1,0.95);
+  var keelBoot=add(new THREE.BoxGeometry(BEAM*0.72,1.0,17.6), bootMat, 0,-1.4,-2);
+
+  // Raked pointed bow: a stretched cone/wedge pointing +Z, plus a flare box
+  var bowWedge=new THREE.Mesh(new THREE.ConeGeometry(BEAM*0.5,9,4,1,false), hullMat);
+  bowWedge.rotation.x=Math.PI/2; bowWedge.rotation.z=Math.PI/4;
+  bowWedge.scale.set(1,0.62,1); // x=width factor via cone radius, flatten y
+  bowWedge.position.set(0,0.2,8.5+1.5); g.add(bowWedge);
+  // bow boot
+  var bowBoot=new THREE.Mesh(new THREE.ConeGeometry(BEAM*0.5,9,4,1,false), bootMat);
+  bowBoot.rotation.x=Math.PI/2; bowBoot.rotation.z=Math.PI/4;
+  bowBoot.scale.set(0.99,0.3,0.99); bowBoot.position.set(0,-0.6,10); g.add(bowBoot);
+  // raked stem fairing on top of bow
+  var stem=add(new THREE.BoxGeometry(BEAM*0.55,1.4,7), hullMat, 0,0.9,9);
+  stem.rotation.x=-0.16; stem.scale.set(1,1,1);
+
+  // Stern transom (flat) + swim platform
+  var transom=add(new THREE.BoxGeometry(BEAM,2.4,0.5), hullMat, 0,0.1,-12.2);
+  var swimPlat=add(new THREE.BoxGeometry(BEAM*0.8,0.16,2.2), deckMat, 0,0.02,-13.4);
+  // swim platform supports
+  add(new THREE.BoxGeometry(0.15,0.5,0.15), chromeMat, BEAM*0.3,-0.2,-13.0);
+  add(new THREE.BoxGeometry(0.15,0.5,0.15), chromeMat,-BEAM*0.3,-0.2,-13.0);
+
+  // ---- MAIN DECK (teak) ----
+  var mainDeckY=1.55;
+  add(new THREE.BoxGeometry(BEAM*0.96,0.12,21), deckMat, 0,mainDeckY,-2);
+  // bow foredeck triangle (cover)
+  var fore=add(new THREE.ConeGeometry(BEAM*0.46,7.5,4,1), hullMat);
+  fore.rotation.x=Math.PI/2; fore.rotation.z=Math.PI/4; fore.scale.set(1,0.12,1);
+  fore.position.set(0,mainDeckY,8); g.add(fore);
+
+  // hull side window strips (tinted) — long thin glass along each side
+  for(var s=-1;s<=1;s+=2){
+    add(new THREE.BoxGeometry(0.06,0.7,13), glassMat, s*(BEAM/2-0.02),0.7,-1.5);
+    // small portholes forward
+    var ph=new THREE.Mesh(new THREE.CircleGeometry(0.22,12), glassMat);
+    ph.position.set(s*(BEAM/2-0.01),0.8,5.5); ph.rotation.y=s*Math.PI/2; g.add(ph);
+  }
+
+  // ---- SUPERSTRUCTURE: lower saloon (deck 1) ----
+  var s1H=2.2, s1Y=mainDeckY+0.06+s1H/2;
+  var saloon=add(new THREE.BoxGeometry(BEAM*0.86,s1H,13), superMat, 0,s1Y,-2.5);
+  // wrap windows on saloon (front, sides)
+  for(var s2=-1;s2<=1;s2+=2){
+    add(new THREE.BoxGeometry(0.05,1.0,11.5), glassMat, s2*(BEAM*0.43),s1Y+0.1,-2.5);
+  }
+  // windshield front of saloon (raked)
+  var ws1=add(new THREE.BoxGeometry(BEAM*0.8,1.0,0.12), glassMat, 0,s1Y+0.2,4.0);
+  ws1.rotation.x=0.28;
+  // saloon front cap
+  add(new THREE.BoxGeometry(BEAM*0.84,0.5,0.4), superMat, 0,s1Y-0.7,4.05);
+
+  // ---- UPPER DECK / FLYBRIDGE (deck 2) ----
+  var upDeckY=s1Y+s1H/2+0.06;
+  add(new THREE.BoxGeometry(BEAM*0.78,0.12,11), deckMat, 0,upDeckY,-3.5); // flybridge floor
+  var fbH=1.5, fbY=upDeckY+fbH/2+0.05;
+  // flybridge console / seating block
+  var fb=add(new THREE.BoxGeometry(BEAM*0.6,fbH,5), superMat, 0,fbY,-1.5);
+  // flybridge windscreen (raked, tinted)
+  var fbWS=add(new THREE.BoxGeometry(BEAM*0.6,1.0,0.1), glassMat, 0,fbY+0.3,1.1);
+  fbWS.rotation.x=0.42;
+  // flybridge side glass
+  for(var s3=-1;s3<=1;s3+=2){
+    add(new THREE.BoxGeometry(0.05,0.8,4.4), glassMat, s3*(BEAM*0.3),fbY+0.2,-1.5);
+  }
+  // hardtop over flybridge
+  add(new THREE.BoxGeometry(BEAM*0.66,0.16,5.2), superMat, 0,fbY+fbH/2+0.4,-1.4);
+  // hardtop supports
+  for(var c=0;c<4;c++){
+    var cx=(c%2?1:-1)*BEAM*0.3, cz=(c<2?1:-1)*2.0;
+    add(new THREE.BoxGeometry(0.12,0.9,0.12), chromeMat, cx,fbY+fbH/2+0.0,-1.4+cz);
+  }
+
+  // ---- RADAR ARCH ----
+  var archMat=superMat;
+  var archY=fbY+fbH/2+0.5;
+  for(var a=-1;a<=1;a+=2){
+    var leg=add(new THREE.CylinderGeometry(0.13,0.15,2.2,10), archMat, a*BEAM*0.28,archY+1.0,-3.8);
+    leg.rotation.x=0.12;
+  }
+  add(new THREE.BoxGeometry(BEAM*0.6,0.22,0.5), archMat, 0,archY+2.0,-4.0);
+  // radar dome + scanner on arch
+  add(new THREE.SphereGeometry(0.35,12,10), chromeMat, 0,archY+2.45,-4.0);
+  var radar=add(new THREE.BoxGeometry(1.6,0.08,0.18), darkMat, 0,archY+2.9,-4.0);
+  // nav lights on arch
+  add(new THREE.SphereGeometry(0.08,8,6), lightMat, BEAM*0.3,archY+2.0,-4.0);
+  add(new THREE.SphereGeometry(0.08,8,6), lightMat,-BEAM*0.3,archY+2.0,-4.0);
+
+  // ---- SHORT MAST ---- (forward, on flybridge hardtop)
+  var mast=add(new THREE.CylinderGeometry(0.06,0.09,3.0,8), chromeMat, 0,fbY+fbH/2+1.9,0.6);
+  add(new THREE.BoxGeometry(1.4,0.05,0.05), chromeMat, 0,fbY+fbH/2+2.9,0.6); // spreader
+  add(new THREE.SphereGeometry(0.08,8,6), lightMat, 0,fbY+fbH/2+3.45,0.6);   // masthead light
+
+  // ---- CHROME RAILINGS ----
+  function railing(zStart,zEnd,yTop,half){
+    var len=Math.abs(zEnd-zStart), zc=(zStart+zEnd)/2;
+    for(var sd=-1;sd<=1;sd+=2){
+      var top=add(new THREE.CylinderGeometry(0.03,0.03,len,6), chromeMat, sd*half,yTop,zc);
+      top.rotation.x=Math.PI/2;
+      var n=Math.max(2,Math.round(len/1.4));
+      for(var i=0;i<=n;i++){
+        var zz=zStart+(zEnd-zStart)*(i/n);
+        add(new THREE.CylinderGeometry(0.02,0.02,0.5,5), chromeMat, sd*half,yTop-0.25,zz);
+      }
+    }
+  }
+  railing(4.5,11,mainDeckY+0.55,BEAM*0.4);      // bow rails
+  railing(-12,-6,mainDeckY+0.55,BEAM*0.45);     // aft cockpit rails
+  railing(-7,-1,upDeckY+0.55,BEAM*0.36);        // flybridge aft rail
+  // bow pulpit rail front cross
+  add(new THREE.CylinderGeometry(0.03,0.03,BEAM*0.5,6), chromeMat, 0,mainDeckY+0.55,10).rotation.z=Math.PI/2;
+
+  // ---- aft cockpit details: lounge + table ----
+  add(new THREE.BoxGeometry(BEAM*0.7,0.4,1.6), deckMat, 0,mainDeckY+0.3,-9.5);   // aft bench
+  add(new THREE.BoxGeometry(1.4,0.5,0.9), superMat, 0,mainDeckY+0.35,-7.5);      // table
+
+  // ---- HELIPAD + HELICOPTER (foredeck, main rotor exported) ----
+  // helipad disc on the foredeck
+  var padY=mainDeckY+0.10;
+  var pad=add(new THREE.CylinderGeometry(2.4,2.4,0.10,28), darkMat, 0,padY,6.0);
+  add(new THREE.TorusGeometry(2.1,0.05,8,32), lightMat, 0,padY+0.06,6.0).rotation.x=Math.PI/2; // painted ring
+  add(new THREE.BoxGeometry(0.35,0.04,1.6), lightMat, 0,padY+0.07,6.0);   // "H" centre bar
+  add(new THREE.BoxGeometry(0.35,0.04,0.4), lightMat, -0.55,padY+0.07,6.0); // "H" left
+  add(new THREE.BoxGeometry(0.35,0.04,0.4), lightMat,  0.55,padY+0.07,6.0); // "H" right
+
+  // helicopter sitting on the pad
+  var heli=new THREE.Group();
+  var bodyMat = new THREE.MeshStandardMaterial({color:0xb22234, roughness:0.4, metalness:0.2, envMapIntensity:0.8});
+  var heliBaseY=0.55;
+  var fuselage=new THREE.Mesh(new THREE.SphereGeometry(0.85,16,12), bodyMat);
+  fuselage.scale.set(1.0,0.9,1.6); fuselage.position.set(0,heliBaseY,0.2); heli.add(fuselage);
+  var cabinGlass=new THREE.Mesh(new THREE.SphereGeometry(0.7,16,12), glassMat);
+  cabinGlass.scale.set(0.9,0.8,1.1); cabinGlass.position.set(0,heliBaseY+0.15,0.95); heli.add(cabinGlass);
+  // tail boom (+Z is bow, so tail points -Z)
+  var boom=new THREE.Mesh(new THREE.CylinderGeometry(0.16,0.10,2.6,12), bodyMat);
+  boom.rotation.x=Math.PI/2; boom.position.set(0,heliBaseY+0.2,-1.5); heli.add(boom);
+  // tail fin
+  var fin=new THREE.Mesh(new THREE.BoxGeometry(0.08,0.6,0.5), bodyMat);
+  fin.position.set(0,heliBaseY+0.5,-2.6); heli.add(fin);
+  // tail rotor
+  var tailRotor=new THREE.Mesh(new THREE.BoxGeometry(0.05,0.9,0.10), darkMat);
+  tailRotor.position.set(0.18,heliBaseY+0.35,-2.7); heli.add(tailRotor);
+  // skids
+  var skidMat=chromeMat;
+  for(var sk2=-1;sk2<=1;sk2+=2){
+    var skid=new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.05,2.0,8), skidMat);
+    skid.rotation.x=Math.PI/2; skid.position.set(sk2*0.5,0.06,0.2); heli.add(skid);
+    add2:{}
+    var strut1=new THREE.Mesh(new THREE.CylinderGeometry(0.035,0.035,0.5,6), skidMat);
+    strut1.position.set(sk2*0.5,0.3,0.8); heli.add(strut1);
+    var strut2=new THREE.Mesh(new THREE.CylinderGeometry(0.035,0.035,0.5,6), skidMat);
+    strut2.position.set(sk2*0.5,0.3,-0.4); heli.add(strut2);
+  }
+  // rotor mast
+  var mast2=new THREE.Mesh(new THREE.CylinderGeometry(0.07,0.07,0.4,8), darkMat);
+  mast2.position.set(0,heliBaseY+0.95,0.2); heli.add(mast2);
+
+  // MAIN ROTOR (animated) — exported as { rotor }
+  var rotor=new THREE.Group();
+  var hub=new THREE.Mesh(new THREE.CylinderGeometry(0.12,0.12,0.12,10), chromeMat);
+  rotor.add(hub);
+  for(var b=0;b<4;b++){
+    var blade=new THREE.Mesh(new THREE.BoxGeometry(3.6,0.04,0.22), darkMat);
+    blade.rotation.y=b*Math.PI/2;
+    rotor.add(blade);
+  }
+  rotor.position.set(0,heliBaseY+1.15,0.2);
+  heli.add(rotor);
+
+  heli.position.set(0,padY+0.05,6.0);
+  g.add(heli);
+
+  // ---- PEOPLE (4) ----
+  tinyPerson(1.2, mainDeckY+0.06,-8.4, 0xd83a4a);  // aft cockpit, red shirt
+  tinyPerson(-1.0,mainDeckY+0.06,-9.0, 0x2c6fd6);  // aft cockpit, blue
+  tinyPerson(0.0, upDeckY+0.05,  0.4, 0xf0f0f0);   // flybridge helm, white
+  tinyPerson(1.4, mainDeckY+0.18, 7.0, 0xf2c14e);  // foredeck, yellow (slightly raised by foredeck slope)
+
+  // ---- shadows ---- (runs last so every mesh, incl. helicopter, is covered)
+  g.traverse(function(o){ if(o.isMesh){ o.castShadow=true; o.receiveShadow=true; } });
+
+  return { radar: radar, rotor: rotor };
+}
+function buildSuperyacht(g){
+  // ~75m superyacht. BOW +Z, waterline y=0, centred X/Z.
+  var L=75, halfL=L/2, beam=12, hbeam=beam/2;
+
+  // ---- materials ----
+  var hullMat   = new THREE.MeshStandardMaterial({color:0xf6f7f8, roughness:0.35, metalness:0.12, envMapIntensity:0.8});
+  var bootMat   = new THREE.MeshStandardMaterial({color:0x1b2733, roughness:0.45, metalness:0.2}); // boot stripe / waterline
+  var deckMat   = new THREE.MeshStandardMaterial({color:0xc9a36b, roughness:0.85, metalness:0.0, envMapIntensity:0.3}); // teak
+  var greyMat   = new THREE.MeshStandardMaterial({color:0xb8bdc2, roughness:0.6, metalness:0.25});
+  var glassMat  = new THREE.MeshStandardMaterial({color:0x0c2230, roughness:0.08, metalness:0.4, emissive:0x10384a, emissiveIntensity:0.55, envMapIntensity:1.0});
+  var chromeMat = new THREE.MeshStandardMaterial({color:0xd9dee2, roughness:0.18, metalness:0.95, envMapIntensity:1.0});
+  var poolMat   = new THREE.MeshStandardMaterial({color:0x2bb6d6, roughness:0.1, metalness:0.2, emissive:0x0d4f63, emissiveIntensity:0.5});
+  var darkMat   = new THREE.MeshStandardMaterial({color:0x20262c, roughness:0.5, metalness:0.4});
+  var heliMat   = new THREE.MeshStandardMaterial({color:0xe8eaec, roughness:0.4, metalness:0.3});
+
+  function add(mesh,x,y,z){ mesh.position.set(x,y,z); g.add(mesh); return mesh; }
+
+  // ---- HULL ----
+  // Main hull body below+above waterline via lathe-like layered boxes + pointed bow.
+  var hull=new THREE.Group();
+  // lower hull (dips below 0)
+  var lower=new THREE.Mesh(new THREE.BoxGeometry(beam,4.5,L-12,1,1,1), hullMat);
+  lower.position.set(0,-1.4,0); hull.add(lower);
+  // taper the underside with a wedge keel
+  var keel=new THREE.Mesh(new THREE.BoxGeometry(beam*0.55,2.2,L-18), hullMat);
+  keel.position.set(0,-3.4,0); hull.add(keel);
+  // boot stripe at waterline
+  var boot=new THREE.Mesh(new THREE.BoxGeometry(beam+0.12,0.8,L-11.5), bootMat);
+  boot.position.set(0,-0.2,0); hull.add(boot);
+  // freeboard (above water, lowest white deck level)
+  var free=new THREE.Mesh(new THREE.BoxGeometry(beam,3.2,L-10), hullMat);
+  free.position.set(0,1.7,0); hull.add(free);
+
+  // pointed bow: cone-ish wedge using a flattened cone toward +Z
+  var bowGeo=new THREE.ConeGeometry(hbeam,9,4,1);
+  var bow=new THREE.Mesh(bowGeo, hullMat);
+  bow.rotation.x=Math.PI/2; bow.rotation.z=Math.PI/4;
+  bow.scale.set(1,1.6,1); // widen to match beam after 45deg
+  bow.position.set(0,0.0,halfL-5.0); hull.add(bow);
+  // bow upper flare
+  var bowUp=new THREE.Mesh(new THREE.ConeGeometry(hbeam*0.92,8,4,1), hullMat);
+  bowUp.rotation.x=Math.PI/2; bowUp.rotation.z=Math.PI/4; bowUp.scale.set(1,1.55,1);
+  bowUp.position.set(0,1.8,halfL-5.2); hull.add(bowUp);
+  // boot stripe at bow
+  var bowBoot=new THREE.Mesh(new THREE.ConeGeometry(hbeam+0.06,1.0,4,1), bootMat);
+  bowBoot.rotation.x=Math.PI/2; bowBoot.rotation.z=Math.PI/4; bowBoot.scale.set(1,1.6,1);
+  bowBoot.position.set(0,-0.2,halfL-5.0); hull.add(bowBoot);
+  // transom (flat stern)
+  var stern=new THREE.Mesh(new THREE.BoxGeometry(beam,5.0,1.2), hullMat);
+  stern.position.set(0,0.6,-halfL+5.0); hull.add(stern);
+  g.add(hull);
+
+  // main deck (teak) at top of freeboard
+  var deck0=new THREE.Mesh(new THREE.BoxGeometry(beam-0.6,0.25,L-12), deckMat);
+  add(deck0,0,3.3,0);
+  // pointed deck nose
+  var deckNose=new THREE.Mesh(new THREE.ConeGeometry((beam-0.6)/2,7,4,1), deckMat);
+  deckNose.rotation.x=Math.PI/2; deckNose.rotation.z=Math.PI/4; deckNose.scale.set(1,1.55,0.04);
+  add(deckNose,0,3.42,halfL-7.5);
+
+  // ---- SUPERSTRUCTURE: stacked decks ----
+  // Deck 1 (main salon) white box with panoramic glass band
+  function deckBlock(w,h,len,zc,baseY,col){
+    var b=new THREE.Mesh(new THREE.BoxGeometry(w,h,len), col||hullMat);
+    add(b,0,baseY+h/2,zc);
+    return b;
+  }
+  function glassBand(w,len,zc,y){
+    // side glass strips
+    var gl=new THREE.Mesh(new THREE.BoxGeometry(w+0.06,1.6,len), glassMat);
+    add(gl,0,y,zc);
+  }
+  // Deck 1
+  deckBlock(beam-1.2,3.6,42,-3,3.4);            // salon walls
+  glassBand(beam-1.2,40,-3,5.6);                 // wraparound windows
+  var deck1Top=new THREE.Mesh(new THREE.BoxGeometry(beam-2.2,0.22,40), deckMat); add(deck1Top,0,7.1,-4);
+  // Deck 2 (upper salon / bridge) smaller, set back
+  deckBlock(beam-3.0,3.0,30,-5,7.1);
+  glassBand(beam-3.0,28,-5,8.9);
+  var deck2Top=new THREE.Mesh(new THREE.BoxGeometry(beam-3.6,0.22,28), deckMat); add(deck2Top,0,10.3,-6);
+  // Bridge front wraparound (forward of deck2, raked windscreen)
+  var bridge=new THREE.Mesh(new THREE.BoxGeometry(beam-3.0,2.6,6), hullMat); add(bridge,0,8.6,11);
+  var windscreen=new THREE.Mesh(new THREE.BoxGeometry(beam-3.4,2.0,0.3), glassMat);
+  windscreen.position.set(0,9.0,14.0); windscreen.rotation.x=-0.32; g.add(windscreen);
+  // Deck 3 (sun/sky deck, smallest) -> hosts helipad area aft? we'll put helipad on deck2Top forward.
+  deckBlock(beam-5.0,2.4,16,-8,10.3);
+  glassBand(beam-5.0,14,-8,11.8);
+  var deck3Top=new THREE.Mesh(new THREE.BoxGeometry(beam-5.4,0.2,14), deckMat); add(deck3Top,0,12.9,-8);
+
+  // ---- HELIPAD on top deck (deck2Top, forward open area) ----
+  var heliY=10.45;
+  var pad=new THREE.Mesh(new THREE.CylinderGeometry(4.2,4.2,0.18,32), greyMat);
+  add(pad,0,heliY,1.5);
+  var padRing=new THREE.Mesh(new THREE.TorusGeometry(3.9,0.12,8,32), new THREE.MeshStandardMaterial({color:0xf2c200,roughness:0.5,metalness:0.2,emissive:0x4a3a00,emissiveIntensity:0.4}));
+  padRing.rotation.x=Math.PI/2; add(padRing,0,heliY+0.12,1.5);
+  // "H" mark: two verticals + crossbar
+  var hMat=new THREE.MeshStandardMaterial({color:0xffffff,roughness:0.6,emissive:0x333333,emissiveIntensity:0.2});
+  add(new THREE.Mesh(new THREE.BoxGeometry(0.4,0.04,2.6),hMat),-1.0,heliY+0.13,1.5);
+  add(new THREE.Mesh(new THREE.BoxGeometry(0.4,0.04,2.6),hMat), 1.0,heliY+0.13,1.5);
+  add(new THREE.Mesh(new THREE.BoxGeometry(1.6,0.04,0.4),hMat), 0.0,heliY+0.13,1.5);
+
+  // ---- HELICOPTER (parked) ----
+  var heli=new THREE.Group();
+  var heliBaseY=heliY+0.55;
+  var hbody=new THREE.Mesh(new THREE.SphereGeometry(1.5,16,12), heliMat);
+  hbody.scale.set(1,0.85,1.9); heli.add(hbody); hbody.position.y=0;
+  var hcanopy=new THREE.Mesh(new THREE.SphereGeometry(1.1,14,10), glassMat);
+  hcanopy.scale.set(1,0.8,1.2); hcanopy.position.set(0,0.25,1.5); heli.add(hcanopy);
+  // tail boom (+Z bow but heli faces forward too; boom goes -Z)
+  var boom=new THREE.Mesh(new THREE.CylinderGeometry(0.28,0.12,4.0,10), heliMat);
+  boom.rotation.x=Math.PI/2; boom.position.set(0,0.2,-3.0); heli.add(boom);
+  var tailFin=new THREE.Mesh(new THREE.BoxGeometry(0.12,1.1,0.7), heliMat);
+  tailFin.position.set(0,0.6,-4.6); heli.add(tailFin);
+  // tail rotor
+  var tailRotor=new THREE.Mesh(new THREE.BoxGeometry(1.4,0.12,0.08), darkMat);
+  tailRotor.position.set(0.25,0.6,-4.6); heli.add(tailRotor);
+  // skids
+  var skidMat=chromeMat;
+  for(var s=-1;s<=1;s+=2){
+    var skid=new THREE.Mesh(new THREE.CylinderGeometry(0.07,0.07,3.2,8), skidMat);
+    skid.rotation.x=Math.PI/2; skid.position.set(s*0.9,-1.0,0); heli.add(skid);
+    var strut1=new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.05,0.9,6), skidMat); strut1.position.set(s*0.9,-0.55,0.8); heli.add(strut1);
+    var strut2=new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.05,0.9,6), skidMat); strut2.position.set(s*0.9,-0.55,-0.8); heli.add(strut2);
+  }
+  // main rotor assembly (returned spinnable)
+  var rotor=new THREE.Group();
+  var mast=new THREE.Mesh(new THREE.CylinderGeometry(0.12,0.12,0.5,8), darkMat); mast.position.y=1.05; heli.add(mast);
+  var hub=new THREE.Mesh(new THREE.CylinderGeometry(0.22,0.22,0.18,10), darkMat); rotor.add(hub);
+  for(var b2=0;b2<4;b2++){
+    var blade=new THREE.Mesh(new THREE.BoxGeometry(8.4,0.06,0.4), darkMat);
+    blade.rotation.y=b2*Math.PI/2; rotor.add(blade);
+  }
+  rotor.position.set(0,1.35,0); heli.add(rotor);
+  heli.position.set(0,heliBaseY,1.5);
+  g.add(heli);
+
+  // ---- AFT POOL DECK ----
+  var poolY=3.45;
+  var poolFrame=new THREE.Mesh(new THREE.BoxGeometry(6.5,0.4,5.0), greyMat); add(poolFrame,0,poolY-0.2,-halfL+9);
+  var pool=new THREE.Mesh(new THREE.BoxGeometry(5.4,0.3,4.0), poolMat); add(pool,0,poolY+0.02,-halfL+9);
+
+  // sun loungers (aft + foredeck)
+  function lounger(px,pz,rot){
+    var lg=new THREE.Group();
+    var pad2=new THREE.Mesh(new THREE.BoxGeometry(0.9,0.12,2.0), new THREE.MeshStandardMaterial({color:0xf0ede6,roughness:0.7}));
+    lg.add(pad2);
+    var back=new THREE.Mesh(new THREE.BoxGeometry(0.9,0.12,0.9), pad2.material);
+    back.position.set(0,0.35,0.95); back.rotation.x=-0.6; lg.add(back);
+    var legM=chromeMat;
+    var l1=new THREE.Mesh(new THREE.CylinderGeometry(0.04,0.04,0.5,6),legM); l1.position.set(0,-0.25,0); lg.add(l1);
+    lg.position.set(px,poolY+0.3,pz); lg.rotation.y=rot||0;
+    g.add(lg);
+  }
+  lounger(-2.2,-halfL+15,0); lounger(2.2,-halfL+15,0);
+  lounger(-2.2,-halfL+17.5,0); lounger(2.2,-halfL+17.5,0);
+  lounger(-2.5,halfL-12,Math.PI); lounger(2.5,halfL-12,Math.PI);
+
+  // ---- RADAR MAST ----
+  var mastG=new THREE.Group();
+  var mpole=new THREE.Mesh(new THREE.CylinderGeometry(0.18,0.25,6,8), greyMat); mpole.position.y=3; mastG.add(mpole);
+  var radarArm=new THREE.Mesh(new THREE.BoxGeometry(3.4,0.12,0.3), greyMat); radarArm.position.y=4.4; mastG.add(radarArm);
+  var radar=new THREE.Mesh(new THREE.CylinderGeometry(1.1,1.1,0.2,16,1,false,0,Math.PI), chromeMat);
+  radar.rotation.z=Math.PI/2; radar.position.set(0,5.2,0); mastG.add(radar);
+  var dome=new THREE.Mesh(new THREE.SphereGeometry(0.5,12,8), new THREE.MeshStandardMaterial({color:0xffffff,roughness:0.6})); dome.position.y=6.0; mastG.add(dome);
+  var nav=new THREE.Mesh(new THREE.SphereGeometry(0.18,8,6), new THREE.MeshStandardMaterial({color:0xff3322,emissive:0xff3322,emissiveIntensity:1.5})); nav.position.set(1.7,4.4,0); mastG.add(nav);
+  mastG.position.set(0,12.9,-9); g.add(mastG);
+
+  // ---- CHROME RAILINGS everywhere ----
+  function railing(x0,z0,x1,z1,y){
+    var dx=x1-x0, dz=z1-z0, len=Math.sqrt(dx*dx+dz*dz);
+    var ang=Math.atan2(dx,dz);
+    // top rail
+    var top=new THREE.Mesh(new THREE.CylinderGeometry(0.045,0.045,len,6), chromeMat);
+    top.rotation.x=Math.PI/2; top.rotation.y=ang;
+    top.position.set((x0+x1)/2,y+0.9,(z0+z1)/2); g.add(top);
+    // posts
+    var n=Math.max(2,Math.round(len/2.2));
+    for(var i=0;i<=n;i++){
+      var t=i/n; var px=x0+dx*t, pz=z0+dz*t;
+      var post=new THREE.Mesh(new THREE.CylinderGeometry(0.035,0.035,0.9,6), chromeMat);
+      post.position.set(px,y+0.45,pz); g.add(post);
+    }
+  }
+  // main deck perimeter railings
+  var rW=(beam-0.6)/2-0.1, rZf=halfL-9, rZa=-halfL+5.5, rY=3.45;
+  railing(-rW,rZa,-rW,rZf,rY); railing(rW,rZa,rW,rZf,rY);
+  railing(-rW,rZf,rW,rZf,rY); railing(-rW,rZa,rW,rZa,rY);
+  // deck1 top railings
+  railing(-(beam-2.2)/2,-24,-(beam-2.2)/2,16,7.1); railing((beam-2.2)/2,-24,(beam-2.2)/2,16,7.1);
+  // sky deck railing around helipad/mast level
+  railing(-(beam-3.6)/2,-20,-(beam-3.6)/2,8,10.3); railing((beam-3.6)/2,-20,(beam-3.6)/2,8,10.3);
+
+  // funnels / exhaust detail
+  for(var f=-1;f<=1;f+=2){
+    var funnel=new THREE.Mesh(new THREE.BoxGeometry(0.9,2.2,2.4), greyMat);
+    add(funnel,f*2.0,11.5,-12);
+  }
+
+  // ---- TINY PEOPLE helper ----
+  function tinyPerson(px,py,pz,shirt){
+    var p=new THREE.Group();
+    var torso=new THREE.Mesh(new THREE.BoxGeometry(0.18,0.24,0.1), new THREE.MeshStandardMaterial({color:shirt,roughness:0.8}));
+    torso.position.y=0.32; p.add(torso);
+    var head=new THREE.Mesh(new THREE.SphereGeometry(0.08,8,6), new THREE.MeshStandardMaterial({color:0xe8b48c,roughness:0.7}));
+    head.position.y=0.5; p.add(head);
+    var legs=new THREE.Mesh(new THREE.BoxGeometry(0.16,0.22,0.09), new THREE.MeshStandardMaterial({color:0x2a3b55,roughness:0.85}));
+    legs.position.y=0.11; p.add(legs);
+    p.position.set(px,py,pz); g.add(p);
+  }
+  // scatter ~8 across decks
+  tinyPerson(-3.0,3.45,-halfL+13,0xd83a3a);  // aft pool deck
+  tinyPerson(2.0,3.45,-halfL+18,0xffffff);
+  tinyPerson(3.2,3.45,halfL-14,0x2a7de1);     // foredeck
+  tinyPerson(-3.0,3.45,halfL-16,0xf0c419);
+  tinyPerson(2.0,7.1,-2,0xffffff);            // deck1 top
+  tinyPerson(-2.0,7.1,4,0x35a36a);
+  tinyPerson(0,8.7,13.5,0x222222);            // bridge
+  tinyPerson(-2.5,10.45,-10,0xff8c42);        // sky deck near mast
+
+  // anchor / bow detail
+  var anchor=new THREE.Mesh(new THREE.BoxGeometry(0.6,0.6,0.2), darkMat); add(anchor,1.8,2.4,halfL-6.5);
+
+  // shadows
+  g.traverse(function(o){ if(o.isMesh){ o.castShadow=true; o.receiveShadow=true; } });
+
+  return { rotor: rotor };
+}
+function buildCruiseShip(g){
+  var SH = function(c,r,m,e,ei){ return new THREE.MeshStandardMaterial({color:c,roughness:(r==null?0.7:r),metalness:(m==null?0:m),emissive:(e==null?0x000000:e),emissiveIntensity:(ei==null?0:ei),envMapIntensity:0.5}); };
+  var hullMat   = SH(0xf4f5f7,0.55,0.05);
+  var bootMat   = SH(0x1a2a44,0.6,0.1);
+  var deckMat   = SH(0xbfc3c7,0.9,0);
+  var teakMat   = SH(0xb98a52,0.85,0);
+  var whiteMat  = SH(0xfafafa,0.65,0);
+  var railMat   = SH(0xdadddf,0.4,0.6);
+  var glassMat  = SH(0x244055,0.15,0.4,0x12222e,0.7);
+  var winMat    = SH(0x182a3a,0.2,0.5,0x0d1822,0.5);
+  var funnelMat = SH(0xeceef0,0.55,0.1);
+  var bandMat   = SH(0xc0392b,0.5,0.1);
+  var lifeMat   = SH(0xe8731a,0.6,0);
+  var darkMat   = SH(0x2a2f34,0.6,0.2);
+
+  // ---------- hull (length ~150 along Z, beam ~22, waterline y=0) ----------
+  var L = 150, BEAM = 22, HULL_DEPTH = 12;
+  var hullTopY = 2.5, hullBotY = -9.5;
+  var bodyLen = L*0.74;
+
+  var body = new THREE.Mesh(new THREE.BoxGeometry(BEAM, HULL_DEPTH, bodyLen), hullMat);
+  body.position.set(0,(hullTopY+hullBotY)/2, 0);
+  g.add(body);
+
+  var stripe = new THREE.Mesh(new THREE.BoxGeometry(BEAM+0.12,1.4,bodyLen+0.05), bootMat);
+  stripe.position.set(0,-0.3,0);
+  g.add(stripe);
+
+  // bulbous-ish pointed BOW (+Z)
+  var bowLen = L*0.16;
+  var bow = new THREE.Mesh(new THREE.CylinderGeometry(0.4, BEAM*0.5, bowLen, 14, 1), hullMat);
+  bow.rotation.x = -Math.PI/2;
+  bow.position.set(0,(hullTopY+hullBotY)/2, bodyLen/2 + bowLen/2 - 0.5);
+  bow.scale.y = HULL_DEPTH/BEAM;
+  g.add(bow);
+  var bowStripe = new THREE.Mesh(new THREE.CylinderGeometry(0.35, BEAM*0.5*0.95, bowLen, 14), bootMat);
+  bowStripe.rotation.x=-Math.PI/2; bowStripe.position.set(0,-0.3, bodyLen/2+bowLen/2-0.5); bowStripe.scale.set(1.005,0.16,1.005);
+  g.add(bowStripe);
+  var bulb = new THREE.Mesh(new THREE.SphereGeometry(3.2,12,8), hullMat);
+  bulb.scale.set(1,0.9,2.0);
+  bulb.position.set(0,-7.5, bodyLen/2 + bowLen*0.7);
+  g.add(bulb);
+
+  // rounded STERN (-Z)
+  var sternLen = L*0.10;
+  var stern = new THREE.Mesh(new THREE.CylinderGeometry(BEAM*0.5, BEAM*0.46, sternLen, 14,1), hullMat);
+  stern.rotation.x=Math.PI/2;
+  stern.position.set(0,(hullTopY+hullBotY)/2, -bodyLen/2 - sternLen/2 + 0.5);
+  stern.scale.y = HULL_DEPTH/BEAM;
+  g.add(stern);
+
+  // ---------- main teak deck ----------
+  var deck = new THREE.Mesh(new THREE.BoxGeometry(BEAM-1.0, 0.5, L*0.86), teakMat);
+  deck.position.set(0, hullTopY+0.25, 0);
+  g.add(deck);
+
+  // ---------- helper: row of cabin windows ----------
+  function windowRow(cx,cy,cz,count,spacing,wW,wH,mat){
+    var grp = new THREE.Group();
+    var start = -(count-1)*spacing/2;
+    for(var i=0;i<count;i++){
+      var w=new THREE.Mesh(new THREE.BoxGeometry(0.18,wH,wW), mat);
+      w.position.set(cx, cy, cz+start+i*spacing);
+      grp.add(w);
+    }
+    g.add(grp);
+    return grp;
+  }
+
+  // ---------- superstructure: many stacked decks ----------
+  var supBaseY = hullTopY+0.5;
+  var supBeam = BEAM-2.4;
+  var deckCount = 8;
+  var deckH = 3.0;
+  var supLen0 = L*0.80;
+  for(var d=0; d<deckCount; d++){
+    var dy = supBaseY + d*deckH;
+    var dlen = supLen0 - d*6.0; if(dlen<30) dlen=30;
+    var dbeam = supBeam - (d>=5? (d-4)*1.6 : 0);
+    var wall = new THREE.Mesh(new THREE.BoxGeometry(dbeam, deckH-0.6, dlen), whiteMat);
+    wall.position.set(0, dy+(deckH-0.6)/2, (d*1.5));
+    g.add(wall);
+    var lip = new THREE.Mesh(new THREE.BoxGeometry(dbeam+0.8,0.3,dlen+0.6), deckMat);
+    lip.position.set(0, dy, d*1.5);
+    g.add(lip);
+    var nWin = Math.floor(dlen/3.6);
+    for(var s=-1;s<=1;s+=2){
+      windowRow(s*(dbeam/2+0.05), dy+(deckH-0.6)/2, d*1.5, nWin, 3.6, 1.6, 1.4, (d<2?winMat:glassMat));
+      if(d>=2 && d<=6){
+        var brail = new THREE.Mesh(new THREE.BoxGeometry(0.15,0.9, dlen-1), railMat);
+        brail.position.set(s*(dbeam/2+0.7), dy+0.6, d*1.5);
+        g.add(brail);
+      }
+    }
+  }
+
+  // ---------- bridge / sun deck ----------
+  var bridgeY = supBaseY + deckCount*deckH;
+  var bridge = new THREE.Mesh(new THREE.BoxGeometry(supBeam-2, 3.2, 16), whiteMat);
+  bridge.position.set(0, bridgeY+1.6, L*0.30);
+  g.add(bridge);
+  var bridgeGlass = new THREE.Mesh(new THREE.BoxGeometry(supBeam-1.6,1.6,16.1), glassMat);
+  bridgeGlass.position.set(0,bridgeY+2.2, L*0.30);
+  g.add(bridgeGlass);
+  for(var bw=-1;bw<=1;bw+=2){
+    var wing=new THREE.Mesh(new THREE.BoxGeometry(3,0.4,3), deckMat);
+    wing.position.set(bw*(supBeam/2-0.5), bridgeY+0.5, L*0.30);
+    g.add(wing);
+  }
+
+  // ---------- funnels (2) with red band ----------
+  var funnelY = bridgeY + 2;
+  for(var f=0; f<2; f++){
+    var fz = -10 + f*-14;
+    var fun = new THREE.Mesh(new THREE.CylinderGeometry(3.0,3.4,10,16,1), funnelMat);
+    fun.position.set(0, funnelY+5, fz); fun.scale.set(1,1,1.5);
+    g.add(fun);
+    var band = new THREE.Mesh(new THREE.CylinderGeometry(3.15,3.15,2.4,16,1), bandMat);
+    band.position.set(0, funnelY+8.0, fz); band.scale.set(1.02,1,1.5);
+    g.add(band);
+    var cap = new THREE.Mesh(new THREE.CylinderGeometry(3.05,3.05,0.5,16), darkMat);
+    cap.position.set(0, funnelY+10, fz); cap.scale.set(1,1,1.5);
+    g.add(cap);
+  }
+
+  var mast=new THREE.Mesh(new THREE.CylinderGeometry(0.25,0.4,14,8), deckMat);
+  mast.position.set(0,bridgeY+8,L*0.34); g.add(mast);
+
+  // ---------- railings along main deck ----------
+  function railLine(side){
+    var rl=new THREE.Mesh(new THREE.BoxGeometry(0.12,1.0,L*0.82), railMat);
+    rl.position.set(side*(BEAM/2-0.3), hullTopY+1.0, 0);
+    g.add(rl);
+    var posts=Math.floor(L*0.82/6);
+    var st=-(posts-1)*6/2;
+    for(var p=0;p<posts;p++){
+      var po=new THREE.Mesh(new THREE.BoxGeometry(0.1,1.0,0.1),railMat);
+      po.position.set(side*(BEAM/2-0.3), hullTopY+1.0, st+p*6);
+      g.add(po);
+    }
+  }
+  railLine(1); railLine(-1);
+
+  // ---------- orange lifeboats hung along the sides ----------
+  var lifeY = supBaseY + 3*deckH;
+  for(var ls=-1; ls<=1; ls+=2){
+    for(var lb=0; lb<7; lb++){
+      var lz = -L*0.28 + lb*(L*0.56/6);
+      var boat=new THREE.Mesh(new THREE.CylinderGeometry(1.3,1.3,5.0,10,1,false,0,Math.PI), lifeMat);
+      boat.rotation.set(Math.PI, Math.PI/2, 0);
+      boat.position.set(ls*(supBeam/2+1.4), lifeY, lz);
+      boat.scale.set(1,1,0.55);
+      g.add(boat);
+      var dav=new THREE.Mesh(new THREE.BoxGeometry(0.12,2.2,0.12), darkMat);
+      dav.position.set(ls*(supBeam/2+0.9), lifeY+1.2, lz);
+      g.add(dav);
+    }
+  }
+
+  // ---------- tiny deck people for life/scale ----------
+  function tinyPerson(px,py,pz,shirt){
+    var pgrp=new THREE.Group();
+    var legMat=SH(0x33373c,0.8,0);
+    var skinMat=SH(0xe8b48c,0.7,0);
+    var torso=new THREE.Mesh(new THREE.BoxGeometry(0.22,0.26,0.14), SH(shirt,0.7,0));
+    torso.position.y=0.30; pgrp.add(torso);
+    var head=new THREE.Mesh(new THREE.SphereGeometry(0.08,8,6), skinMat);
+    head.position.y=0.50; pgrp.add(head);
+    var legs=new THREE.Mesh(new THREE.BoxGeometry(0.20,0.22,0.12), legMat);
+    legs.position.y=0.11; pgrp.add(legs);
+    pgrp.position.set(px,py,pz);
+    g.add(pgrp);
+  }
+  var shirts=[0xd94f4f,0xf2c14e,0x4f8fd9,0xffffff,0x5cb85c,0xe07ab8];
+  var pdeckY=hullTopY+0.5;
+  var pc=0;
+  for(var pp=0; pp<12; pp++){
+    var side = (pp%2===0)?1:-1;
+    var pz = -L*0.30 + (pp/12)*L*0.60;
+    var py = (pp%3===0)? supBaseY+2*deckH+0.4 : pdeckY;
+    var pbeam = (pp%3===0)? (supBeam/2 + 0.3) : (BEAM/2-0.6);
+    tinyPerson(side*pbeam, py, pz, shirts[pc%shirts.length]); pc++;
+  }
+
+  // bow anchor detail
+  var anchor=new THREE.Mesh(new THREE.BoxGeometry(1.4,1.6,0.3), darkMat);
+  anchor.position.set(BEAM*0.32, -1.5, bodyLen/2+bowLen*0.3); g.add(anchor);
+
+  // ---------- helideck + helicopter (with animatable main rotor) ----------
+  var heliPadY = supBaseY + 2*deckH + 0.3;
+  var heliPadZ = -L*0.30;
+  var padMat = SH(0x2f3438,0.85,0.05);
+  var heliMat = SH(0xf0f2f4,0.5,0.2);
+
+  var pad = new THREE.Mesh(new THREE.CylinderGeometry(7.5,7.5,0.4,24,1), padMat);
+  pad.position.set(0, heliPadY, heliPadZ);
+  g.add(pad);
+  var padH1 = new THREE.Mesh(new THREE.BoxGeometry(0.4,0.05,4.5), lifeMat);
+  padH1.position.set(-1.6, heliPadY+0.23, heliPadZ); g.add(padH1);
+  var padH2 = new THREE.Mesh(new THREE.BoxGeometry(0.4,0.05,4.5), lifeMat);
+  padH2.position.set(1.6, heliPadY+0.23, heliPadZ); g.add(padH2);
+  var padHBar = new THREE.Mesh(new THREE.BoxGeometry(3.6,0.05,0.4), lifeMat);
+  padHBar.position.set(0, heliPadY+0.23, heliPadZ); g.add(padHBar);
+
+  var heli = new THREE.Group();
+  heli.position.set(0, heliPadY+0.4, heliPadZ);
+  g.add(heli);
+
+  var heliBody = new THREE.Mesh(new THREE.SphereGeometry(1.5,14,10), heliMat);
+  heliBody.scale.set(1.0,1.0,1.8);
+  heliBody.position.set(0,1.2,0);
+  heli.add(heliBody);
+
+  var heliTail = new THREE.Mesh(new THREE.CylinderGeometry(0.18,0.45,4.2,10,1), heliMat);
+  heliTail.rotation.x = Math.PI/2;
+  heliTail.position.set(0,1.5,-3.0);
+  heli.add(heliTail);
+
+  var heliFin = new THREE.Mesh(new THREE.BoxGeometry(0.12,1.1,0.9), heliMat);
+  heliFin.position.set(0,2.0,-4.7);
+  heli.add(heliFin);
+
+  // tail rotor
+  var tailRotor = new THREE.Mesh(new THREE.BoxGeometry(0.08,1.6,0.18), darkMat);
+  tailRotor.position.set(0.32,1.6,-4.8);
+  heli.add(tailRotor);
+
+  // skids
+  for(var sk=-1; sk<=1; sk+=2){
+    var skid = new THREE.Mesh(new THREE.CylinderGeometry(0.1,0.1,3.4,8,1), darkMat);
+    skid.rotation.x = Math.PI/2;
+    skid.position.set(sk*1.0, 0.1, 0.2);
+    heli.add(skid);
+    var strut = new THREE.Mesh(new THREE.BoxGeometry(0.1,0.7,0.1), darkMat);
+    strut.position.set(sk*0.9, 0.55, 0.6); heli.add(strut);
+    var strut2 = new THREE.Mesh(new THREE.BoxGeometry(0.1,0.7,0.1), darkMat);
+    strut2.position.set(sk*0.9, 0.55, -0.4); heli.add(strut2);
+  }
+
+  // rotor mast
+  var rotorMast = new THREE.Mesh(new THREE.CylinderGeometry(0.12,0.12,0.6,8,1), darkMat);
+  rotorMast.position.set(0,2.4,0.2);
+  heli.add(rotorMast);
+
+  // main rotor (animatable) — returned as {rotor}
+  var rotor = new THREE.Group();
+  rotor.position.set(0,2.75,0.2);
+  heli.add(rotor);
+  var rotorHub = new THREE.Mesh(new THREE.CylinderGeometry(0.22,0.22,0.18,8,1), darkMat);
+  rotor.add(rotorHub);
+  for(var rb=0; rb<4; rb++){
+    var blade = new THREE.Mesh(new THREE.BoxGeometry(0.16,0.05,7.2), darkMat);
+    blade.position.set(0,0.05,0);
+    blade.rotation.y = rb*Math.PI/2;
+    rotor.add(blade);
+  }
+
+  // shadows
+  g.traverse(function(o){ if(o.isMesh){ o.castShadow=true; o.receiveShadow=true; } });
+
+  return {rotor: rotor};
+}
+
+// ---- AI jetski (small, crouched rider) for ambient water traffic ----
+function buildAIJetski(g){
+  var col=(Math.random()<0.5?0x2f6fd0:(Math.random()<0.5?0xe0512a:0x33a06a));
+  var hull=new THREE.MeshStandardMaterial({color:col,roughness:0.4,metalness:0.2,envMapIntensity:0.8});
+  var dark=new THREE.MeshStandardMaterial({color:0x16181c,roughness:0.6});
+  var skin=new THREE.MeshStandardMaterial({color:0xc98b66,roughness:0.7});
+  var suit=new THREE.MeshStandardMaterial({color:(Math.random()<0.5?0x14213a:0x6a1f1f),roughness:0.6});
+  var b=new THREE.Mesh(new THREE.BoxGeometry(1.1,0.5,2.6),hull); b.position.y=0.18; g.add(b);
+  var bow=new THREE.Mesh(new THREE.ConeGeometry(0.56,1.5,4),hull); bow.rotation.x=Math.PI/2; bow.rotation.z=Math.PI/4; bow.scale.set(1,0.5,1); bow.position.set(0,0.18,1.75); g.add(bow);
+  var seat=new THREE.Mesh(new THREE.BoxGeometry(0.66,0.34,1.15),dark); seat.position.set(0,0.52,-0.2); g.add(seat);
+  var bars=new THREE.Mesh(new THREE.BoxGeometry(0.82,0.08,0.1),dark); bars.position.set(0,0.74,0.72); g.add(bars);
+  var torso=new THREE.Mesh(new THREE.BoxGeometry(0.5,0.62,0.34),suit); torso.position.set(0,1.02,0.12); torso.rotation.x=0.5; g.add(torso);
+  var head=new THREE.Mesh(new THREE.SphereGeometry(0.16,10,8),skin); head.position.set(0,1.34,0.45); g.add(head);
+  g.traverse(function(o){if(o.isMesh)o.castShadow=true;});
+}
+// ---- ambient water traffic: big vessels + jetskis cruising the bay on loops, bobbing on the swell ----
+const VESSELS3D=[];
+function buildWaterTraffic(){
+  function add(fn, cx,cz, rad, ang0, lin, bob, tilt, scale){ const grp=new THREE.Group(); grp.rotation.order='YXZ'; let parts=null;
+    try{ parts=fn(grp)||{}; }catch(e){ console.warn('vessel build failed:',e.message); return; }
+    if(scale&&scale!==1) grp.scale.setScalar(scale); scene.add(grp);
+    VESSELS3D.push({grp:grp, cx:cx,cz:cz, rad:rad, ang:ang0, lin:lin, bob:bob, tilt:tilt, rotor:(parts&&parts.rotor)||null}); }
+  // big vessels — wide slow loops in the open central/eastern lagoon (clear of islands, rock, lighthouse, city)
+  add(buildCruiseShip, 200,150, 720, 0.3, 4.6, 0.20, 0.12, 1.0);
+  add(buildSuperyacht, 150,300, 560, 2.2, 4.0, 0.38, 0.16, 1.0);
+  add(buildYacht,      300,-100, 460, 4.1, 5.0, 0.55, 0.20, 1.0);
+  add(buildYacht,      -60,260, 520, 1.1, 4.4, 0.55, 0.20, 0.9);
+  // ai jetskis buzzing around
+  for(let k=0;k<5;k++){ const grp=new THREE.Group(); grp.rotation.order='YXZ';
+    try{ buildAIJetski(grp); }catch(e){ continue; } scene.add(grp);
+    const a=Math.random()*6.283, cr=120+Math.random()*260;
+    VESSELS3D.push({grp:grp, cx:Math.cos(a)*cr*0.5+90, cz:Math.sin(a)*cr*0.5+120, rad:55+Math.random()*150, ang:Math.random()*6.283, lin:12+Math.random()*8, bob:1.0, tilt:0.55, rotor:null}); }
+}
+function updateWaterTraffic(dt){
+  for(const v of VESSELS3D){
+    v.ang += (v.lin/v.rad)*dt;
+    const x=v.cx+Math.cos(v.ang)*v.rad, z=v.cz+Math.sin(v.ang)*v.rad, sy=seaY(x,z,gameT);
+    v.grp.position.set(x, sy*v.bob, z);
+    v.grp.rotation.y=Math.atan2(-Math.sin(v.ang), Math.cos(v.ang));   // face along the loop tangent
+    const n=seaNormal(x,z,gameT);
+    v.grp.rotation.x += ((-n.z*v.tilt) - v.grp.rotation.x)*Math.min(1,dt*3);
+    v.grp.rotation.z += (( n.x*v.tilt) - v.grp.rotation.z)*Math.min(1,dt*3);
+    if(v.rotor) v.rotor.rotation.y += dt*8;
+  }
+}
+
+
 function buildWorld(){
   // ---- terrain (islands + seabed) ----
   const TR=1900, TG=440;
@@ -4280,6 +5039,7 @@ function buildWorld(){
   // ---- course + props ----
   buildCourse();
   buildJetski();
+  buildWaterTraffic();
   // pre-render the minimap base (bay silhouette)
   drawMapBase();
   // idle camera until START
@@ -4297,17 +5057,19 @@ function buildWater(){
   mat.normalScale=new THREE.Vector2(0.62,0.62);
   mat.onBeforeCompile=(sh)=>{
     sh.uniforms.uTime={value:0}; sh.uniforms.uStorm={value:storm}; sh.uniforms.uOff={value:new THREE.Vector2()};
+    sh.uniforms.uCity={value:new THREE.Vector2(CITY.x,CITY.z)};
     sh.uniforms.uWDir={value:WAVES.map(W=>new THREE.Vector2(W.dx,W.dz))};
     sh.uniforms.uWK={value:WAVES.map(W=>W.k)}; sh.uniforms.uWA={value:WAVES.map(W=>W.amp)};
     sh.uniforms.uWW={value:WAVES.map(W=>W.w)};  sh.uniforms.uWQ={value:WAVES.map(W=>W.q)};
     seaU=sh.uniforms;
-    sh.vertexShader=`uniform float uTime,uStorm; uniform vec2 uOff;
+    sh.vertexShader=`uniform float uTime,uStorm; uniform vec2 uOff,uCity;
       uniform vec2 uWDir[${NW}]; uniform float uWK[${NW}],uWA[${NW}],uWW[${NW}],uWQ[${NW}];
       varying float vFoam; varying vec3 vWPos;\n`+sh.vertexShader;
     sh.vertexShader=sh.vertexShader.replace('#include <beginnormal_vertex>',`
       #include <beginnormal_vertex>
       vec2 wxz = position.xz + uOff;
-      float sa=0.45+0.55*uStorm;
+      float sf = clamp(smoothstep(372.0,540.0,distance(wxz,uCity))*0.85+0.15, 0.15, 1.0);
+      float sa=(0.45+0.55*uStorm)*sf;
       vec3 disp=vec3(0.0); vec3 nrm=vec3(0.0,1.0,0.0); float fold=0.0;
       for(int i=0;i<${NW};i++){
         float ph = dot(uWDir[i],wxz)*uWK[i] - uTime*uWW[i];
@@ -4535,6 +5297,333 @@ const DOCK=(function(){ const d=new THREE.Vector2(-CITY.x,-CITY.z).normalize();
 function onDock(x,z){ const ax=x-DOCK.cx,az=z-DOCK.cz, al=ax*DOCK.dx+az*DOCK.dz, lt=Math.abs(ax*DOCK.rx+az*DOCK.rz); return al>DOCK.start-3 && al<DOCK.endCd+3 && lt<DOCK.width/2; }
 function dockReach(x,z){ const ax=x-DOCK.cx,az=z-DOCK.cz, al=ax*DOCK.dx+az*DOCK.dz, lt=Math.abs(ax*DOCK.rx+az*DOCK.rz); return al>DOCK.start-8 && al<DOCK.endCd+8 && lt<DOCK.width/2+9; }
 function avatarGround(x,z){ return onDock(x,z)?DOCK.deckTop:landH(x,z); }
+// ===== DRIVABLE BOAT (board it from the dock) =====
+// TEMP model — replaced by the boat-design workflow output.
+function buildBoat(g, col){
+  col = col || {};
+  var C = {
+    hull:  (col.hull  !== undefined) ? col.hull  : 0xf3f4f6, // white gel-coat
+    deck:  (col.deck  !== undefined) ? col.deck  : 0x8a6a3e, // teak deck
+    cabin: (col.cabin !== undefined) ? col.cabin : 0xe8e6df, // off-white cabin
+    trim:  (col.trim  !== undefined) ? col.trim  : 0xc7ccd2  // chrome
+  };
+  var ACCENT = 0x23456b; // navy accent stripe along the sheer
+
+  // ---- materials (PBR, matches the r128 photoreal scene) ----
+  function mat(c, r, m, e){
+    return new THREE.MeshStandardMaterial({
+      color: c,
+      roughness: (r === undefined ? 0.5 : r),
+      metalness: (m === undefined ? 0.0 : m),
+      envMapIntensity: (e === undefined ? 0.6 : e)
+    });
+  }
+  var hullMat   = mat(C.hull,  0.28, 0.05, 1.0);                // glossy gel-coat
+  var bottomMat = mat(0x1c2530, 0.45, 0.10, 0.55);             // antifoul / below waterline
+  var deckMat   = mat(C.deck,  0.72, 0.00, 0.35);              // teak
+  var soleMat   = mat(0xd8cdb6, 0.80, 0.00, 0.30);            // tan cockpit sole
+  var cabinMat  = mat(C.cabin, 0.45, 0.05, 0.70);
+  var dashMat   = mat(0x10202e, 0.40, 0.20, 0.55);
+  var chromeMat = mat(C.trim,  0.18, 0.95, 1.2);
+  var darkMat   = mat(0x1b1f24, 0.55, 0.45, 0.50);
+  var seatMat   = mat(0xf2efe9, 0.72, 0.00, 0.32);            // cream upholstery
+  var seatTrim  = mat(ACCENT,   0.60, 0.05, 0.40);
+  var accentMat = mat(ACCENT,   0.40, 0.10, 0.55);
+  var fenderMat = mat(0xd8dadd, 0.55, 0.00, 0.30);
+  var glassMat  = new THREE.MeshStandardMaterial({ color:0x223038, roughness:0.07, metalness:0.10, transparent:true, opacity:0.45, depthWrite:false, envMapIntensity:1.3 });
+  var redLight  = new THREE.MeshStandardMaterial({ color:0xff5050, emissive:0xff2020, emissiveIntensity:2.2, roughness:0.4 });
+  var grnLight  = new THREE.MeshStandardMaterial({ color:0x50ff70, emissive:0x20ff40, emissiveIntensity:2.2, roughness:0.4 });
+  var whtLight  = new THREE.MeshStandardMaterial({ color:0xffffff, emissive:0xfff2c0, emissiveIntensity:1.9, roughness:0.4 });
+
+  function add(geo, m, x, y, z){ var o = new THREE.Mesh(geo, m); o.position.set(x||0, y||0, z||0); g.add(o); return o; }
+  function addTo(parent, geo, m, x, y, z){ var o = new THREE.Mesh(geo, m); o.position.set(x||0, y||0, z||0); parent.add(o); return o; }
+
+  var L = 11.0, B = 3.4, hxe = B/2;   // length (Z), beam (X)
+
+  // ======================================================================
+  // HULL — single solid shell: ExtrudeGeometry of the deck-plan bezier,
+  //   pointed +Z bow, transom at -Z. D1 depth pipeline (lands bottom=-1.10,
+  //   gunwale=+0.75) + D0 per-vertex V-bottom sculpt for real deadrise.
+  // ======================================================================
+  var s = new THREE.Shape();
+  s.moveTo(0, L*0.5);                                                          // sharp bow tip (+Z)
+  s.bezierCurveTo( hxe*0.55, L*0.42,  hxe*0.98, L*0.16,  hxe*0.98, -L*0.05);  // stbd flare to max beam
+  s.lineTo( hxe*0.92, -L*0.42);
+  s.lineTo( hxe*0.86, -L*0.5);                                                 // stbd transom corner
+  s.lineTo(-hxe*0.86, -L*0.5);                                                 // port transom corner
+  s.lineTo(-hxe*0.92, -L*0.42);
+  s.lineTo(-hxe*0.98, -L*0.05);
+  s.bezierCurveTo(-hxe*0.98, L*0.16, -hxe*0.55, L*0.42, 0, L*0.5);
+  s.closePath();
+
+  var hullGeo = new THREE.ExtrudeGeometry(s, {
+    depth:1.75, bevelEnabled:true, bevelThickness:0.35, bevelSize:0.45,
+    bevelSegments:2, steps:1, curveSegments:14
+  });
+  hullGeo.rotateX(Math.PI/2);                  // plan in X/Z (Z forward), extrude runs vertically
+  hullGeo.computeBoundingBox();
+  var bb = hullGeo.boundingBox;                // reference; translate()/scale() recompute it in place
+  hullGeo.translate(0, -bb.min.y, 0);          // bottom to y=0
+  var hgt = bb.max.y - bb.min.y;               // height is translation-invariant -> correct
+  var wantH = 1.85;                            // -1.10 .. +0.75
+  hullGeo.scale(1, wantH/hgt, 1);
+  hullGeo.translate(0, -1.10, 0);              // bottom to y=-1.10, gunwale to ~+0.75
+
+  // D0 V-bottom sculpt + sheer: pinch lower verts toward keel, drop centreline,
+  // and lift the gunwale toward the bow for a believable sheer line.
+  (function(){
+    var p = hullGeo.attributes.position, v = new THREE.Vector3();
+    for (var i=0; i<p.count; i++){
+      v.fromBufferAttribute(p, i);
+      if (v.y < 0){
+        var t = Math.min(1, (-v.y) / 1.10);              // 0 at waterline -> 1 at keel
+        var pinch = 1.0 - 0.74*t;                         // narrow toward keel
+        v.x *= pinch;
+        v.z *= (1.0 - 0.08*t);
+        v.y -= 0.14*t*(1.0 - Math.min(1, Math.abs(v.x)/hxe)); // centreline V-drop
+      } else {
+        var fz = Math.max(0, v.z/(L*0.5));
+        v.y += 0.16*fz*fz;                                // sheer rise toward bow
+      }
+      p.setXYZ(i, v.x, v.y, v.z);
+    }
+    p.needsUpdate = true;
+    hullGeo.computeVertexNormals();
+  })();
+  add(hullGeo, hullMat, 0, 0, 0);
+
+  // D0 antifoul boot band: clone hull shape, re-extrude thin, peek below waterline
+  var bootGeo = new THREE.ExtrudeGeometry(s, {depth:0.9, bevelEnabled:false, steps:1, curveSegments:8});
+  bootGeo.rotateX(Math.PI/2);
+  bootGeo.computeBoundingBox();
+  var bbb = bootGeo.boundingBox;
+  bootGeo.translate(0, -bbb.min.y, 0);
+  bootGeo.scale(0.99, 1, 0.995);
+  bootGeo.translate(0, -1.05, 0);
+  add(bootGeo, bottomMat, 0, 0, 0);
+
+  // D0 accent sheer stripe hugging the topsides just above the waterline
+  var stripeGeo = new THREE.ExtrudeGeometry(s, {depth:0.16, bevelEnabled:false, steps:1, curveSegments:8});
+  stripeGeo.rotateX(Math.PI/2);
+  stripeGeo.computeBoundingBox();
+  var sbb = stripeGeo.boundingBox;
+  stripeGeo.translate(0, -sbb.min.y, 0);
+  stripeGeo.scale(1.012, 1, 1.006);
+  stripeGeo.translate(0, 0.30, 0);
+  add(stripeGeo, accentMat, 0, 0, 0);
+
+  // keel strake for the deep-V read
+  add(new THREE.BoxGeometry(0.16, 0.40, L*0.78), bottomMat, 0, -0.92, -0.3);
+
+  // ======================================================================
+  // DECK / COCKPIT SOLE — teak deck cap with subtle sheer + recessed sole
+  // ======================================================================
+  var deckGeo = new THREE.ExtrudeGeometry(s, {depth:0.12, bevelEnabled:false, steps:1, curveSegments:12});
+  deckGeo.rotateX(-Math.PI/2);                 // cap lies flat, sits inside the gunwale
+  deckGeo.scale(0.92, 1, 0.95);
+  (function(){
+    var dp = deckGeo.attributes.position;
+    for (var i=0; i<dp.count; i++){
+      var z = dp.getZ(i);
+      dp.setY(i, dp.getY(i) + Math.max(0, z)*0.045); // sheer rises toward bow
+    }
+    dp.needsUpdate = true; deckGeo.computeVertexNormals();
+  })();
+  add(deckGeo, deckMat, 0, 0.66, 0);
+
+  // recessed cockpit sole (aft)
+  add(new THREE.BoxGeometry(B*0.66, 0.07, L*0.40), soleMat, 0, 0.60, -2.0);
+
+  // gunwale cap rail (thin off-white lip around the deck edge)
+  var gunGeo = new THREE.ExtrudeGeometry(s, {depth:0.10, bevelEnabled:false, steps:1, curveSegments:12});
+  gunGeo.rotateX(-Math.PI/2);
+  var gun = add(gunGeo, cabinMat, 0, 0.70, 0);
+  gun.scale.set(0.985, 1, 0.99);
+
+  // ======================================================================
+  // CUDDY CABIN (forward) with raked windscreen
+  // ======================================================================
+  add(new THREE.BoxGeometry(B*0.78, 0.95, 3.5), cabinMat, 0, 1.18, 1.7);
+  // tapered cabin front (4-sided wedge toward the bow)
+  var cabFront = add(new THREE.CylinderGeometry(0.001, B*0.40, 1.6, 4, 1), cabinMat, 0, 1.18, 3.5);
+  cabFront.rotation.x = Math.PI/2; cabFront.rotation.y = Math.PI/4; cabFront.scale.set(1,1,0.6);
+  // cabin roof
+  add(new THREE.BoxGeometry(B*0.80, 0.10, 3.4), cabinMat, 0, 1.68, 1.7);
+  // side cabin windows
+  for (var sgn=-1; sgn<=1; sgn+=2){
+    add(new THREE.BoxGeometry(0.04, 0.42, 1.8), glassMat, sgn*B*0.39, 1.22, 1.9);
+  }
+
+  // raked windscreen at the aft edge of the cabin, leaning over the cockpit
+  var wsFrame = add(new THREE.BoxGeometry(B*0.74, 0.82, 0.07), chromeMat, 0, 1.62, 0.05);
+  wsFrame.rotation.x = -0.42;
+  var wsGlass = add(new THREE.BoxGeometry(B*0.70, 0.74, 0.03), glassMat, 0, 1.62, 0.07);
+  wsGlass.rotation.x = -0.42;
+  // centre mullion
+  var mull = add(new THREE.CylinderGeometry(0.025,0.025,0.78,8), chromeMat, 0, 1.62, 0.08);
+  mull.rotation.x = -0.42;
+
+  // ======================================================================
+  // COCKPIT — helm console, wheel, two bucket seats (D0), aft bench
+  // ======================================================================
+  var console_ = add(new THREE.BoxGeometry(B*0.42, 0.55, 0.62), dashMat, -0.5, 1.00, -0.7);
+  console_.rotation.x = -0.10;
+  var wheel = add(new THREE.TorusGeometry(0.21, 0.035, 8, 18), chromeMat, -0.5, 1.30, -0.45);
+  wheel.rotation.x = 1.15;
+  add(new THREE.CylinderGeometry(0.03,0.03,0.22,8), chromeMat, -0.5, 1.18, -0.55).rotation.x = 0.5;
+  add(new THREE.CylinderGeometry(0.02,0.02,0.18,6), chromeMat, 0.0, 1.20, -0.55).rotation.z = 0.3; // throttle
+
+  // D0 reusable bucket seat builder
+  function bucket(x, z){
+    var grp = new THREE.Group(); g.add(grp);
+    addTo(grp, new THREE.BoxGeometry(0.62,0.22,0.60), seatMat,  0, 0.92, 0);         // squab
+    addTo(grp, new THREE.BoxGeometry(0.10,0.16,0.55), seatTrim, 0.28, 1.02, 0);      // bolster
+    addTo(grp, new THREE.BoxGeometry(0.10,0.16,0.55), seatTrim,-0.28, 1.02, 0);
+    var back = addTo(grp, new THREE.BoxGeometry(0.60,0.60,0.14), seatMat, 0, 1.28, -0.26); back.rotation.x = -0.18;
+    var hr = addTo(grp, new THREE.BoxGeometry(0.34,0.20,0.13), seatTrim, 0, 1.58, -0.30); hr.rotation.x = -0.18;
+    addTo(grp, new THREE.CylinderGeometry(0.07,0.10,0.48,10), chromeMat, 0, 0.62, 0); // pedestal
+    grp.position.set(x, 0, z);
+    return grp;
+  }
+  bucket(-0.55, -1.0); // helm
+  bucket( 0.60, -1.0); // companion
+
+  // aft bench / sun pad across the cockpit
+  add(new THREE.BoxGeometry(B*0.66, 0.22, 0.85), seatMat, 0, 0.92, -3.2);
+  add(new THREE.BoxGeometry(B*0.66, 0.50, 0.16), seatMat, 0, 1.18, -3.62).rotation.x = -0.12;
+
+  // ======================================================================
+  // RADAR / ANTENNA ARCH over the cockpit
+  // ======================================================================
+  for (var a=-1; a<=1; a+=2){
+    var leg = add(new THREE.CylinderGeometry(0.05,0.06,1.70,10), chromeMat, a*B*0.34, 1.50, -2.2);
+    leg.rotation.z = a*0.12;
+  }
+  add(new THREE.CylinderGeometry(0.05,0.05,B*0.72,10), chromeMat, 0, 2.34, -2.2).rotation.z = Math.PI/2;
+  var radome = add(new THREE.CylinderGeometry(0.28,0.28,0.16,14), cabinMat, 0, 2.50, -2.2);
+  add(new THREE.CylinderGeometry(0.012,0.012,0.85,6), darkMat, 0.30, 2.85, -2.2);
+
+  // ======================================================================
+  // STERN — inboard engine hump, transom, swim platform, sterndrive (D0)
+  // ======================================================================
+  add(new THREE.BoxGeometry(B*0.60, 0.55, 1.1), cabinMat, 0, 0.95, -3.95);   // engine hump
+  add(new THREE.BoxGeometry(B*0.55, 0.18, 0.06), darkMat, 0, 0.95, -4.50);   // vent
+  add(new THREE.BoxGeometry(B*0.84, 0.85, 0.14), hullMat, 0, 0.30, -5.42);   // transom wall
+  add(new THREE.BoxGeometry(B*0.74, 0.10, 0.95), deckMat, 0, 0.16, -5.95);   // teak swim platform
+  add(new THREE.CylinderGeometry(0.04,0.04,0.5,8), chromeMat,  1.1, 0.32, -5.78);
+  add(new THREE.CylinderGeometry(0.04,0.04,0.5,8), chromeMat, -1.1, 0.32, -5.78);
+
+  // boarding ladder
+  var lad = new THREE.Group(); g.add(lad);
+  addTo(lad, new THREE.CylinderGeometry(0.025,0.025,0.9,8), chromeMat,  0.18,0,0);
+  addTo(lad, new THREE.CylinderGeometry(0.025,0.025,0.9,8), chromeMat, -0.18,0,0);
+  for (var li=0; li<3; li++){
+    var rung = addTo(lad, new THREE.CylinderGeometry(0.02,0.02,0.4,8), chromeMat, 0, -0.15-li*0.22, 0);
+    rung.rotation.z = Math.PI/2;
+  }
+  lad.position.set(0.85, 0.18, -6.30); lad.rotation.x = 0.15;
+
+  // D0 sterndrive lower unit hanging off the transom centreline
+  var drv = new THREE.Group(); g.add(drv);
+  addTo(drv, new THREE.CylinderGeometry(0.05,0.05,0.5,8), chromeMat,  0.18,0.45,0.12).rotation.x = 0.5; // trim ram
+  addTo(drv, new THREE.CylinderGeometry(0.05,0.05,0.5,8), chromeMat, -0.18,0.45,0.12).rotation.x = 0.5;
+  addTo(drv, new THREE.BoxGeometry(0.34,0.50,0.50), darkMat, 0, 0.25, -0.05);   // upper gearcase
+  addTo(drv, new THREE.BoxGeometry(0.16,0.55,0.34), darkMat, 0,-0.18, -0.06);   // strut
+  addTo(drv, new THREE.CylinderGeometry(0.12,0.12,0.5,12), darkMat, 0,-0.42,-0.05).rotation.x = Math.PI/2; // torpedo
+  addTo(drv, new THREE.ConeGeometry(0.12,0.22,12), darkMat, 0,-0.42,-0.34).rotation.x = -Math.PI/2;
+  addTo(drv, new THREE.BoxGeometry(0.04,0.26,0.34), darkMat, 0,-0.58,0.02);     // skeg
+  addTo(drv, new THREE.ConeGeometry(0.07,0.18,10), chromeMat, 0,-0.42,-0.50).rotation.x = -Math.PI/2; // hub
+  for (var pb=0; pb<3; pb++){
+    var pivot = new THREE.Group(); pivot.position.set(0,-0.42,-0.46); drv.add(pivot);
+    var bl = addTo(pivot, new THREE.BoxGeometry(0.02,0.20,0.10), chromeMat, 0,0.10,0);
+    bl.rotation.x = 0.4; pivot.rotation.z = pb*(Math.PI*2/3);
+  }
+  drv.position.set(0, 0.55, -5.55);
+
+  // ======================================================================
+  // D0 BOW RAIL — CatmullRom TubeGeometry with per-point stanchions
+  // ======================================================================
+  var railPts = [
+    new THREE.Vector3( 1.35,1.05, 1.0),
+    new THREE.Vector3( 1.50,1.10, 2.6),
+    new THREE.Vector3( 1.10,1.18, 4.2),
+    new THREE.Vector3( 0.00,1.22, 5.1),
+    new THREE.Vector3(-1.10,1.18, 4.2),
+    new THREE.Vector3(-1.50,1.10, 2.6),
+    new THREE.Vector3(-1.35,1.05, 1.0)
+  ];
+  var railCurve = new THREE.CatmullRomCurve3(railPts, false);
+  add(new THREE.TubeGeometry(railCurve, 30, 0.035, 6, false), chromeMat, 0, 0, 0);
+  for (var sct=0; sct<railPts.length; sct++){
+    var rp = railPts[sct];
+    add(new THREE.CylinderGeometry(0.025,0.025,0.32,8), chromeMat, rp.x, rp.y-0.18, rp.z);
+  }
+  // side grab rails along the cockpit
+  for (var sr=-1; sr<=1; sr+=2){
+    add(new THREE.CylinderGeometry(0.03,0.03,3.0,8), chromeMat, sr*B*0.40, 1.15, -1.6).rotation.x = Math.PI/2;
+  }
+
+  // ======================================================================
+  // CLEATS, FENDERS, NAV LIGHTS, FLAG POLE
+  // ======================================================================
+  function cleat(x, z){
+    add(new THREE.BoxGeometry(0.10,0.07,0.30), chromeMat, x, 0.78, z);
+    add(new THREE.CylinderGeometry(0.05,0.05,0.10,8), chromeMat, x, 0.74, z).rotation.z = Math.PI/2;
+  }
+  cleat( 1.45, 2.0); cleat(-1.45, 2.0);
+  cleat( 1.50,-3.0); cleat(-1.50,-3.0);
+
+  // fenders down the port side (dock side)
+  for (var f=0; f<3; f++){
+    add(new THREE.CylinderGeometry(0.16,0.16,0.7,12), fenderMat, -B*0.52, 0.10, -0.6 + f*1.4);
+  }
+
+  // nav lights: green stbd, red port, white bow + stern all-round
+  add(new THREE.SphereGeometry(0.06,8,8), grnLight,  B*0.46, 0.95, 3.0);
+  add(new THREE.SphereGeometry(0.06,8,8), redLight, -B*0.46, 0.95, 3.0);
+  add(new THREE.SphereGeometry(0.05,8,8), whtLight,  0.0, 1.28, 5.05);
+  // stern flag / all-round light pole
+  add(new THREE.CylinderGeometry(0.02,0.02,1.0,8), chromeMat, 0, 1.45, -5.30);
+  add(new THREE.SphereGeometry(0.05,8,8), whtLight, 0, 1.98, -5.30);
+  // windscreen wiper detail
+  add(new THREE.CylinderGeometry(0.012,0.012,0.4,6), darkMat, -0.6, 1.22, 0.20).rotation.z = 0.5;
+
+  // ---- finalize: shadows on everything ----
+  g.traverse(function(o){ if (o.isMesh){ o.castShadow = true; o.receiveShadow = true; } });
+
+  return {
+    drive: drv,
+    wheel: wheel,
+    ladder: lad,
+    radome: radome
+  };
+}
+const BOAT={x:0,z:0,y:0,heading:0,speed:0,roll:0,pitch:0,moored:true};
+const boat3d=new THREE.Group(); boat3d.rotation.order='YXZ'; scene.add(boat3d);
+const boatDeco=new THREE.Group(); boatDeco.rotation.order='YXZ'; scene.add(boatDeco);
+const BOAT_MOOR=(function(){ const al=DOCK.endCd-30, lat=DOCK.width/2+4.5;
+  return { x:DOCK.cx+DOCK.dx*al+DOCK.rx*lat, z:DOCK.cz+DOCK.dz*al+DOCK.rz*lat, heading:DOCK.ang,
+           dx:DOCK.cx+DOCK.dx*(al-16)-DOCK.rx*lat, dz:DOCK.cz+DOCK.dz*(al-16)-DOCK.rz*lat }; })();
+buildBoat(boat3d, {hull:0xf2f3f5, deck:0x73502e, cabin:0xeef1f4, trim:0x14406a});
+buildBoat(boatDeco, {hull:0xeef0f2, deck:0x5a4a36, cabin:0xf4f6f8, trim:0x8a1f1f});
+BOAT.x=BOAT_MOOR.x; BOAT.z=BOAT_MOOR.z; BOAT.heading=BOAT_MOOR.heading;
+boatDeco.position.set(BOAT_MOOR.dx, 0, BOAT_MOOR.dz); boatDeco.rotation.y=DOCK.ang+Math.PI;
+function updateBoat(dt){
+  const thr=(keys['w']||keys['arrowup'])?1:0, brk=(keys['s']||keys['arrowdown'])?1:0;
+  const steer=((keys['a']||keys['arrowleft'])?1:0)-((keys['d']||keys['arrowright'])?1:0), boost=keys['shift']?1:0;
+  BOAT.speed=THREE.MathUtils.clamp(BOAT.speed+(thr*(34+boost*20)-brk*30-7)*dt, -8, 40+boost*15);
+  BOAT.heading += steer*dt*0.85*Math.min(1,Math.abs(BOAT.speed)/6)*(BOAT.speed>=0?1:-1);   // heavier turn than the jetski
+  BOAT.x+=Math.sin(BOAT.heading)*BOAT.speed*dt; BOAT.z+=Math.cos(BOAT.heading)*BOAT.speed*dt;
+  const sy=seaY(BOAT.x,BOAT.z,gameT), n=seaNormal(BOAT.x,BOAT.z,gameT); BOAT.y=sy;
+  BOAT.roll += ((n.x*0.45)-BOAT.roll)*Math.min(1,dt*3); BOAT.pitch += ((-n.z*0.45)-BOAT.pitch)*Math.min(1,dt*3);
+  boat3d.position.set(BOAT.x,BOAT.y,BOAT.z); boat3d.rotation.set(BOAT.pitch,BOAT.heading,BOAT.roll);
+  if(typeof emit==='function' && typeof wake!=='undefined' && Math.abs(BOAT.speed)>7 && Math.random()<Math.abs(BOAT.speed)*0.02)
+    emit(wake, BOAT.x-Math.sin(BOAT.heading)*5, sy+0.1, BOAT.z-Math.cos(BOAT.heading)*5, 1,0.45,2.2,1.1);
+}
+function mooredBoatBob(){
+  const s1=seaY(BOAT.x,BOAT.z,gameT); boat3d.position.set(BOAT.x,s1,BOAT.z); boat3d.rotation.set(Math.sin(gameT*0.7)*0.03,BOAT.heading,Math.sin(gameT*0.5)*0.05);
+  const s2=seaY(boatDeco.position.x,boatDeco.position.z,gameT); boatDeco.position.y=s2; boatDeco.rotation.set(0,DOCK.ang+Math.PI,Math.sin(gameT*0.6+1.3)*0.05);
+}
 function buildPerson(g, col){
   // ===== Low-poly walking tourist. Faces +Z, feet at y=0, ~1.85m, centred on x/z. =====
   // Only THREE + col are used. col = {shirt, pants, skin, hair} (hex ints).
@@ -4751,13 +5840,14 @@ function updateCar(dt){
   CAR.y=landH(CAR.x,CAR.z);
   car3d.position.set(CAR.x,CAR.y,CAR.z); car3d.rotation.y=CAR.heading+carYaw;
 }
-const PROMPTS={dock:'Press  F  — dock & explore on foot', drive:'Press  F  — get in the car', ride:'Press  F  — ride the jetski', exit:'Press  F  — get out of the car'};
+const PROMPTS={dock:'Press  F  — dock & explore on foot', drive:'Press  F  — get in the car', ride:'Press  F  — ride the jetski', exit:'Press  F  — get out of the car', board:'Press  F  — board the boat', land:'Press  F  — tie up at the dock'};
 function updateInteract(){
   let a=null;
   if(pmode==='ski'){ if(mode==='free' && B.speed<9 && dockReach(B.x,B.z)) a='dock'; }
-  else if(pmode==='foot'){ const dC=carReady?Math.hypot(CAR.x-AV.x,CAR.z-AV.z):1e9, dS=Math.hypot(B.x-AV.x,B.z-AV.z);
-    if(dC<5 && dC<=dS) a='drive'; else if(dS<6.5) a='ride'; }
+  else if(pmode==='foot'){ const dC=carReady?Math.hypot(CAR.x-AV.x,CAR.z-AV.z):1e9, dS=Math.hypot(B.x-AV.x,B.z-AV.z), dB=Math.hypot(BOAT.x-AV.x,BOAT.z-AV.z);
+    if(dB<12 && dB<=dC && dB<=dS) a='board'; else if(dC<5 && dC<=dS) a='drive'; else if(dS<6.5) a='ride'; }
   else if(pmode==='car'){ if(Math.abs(CAR.speed)<2.5) a='exit'; }
+  else if(pmode==='boat'){ if(Math.abs(BOAT.speed)<3 && dockReach(BOAT.x,BOAT.z)) a='land'; }
   nearAction=a; promptEl.textContent=a?PROMPTS[a]:''; promptEl.style.opacity=a?'1':'0';
 }
 function doAction(a){ if(!a)return; SFX.select&&SFX.select();
@@ -4769,6 +5859,29 @@ function doAction(a){ if(!a)return; SFX.select&&SFX.select();
   else if(a==='drive'){ pmode='car'; avatar.visible=false; CAR.speed=0; toast('Driving','#aef0ff'); }
   else if(a==='ride'){ pmode='ski'; avatar.visible=false; B.speed=0; toast('Back on the jetski','#aef0ff'); }
   else if(a==='exit'){ pmode='foot'; AV.x=CAR.x+Math.cos(CAR.heading)*2.6; AV.z=CAR.z-Math.sin(CAR.heading)*2.6; AV.heading=CAR.heading; AV.speed=0; AV.y=avatarGround(AV.x,AV.z); avatar.visible=true; toast('On foot','#aef0ff'); }
+  else if(a==='board'){ pmode='boat'; BOAT.moored=false; avatar.visible=false; BOAT.x=BOAT_MOOR.x; BOAT.z=BOAT_MOOR.z; BOAT.heading=BOAT_MOOR.heading; BOAT.speed=0; toast('Boating — head out into the bay','#aef0ff'); }
+  else if(a==='land'){ pmode='foot'; BOAT.moored=true; BOAT.x=BOAT_MOOR.x; BOAT.z=BOAT_MOOR.z; BOAT.heading=BOAT_MOOR.heading; BOAT.speed=0;
+    let al=(BOAT.x-DOCK.cx)*DOCK.dx+(BOAT.z-DOCK.cz)*DOCK.dz; al=Math.max(DOCK.start+3,Math.min(DOCK.endCd-3,al));
+    AV.x=DOCK.cx+DOCK.dx*al; AV.z=DOCK.cz+DOCK.dz*al; AV.heading=DOCK.ang+Math.PI; AV.speed=0; AV.y=DOCK.deckTop; avatar.visible=true; toast('Tied up — back on the dock','#aef0ff'); }
+}
+
+// ===== free orbit camera: drag the mouse to swing around, scroll to zoom, press C to recenter =====
+const cam={ yaw:0, pitch:0.0, dist:1.0, drag:false, px:0, py:0, lastDrag:-99 };
+(function(){ const dom=renderer.domElement;
+  dom.addEventListener('pointerdown', function(e){ if(e.pointerType && e.pointerType!=='mouse') return; cam.drag=true; cam.px=e.clientX; cam.py=e.clientY; });
+  dom.addEventListener('contextmenu', function(e){ e.preventDefault(); });
+  dom.addEventListener('wheel', function(e){ cam.dist=THREE.MathUtils.clamp(cam.dist*(1+(e.deltaY>0?1:-1)*0.09),0.45,3.4); cam.lastDrag=gameT; }, {passive:true});
+  window.addEventListener('pointerup', function(){ cam.drag=false; });
+  window.addEventListener('pointermove', function(e){ if(!cam.drag) return; const dx=e.clientX-cam.px, dy=e.clientY-cam.py; cam.px=e.clientX; cam.py=e.clientY;
+    cam.yaw-=dx*0.006; cam.pitch=THREE.MathUtils.clamp(cam.pitch+dy*0.005,-0.35,1.15); cam.lastDrag=gameT; });
+  window.addEventListener('keydown', function(e){ if(e.key==='c'||e.key==='C'){ cam.yaw=0; cam.pitch=0; cam.dist=1; } });
+})();
+const _camOrb=new THREE.Vector3();
+function chasePos(px,py,pz, baseYaw, baseBack, baseUp, dt, minY){
+  const yaw=baseYaw+cam.yaw, dist=baseBack*cam.dist, ho=Math.cos(cam.pitch);
+  _camOrb.set(px - Math.sin(yaw)*dist*ho, py+baseUp + Math.sin(cam.pitch)*dist, pz - Math.cos(yaw)*dist*ho);
+  camera.position.lerp(_camOrb, Math.min(1,dt*5));
+  if(minY!==undefined && camera.position.y<minY) camera.position.y=minY;
 }
 
 function loop(now){
@@ -4783,13 +5896,14 @@ function loop(now){
     storm = mode==='trial' ? Math.min(1, storm+dt*0.011) : Math.min(0.45, storm+dt*0.004);
     if(pmode==='foot'){ updateFoot(dt); }
     else if(pmode==='car'){ updateCar(dt); }
+    else if(pmode==='boat'){ updateBoat(dt); }
     else {
     // input (jetski)
     const thr=(keys['w']||keys['arrowup']||touching)?1:0, brk=(keys['s']||keys['arrowdown'])?1:0;
     let steer=((keys['a']||keys['arrowleft'])?1:0)-((keys['d']||keys['arrowright'])?1:0)-touchSteer;
     steer=THREE.MathUtils.clamp(steer,-1,1);
-    const boost=keys['shift']?1:0, maxS=31+boost*14;
-    B.speed=THREE.MathUtils.clamp(B.speed+(thr*(40+boost*28)-brk*34-9)*dt,0,maxS);
+    const boost=keys['shift']?1:0, maxS=41+boost*17;
+    B.speed=THREE.MathUtils.clamp(B.speed+(thr*(48+boost*34)-brk*36-9)*dt,0,maxS);
     const grip=B.airborne?0.25:1;
     B.heading+=steer*dt*(1.0+B.speed*0.04)*grip;
     _fwd.set(Math.sin(B.heading),0,Math.cos(B.heading));
@@ -4867,20 +5981,25 @@ function loop(now){
   WATER.position.set(Math.round(FX),0,Math.round(FZ));
   if(seaU){ seaU.uTime.value=gameT; seaU.uStorm.value=storm; seaU.uOff.value.set(WATER.position.x,WATER.position.z); }
 
-  // camera (per mode)
+  // camera (per mode) — user orbit (cam.yaw/pitch/dist) layered on the chase view
+  { const mv=(pmode==='ski')?B.speed:(pmode==='car')?Math.abs(CAR.speed):(pmode==='boat'&&typeof BOAT!=='undefined')?Math.abs(BOAT.speed):0;
+    if(gameT-cam.lastDrag>1.5 && mv>6) cam.yaw-=cam.yaw*Math.min(0.9,dt*0.7); }   // at speed, ease the view back behind
   if(running && pmode==='ski'){ const back=9.5+B.speed*0.2, up=4.0+B.pitch*4;
-    _camT.set(B.x-_fwd.x*back,B.y+up,B.z-_fwd.z*back); camera.position.lerp(_camT,Math.min(1,dt*4));
-    if(camera.position.y<surf+2.2) camera.position.y=surf+2.2;
+    chasePos(B.x,B.y,B.z, B.heading, back, up, dt, surf+2.2);
     shake*=Math.pow(0.0001,dt); camera.position.x+=(Math.random()-0.5)*shake*2; camera.position.y+=(Math.random()-0.5)*shake*1.6;
     camera.lookAt(B.x+_fwd.x*10,B.y+1.6,B.z+_fwd.z*10);
     fovSm+=((62+B.speed*0.65+boostFov())-fovSm)*Math.min(1,dt*3); camera.fov=fovSm; camera.updateProjectionMatrix();
   } else if(running && pmode==='foot'){ const fw=Math.sin(AV.heading),fz=Math.cos(AV.heading);
-    _camT.set(AV.x-fw*6, AV.y+3.4, AV.z-fz*6); camera.position.lerp(_camT,Math.min(1,dt*6));
+    chasePos(AV.x,AV.y,AV.z, AV.heading, 6, 3.4, dt);
     camera.lookAt(AV.x+fw*2.5, AV.y+1.3, AV.z+fz*2.5); camera.fov=62; camera.updateProjectionMatrix();
   } else if(running && pmode==='car'){ const fw=Math.sin(CAR.heading),fz=Math.cos(CAR.heading), back=9+Math.abs(CAR.speed)*0.22;
-    _camT.set(CAR.x-fw*back, CAR.y+4.0, CAR.z-fz*back); camera.position.lerp(_camT,Math.min(1,dt*4));
+    chasePos(CAR.x,CAR.y,CAR.z, CAR.heading, back, 4.0, dt);
     camera.lookAt(CAR.x+fw*9, CAR.y+1.3, CAR.z+fz*9);
     fovSm+=((60+Math.abs(CAR.speed)*0.55)-fovSm)*Math.min(1,dt*3); camera.fov=fovSm; camera.updateProjectionMatrix();
+  } else if(running && pmode==='boat' && typeof BOAT!=='undefined'){ const fw=Math.sin(BOAT.heading),fz=Math.cos(BOAT.heading), back=14+Math.abs(BOAT.speed)*0.28;
+    chasePos(BOAT.x,BOAT.y,BOAT.z, BOAT.heading, back, 6.2, dt, seaY(BOAT.x,BOAT.z,gameT)+2.2);
+    camera.lookAt(BOAT.x+fw*11, BOAT.y+2.0, BOAT.z+fz*11);
+    fovSm+=((61+Math.abs(BOAT.speed)*0.5)-fovSm)*Math.min(1,dt*3); camera.fov=fovSm; camera.updateProjectionMatrix();
   } else { // slow idle orbit showing the bay
     const a=gameT*0.12; _fwd.set(Math.sin(B.heading),0,Math.cos(B.heading));
     camera.position.set(B.x+Math.sin(a)*26, surf+9, B.z+Math.cos(a)*26); camera.lookAt(B.x,surf+1.5,B.z);
@@ -4893,6 +6012,8 @@ function loop(now){
   for(let i=0;i<LM_ANIMS.length;i++){ try{ LM_ANIMS[i].fn(LM_ANIMS[i].g, gameT, dt); }catch(e){} }
   updateTraffic(dt);
   updateNPCs(dt);
+  updateWaterTraffic(dt);
+  if(pmode!=='boat') mooredBoatBob();
   composer.render();
 }
 function boostFov(){ return keys['shift']?4:0; }
@@ -4950,7 +6071,7 @@ window.__wb={B,WAVES,seaY,seaNormal,GATES,keys,get composer(){return composer;},
   start:start, get mode(){return mode;}, set mode(v){mode=v;}, CITY, landH, recenter,
   camera, THREE:window.THREE, renderRaw(){ composer.render(); },
   setRenderScale:setRenderScale, get renderScale(){return renderScale;}, get fps(){return fpsSmooth;},
-  get pmode(){return pmode;}, set pmode(v){pmode=v;}, AV, CAR, DOCK, doAction, get nearAction(){return nearAction;}, dockReach, avatar, car3d};
+  get pmode(){return pmode;}, set pmode(v){pmode=v;}, AV, CAR, DOCK, doAction, updateInteract, get nearAction(){return nearAction;}, dockReach, avatar, car3d, cam, BOAT, boat3d, BOAT_MOOR};
 </script>
 </body>
 </html>
