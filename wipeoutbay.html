@@ -303,6 +303,7 @@ function buildCity(){
     if((i+70)%3===0 || (j+70)%4===0) continue;                    // street grid gaps
     const wx=cx+i*34+(Math.random()-0.5)*7, wz=cz+j*34+(Math.random()-0.5)*7, h0=landH(wx,wz);
     if(h0<3.5) continue;                                          // only on the dry plateau
+    if(LANDMARK_DEFS.some(function(L){return Math.hypot(wx-(cx+L.dx),wz-(cz+L.dz))<L.clear;})) continue;  // leave room for landmarks
     const cd=Math.hypot(wx-cx,wz-cz), bh=16+(1-Math.min(1,cd/300))*72*(0.5+Math.random()*0.7)+Math.random()*14;
     const bw=12+Math.random()*9, bd=12+Math.random()*9, geo=new THREE.BoxGeometry(bw,bh,bd);
     scaleBoxUV(geo,Math.max(1,Math.round(bw/6)),Math.max(2,Math.round(bh/6)));
@@ -310,6 +311,7 @@ function buildCity(){
     if(Math.random()<0.5){ const r=new THREE.Mesh(new THREE.BoxGeometry(bw*0.4,2+Math.random()*4,bd*0.4),variants[0]); r.position.set(wx,h0-1+bh+1,wz); grp.add(r); }
   }
   buildDock(grp);
+  LM_ANIMS=buildLandmarks(grp);
 }
 function buildDock(grp){
   const cx=CITY.x, cz=CITY.z, d=new THREE.Vector2(-cx,-cz).normalize(), rg=new THREE.Vector2(d.y,-d.x), ang=Math.atan2(d.x,d.y);
@@ -329,6 +331,1262 @@ function buildDock(grp){
   for(let b=0;b<2;b++){ const bm=new THREE.Mesh(new THREE.BoxGeometry(3,1.6,8),new THREE.MeshStandardMaterial({color:b?0xdedede:0xbf3a30,roughness:0.4,metalness:0.2}));
     bm.position.set(cx+d.x*(endCd-12)+rg.x*(segX*cols*0.5+5)*(b?1:-1),1.2,cz+d.y*(endCd-12)+rg.y*(segX*cols*0.5+5)*(b?1:-1)); bm.rotation.y=ang; grp.add(bm); }
 }
+
+// ===== CITY LANDMARKS (designed + r128-verified by the landmarks workflow) =====
+let LM_ANIMS=[];
+const LANDMARK_DEFS=[
+{name:"Bayfront Ferris Wheel", dx:40, dz:210, faceWater:true, clear:46,
+build:function(g){
+
+// ============ BAYFRONT FERRIS WHEEL ============
+// Hub at y=40, wheel radius 36 -> top at y=76. Base sits at g local y=0.
+const R = 36;            // wheel (rim) radius
+const HUB_Y = 40;        // hub / axle height
+const N = 24;            // cabins and outer spoke pairs
+const STEEL = new THREE.MeshStandardMaterial({ color:0xc9d2da, metalness:0.85, roughness:0.34, envMapIntensity:0.7 });
+const DARKSTEEL = new THREE.MeshStandardMaterial({ color:0x4a525c, metalness:0.8, roughness:0.45, envMapIntensity:0.6 });
+const HUBMAT = new THREE.MeshStandardMaterial({ color:0xe6ebef, metalness:0.92, roughness:0.22, envMapIntensity:0.85 });
+const CABINSHELL = new THREE.MeshStandardMaterial({ color:0xf2f4f6, metalness:0.25, roughness:0.4, envMapIntensity:0.6 });
+const GLASS = new THREE.MeshStandardMaterial({ color:0x1a3a4a, metalness:0.6, roughness:0.12, envMapIntensity:1.1, transparent:true, opacity:0.55 });
+const RIMGLOW = new THREE.MeshStandardMaterial({ color:0xffffff, emissive:0xff3da6, emissiveIntensity:2.4, roughness:0.4, metalness:0.0 });
+const SPOKEGLOW = new THREE.MeshStandardMaterial({ color:0xdfe6ec, emissive:0x1166ff, emissiveIntensity:0.55, metalness:0.7, roughness:0.4, envMapIntensity:0.6 });
+
+// ---- ground platform / boarding base (bottom sits at y=0) ----
+const plat = new THREE.Mesh(new THREE.CylinderGeometry(14, 16, 2.4, 32), DARKSTEEL);
+plat.position.y = 1.2; plat.castShadow = true; plat.receiveShadow = true; g.add(plat);
+const deck = new THREE.Mesh(new THREE.CylinderGeometry(13, 13, 0.5, 32),
+  new THREE.MeshStandardMaterial({ color:0x2b3138, roughness:0.9, metalness:0.1, envMapIntensity:0.3 }));
+deck.position.y = 2.55; deck.receiveShadow = true; g.add(deck);
+
+// ---- two A-frame support legs (4 splayed legs meeting at the axle) ----
+const LEG_SPLAY = 26;
+const LEG_HALF  = 7;
+const legGeo = new THREE.CylinderGeometry(1.5, 2.1, 1, 12);
+const apex = new THREE.Vector3(0, HUB_Y, 0);
+const up = new THREE.Vector3(0, 1, 0);
+const tmpDir = new THREE.Vector3();
+function addLeg(fx, fz){
+  const foot = new THREE.Vector3(fx, 2.5, fz);
+  tmpDir.copy(apex).sub(foot);
+  const len = tmpDir.length();
+  const mid = foot.clone().addScaledVector(tmpDir, 0.5);
+  const leg = new THREE.Mesh(legGeo, STEEL);
+  leg.scale.set(1, len, 1);
+  leg.position.copy(mid);
+  leg.quaternion.setFromUnitVectors(up, tmpDir.clone().normalize());
+  leg.castShadow = true; g.add(leg);
+}
+addLeg(-LEG_HALF, -LEG_SPLAY); addLeg( LEG_HALF, -LEG_SPLAY);
+addLeg(-LEG_HALF,  LEG_SPLAY); addLeg( LEG_HALF,  LEG_SPLAY);
+// cross-braces between the two A-frames near the top
+for (const yy of [HUB_Y*0.55, HUB_Y*0.82]){
+  const w = THREE.MathUtils.lerp(LEG_SPLAY*2*0.9, 4, yy/HUB_Y);
+  const brace = new THREE.Mesh(new THREE.CylinderGeometry(0.7,0.7,w,8), DARKSTEEL);
+  brace.rotation.x = Math.PI/2; brace.position.set(0, yy, 0); brace.castShadow = true; g.add(brace);
+}
+// diagonal X-braces on each A-frame face
+function addX(fz){
+  const half = LEG_HALF;
+  for (const s of [1,-1]){
+    const a = new THREE.Vector3(-s*half, 3, fz), b = new THREE.Vector3(s*half*0.2, HUB_Y*0.6, fz*0.6);
+    tmpDir.copy(b).sub(a); const len=tmpDir.length();
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(0.45,0.45,len,6), DARKSTEEL);
+    m.position.copy(a).addScaledVector(tmpDir,0.5);
+    m.quaternion.setFromUnitVectors(up, tmpDir.clone().normalize());
+    m.castShadow = true; g.add(m);
+  }
+}
+addX(-LEG_SPLAY); addX(LEG_SPLAY);
+
+// ============ ROTATING WHEEL GROUP (spins about local Z; rim in X-Y plane) ============
+const wheel = new THREE.Group();
+wheel.position.set(0, HUB_Y, 0);
+g.add(wheel);
+g.userData.wheel = wheel;
+
+// hub axle + cap (axle along Z)
+const axle = new THREE.Mesh(new THREE.CylinderGeometry(1.6,1.6, LEG_SPLAY*2+3, 16), HUBMAT);
+axle.rotation.x = Math.PI/2; axle.castShadow = true; wheel.add(axle);
+const hubCap = new THREE.Mesh(new THREE.CylinderGeometry(3.4,3.4,2.2,20), HUBMAT);
+hubCap.rotation.x = Math.PI/2; hubCap.castShadow = true; wheel.add(hubCap);
+
+// twin rims using torus (lies in X-Y plane by default)
+const outerRim = new THREE.Mesh(new THREE.TorusGeometry(R, 0.9, 10, 64), SPOKEGLOW);
+outerRim.castShadow = true; wheel.add(outerRim);
+const innerRim = new THREE.Mesh(new THREE.TorusGeometry(R*0.93, 0.55, 8, 64), STEEL);
+wheel.add(innerRim);
+
+// ---- spoke cables (InstancedMesh): hub -> rim, two staggered rings ----
+const spokeGeo = new THREE.CylinderGeometry(0.18, 0.18, 1, 5);
+const SPOKES = N * 2;
+const spokes = new THREE.InstancedMesh(spokeGeo, SPOKEGLOW, SPOKES);
+spokes.castShadow = false; spokes.frustumCulled = false;
+const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), pos = new THREE.Vector3(), scl = new THREE.Vector3();
+const ringR = R*0.93;
+const radial = new THREE.Vector3();
+let si = 0;
+for (let ring = 0; ring < 2; ring++){
+  const off = ring * (Math.PI / N);
+  for (let i = 0; i < N; i++){
+    const a = (i / N) * Math.PI * 2 + off;
+    const rimx = Math.cos(a) * ringR, rimy = Math.sin(a) * ringR;
+    pos.set(rimx*0.5, rimy*0.5, 0);
+    scl.set(1, ringR, 1);
+    radial.set(Math.cos(a), Math.sin(a), 0);
+    q.setFromUnitVectors(up, radial);
+    m4.compose(pos, q, scl);
+    spokes.setMatrixAt(si++, m4);
+  }
+}
+spokes.instanceMatrix.needsUpdate = true;
+wheel.add(spokes);
+
+// ---- coloured rim lights (InstancedMesh of glowing spheres around the rim) ----
+const LIGHTS = N * 2;
+const bulbGeo = new THREE.SphereGeometry(0.62, 8, 8);
+const bulbs = new THREE.InstancedMesh(bulbGeo, RIMGLOW, LIGHTS);
+bulbs.frustumCulled = false;
+const palette = [0xff3da6, 0x3df0ff, 0xffd23d, 0x7cff3d, 0xff6a3d, 0xb44dff];
+const idq = new THREE.Quaternion(), one = new THREE.Vector3(1,1,1);
+let bi = 0;
+for (let i = 0; i < LIGHTS; i++){
+  const a = (i / LIGHTS) * Math.PI * 2;
+  pos.set(Math.cos(a)*R, Math.sin(a)*R, 0);
+  m4.compose(pos, idq, one);
+  bulbs.setMatrixAt(bi, m4);
+  bulbs.setColorAt(bi, new THREE.Color(palette[i % palette.length]));
+  bi++;
+}
+bulbs.instanceMatrix.needsUpdate = true;
+if (bulbs.instanceColor) bulbs.instanceColor.needsUpdate = true;
+wheel.add(bulbs);
+g.userData.bulbs = bulbs;
+
+// ============ GONDOLA CABINS (InstancedMesh) — hang under pivots, stay upright ============
+const cabinGeo = new THREE.BoxGeometry(3.4, 3.0, 3.4);
+const cabins = new THREE.InstancedMesh(cabinGeo, CABINSHELL, N);
+cabins.castShadow = true; cabins.frustumCulled = false;
+const roofGeo = new THREE.ConeGeometry(2.7, 1.5, 4);
+const roofs = new THREE.InstancedMesh(roofGeo, DARKSTEEL, N);
+roofs.castShadow = true; roofs.frustumCulled = false;
+const glassGeo = new THREE.BoxGeometry(3.46, 1.7, 3.46);
+const glassMesh = new THREE.InstancedMesh(glassGeo, GLASS, N);
+glassMesh.frustumCulled = false;
+const armGeo = new THREE.CylinderGeometry(0.22, 0.22, 1, 6);
+const arms = new THREE.InstancedMesh(armGeo, STEEL, N);
+arms.castShadow = true; arms.frustumCulled = false;
+for (let i = 0; i < N; i++) cabins.setColorAt(i, new THREE.Color(palette[i % palette.length]).lerp(new THREE.Color(0xffffff),0.55));
+if (cabins.instanceColor) cabins.instanceColor.needsUpdate = true;
+wheel.add(cabins); wheel.add(roofs); wheel.add(glassMesh); wheel.add(arms);
+g.userData.cabins = cabins;
+g.userData.roofs  = roofs;
+g.userData.glass  = glassMesh;
+g.userData.arms   = arms;
+g.userData.N = N;
+g.userData.R = R;
+g.userData.cabinDrop = 4.4;   // pivot -> cabin centre drop (world-vertical)
+g.userData.roofUp = 2.1;      // cabin centre -> roof apex offset (world-vertical)
+g.userData.spin = 0;
+
+// reusable scratch objects for animate (no per-frame allocations)
+g.userData._tmp = {
+  cabinQ: new THREE.Quaternion(),   // upright (counter-rotation) quaternion
+  armQ:   new THREE.Quaternion(),   // identity for the radial arm
+  p:      new THREE.Vector3(),
+  s:      new THREE.Vector3(1,1,1),
+  m:      new THREE.Matrix4(),
+  e:      new THREE.Euler()
+};
+
+// initialise everything once at spin=0 (animate keeps it updated each frame)
+(function initOnce(){
+  const T = g.userData._tmp;
+  const drop = g.userData.cabinDrop, roofUp = g.userData.roofUp;
+  T.armQ.identity();
+  for (let i = 0; i < N; i++){
+    const a = (i / N) * Math.PI * 2;
+    const px = Math.cos(a)*R, py = Math.sin(a)*R;
+    // at spin=0 wheel rotation is identity, so wheel-local == world.
+    // cabin body
+    T.p.set(px, py - drop, 0); T.s.set(1,1,1);
+    T.m.compose(T.p, T.armQ, T.s); cabins.setMatrixAt(i, T.m);
+    // glass (concentric with cabin)
+    T.m.compose(T.p, T.armQ, T.s); glassMesh.setMatrixAt(i, T.m);
+    // roof apex above cabin centre
+    T.p.set(px, py - drop + roofUp, 0);
+    T.m.compose(T.p, T.armQ, T.s); roofs.setMatrixAt(i, T.m);
+    // arm: vertical link from pivot (px,py) down to cabin top, midpoint, length=drop
+    T.p.set(px, py - drop*0.5, 0); T.s.set(1, drop, 1);
+    T.m.compose(T.p, T.armQ, T.s); arms.setMatrixAt(i, T.m);
+  }
+  cabins.instanceMatrix.needsUpdate = true;
+  glassMesh.instanceMatrix.needsUpdate = true;
+  roofs.instanceMatrix.needsUpdate = true;
+  arms.instanceMatrix.needsUpdate = true;
+})();
+
+},
+animate:function(g,t,dt){
+
+// Slow continuous rotation. The wheel spins about its local Z. Cabins/arms are children
+// of the wheel, so to make a gondola HANG STRAIGHT DOWN (and stay upright) in world space
+// we must place its body in WHEEL-LOCAL space such that after the wheel's Rz(spin) it ends
+// up directly below the rim pivot. We do that by rotating the desired world offset by -spin.
+const ud = g.userData;
+if (!ud.wheel) return;
+const SPEED = 0.10;                 // rad/s — slow, stately
+ud.spin = (ud.spin || 0) + SPEED * dt;
+ud.wheel.rotation.z = ud.spin;
+
+const N = ud.N, R = ud.R, drop = ud.cabinDrop, roofUp = ud.roofUp;
+const T = ud._tmp;
+const spin = ud.spin;
+const cs = Math.cos(-spin), sn = Math.sin(-spin);   // Rz(-spin) for local placement
+// upright orientation: counter the wheel's roll so cabins stay level in world space
+T.e.set(0, 0, -spin);
+T.cabinQ.setFromEuler(T.e);
+T.armQ.identity();
+
+const pcs = Math.cos(spin), psn = Math.sin(spin);
+for (let i = 0; i < N; i++){
+  const a = (i / N) * Math.PI * 2;          // fixed pivot angle in wheel space
+  const px = Math.cos(a) * R, py = Math.sin(a) * R;
+  // --- pivot world position after wheel spin ---
+  const pwx = px*pcs - py*psn;
+  const pwy = px*psn + py*pcs;
+  // === cabin body: desired world = (pwx, pwy-drop). Convert to wheel-local via Rz(-spin) ===
+  let wx = pwx,        wy = pwy - drop;
+  T.p.set(wx*cs - wy*sn, wx*sn + wy*cs, 0); T.s.set(1,1,1);
+  T.m.compose(T.p, T.cabinQ, T.s); ud.cabins.setMatrixAt(i, T.m);
+  // glass (concentric with cabin body)
+  ud.glass.setMatrixAt(i, T.m);
+  // === roof apex: desired world = (pwx, pwy-drop+roofUp) ===
+  wx = pwx;            wy = pwy - drop + roofUp;
+  T.p.set(wx*cs - wy*sn, wx*sn + wy*cs, 0);
+  T.m.compose(T.p, T.cabinQ, T.s); ud.roofs.setMatrixAt(i, T.m);
+  // === arm: vertical link, world from pivot down to cabin top; midpoint world = (pwx, pwy-drop*0.5) ===
+  wx = pwx;            wy = pwy - drop*0.5;
+  T.p.set(wx*cs - wy*sn, wx*sn + wy*cs, 0); T.s.set(1, drop, 1);
+  T.m.compose(T.p, T.cabinQ, T.s); ud.arms.setMatrixAt(i, T.m);
+}
+ud.cabins.instanceMatrix.needsUpdate = true;
+ud.glass.instanceMatrix.needsUpdate = true;
+ud.roofs.instanceMatrix.needsUpdate = true;
+ud.arms.instanceMatrix.needsUpdate = true;
+
+// twinkle the rim lights via emissiveIntensity pulse (cheap, single shared material)
+if (ud.bulbs) ud.bulbs.material.emissiveIntensity = 1.9 + Math.sin(t * 2.0) * 0.7;
+
+}},
+{name:"Harborlight Lighthouse", dx:255, dz:40, faceWater:false, clear:24,
+build:function(g){
+// ===== Harborlight Lighthouse =====
+// Base sits at g local y=0. Total height ~36.6 m.
+const STONE_W = new THREE.MeshStandardMaterial({color:0xf2f0ea, roughness:0.82, metalness:0.0, envMapIntensity:0.45});
+const STONE_R = new THREE.MeshStandardMaterial({color:0xc0392b, roughness:0.78, metalness:0.0, envMapIntensity:0.45});
+const DARKMET = new THREE.MeshStandardMaterial({color:0x222831, roughness:0.45, metalness:0.7, envMapIntensity:0.7});
+const TRIM    = new THREE.MeshStandardMaterial({color:0x2b3138, roughness:0.5, metalness:0.5, envMapIntensity:0.6});
+const GLASS   = new THREE.MeshStandardMaterial({color:0xaecfe0, roughness:0.08, metalness:0.0, transparent:true, opacity:0.32, envMapIntensity:1.0});
+const ROCK    = new THREE.MeshStandardMaterial({color:0x6f7479, roughness:0.95, metalness:0.0, envMapIntensity:0.3});
+
+const RADSEG = 28;
+
+// --- rocky plinth the tower stands on (y 0 -> 2.2) ---
+const plinth = new THREE.Mesh(new THREE.CylinderGeometry(7.0, 8.6, 2.2, RADSEG, 1), ROCK);
+plinth.geometry.translate(0, 1.1, 0);
+g.add(plinth);
+// small irregular boulders around the base (seated on/just into the plinth)
+for(let i=0;i<7;i++){
+  const a = i/7*Math.PI*2 + 0.3;
+  const r = 8.0 + Math.sin(i*2.1)*0.6;
+  const s = 1.0 + (i%3)*0.45;
+  const b = new THREE.Mesh(new THREE.DodecahedronGeometry(s,0), ROCK);
+  b.position.set(Math.cos(a)*r, s*0.7, Math.sin(a)*r);   // rest on/above y=0 (slight natural embed)
+  b.rotation.set(i*0.7, i*1.3, i*0.5);
+  g.add(b);
+}
+
+// --- tapered banded tower (red/white) from y=2.2 up to y=27 ---
+const towerBase = 2.2;
+const towerTop  = 27.0;
+const rBottom   = 5.6;
+const rUpper    = 3.0;
+const bands     = 9;
+const bandH     = (towerTop - towerBase) / bands;
+function radAt(y){ const f=(y-towerBase)/(towerTop-towerBase); return rBottom + (rUpper-rBottom)*f; }
+for(let i=0;i<bands;i++){
+  const y0 = towerBase + i*bandH;
+  const r0 = radAt(y0), r1 = radAt(y0+bandH);
+  const mat = (i%2===0) ? STONE_W : STONE_R;
+  const seg = new THREE.Mesh(new THREE.CylinderGeometry(r1, r0, bandH, RADSEG, 1, true), mat);
+  seg.geometry.translate(0, y0 + bandH/2, 0);
+  g.add(seg);
+}
+// thin trim ring where tower meets plinth
+const baseRing = new THREE.Mesh(new THREE.CylinderGeometry(rBottom+0.18, rBottom+0.35, 0.6, RADSEG, 1), TRIM);
+baseRing.geometry.translate(0, towerBase+0.3, 0);
+g.add(baseRing);
+
+// a few small windows climbing the shaft (on the +z / water-facing face)
+const winMat = new THREE.MeshStandardMaterial({color:0x121821, roughness:0.3, metalness:0.4, envMapIntensity:0.5});
+for(let i=0;i<3;i++){
+  const wy = 7.5 + i*5.0;
+  const wr = radAt(wy);
+  const win = new THREE.Mesh(new THREE.BoxGeometry(1.0, 1.7, 0.5), winMat);
+  win.position.set(0, wy, wr+0.05);   // sits on the +z (water-facing) shaft face
+  g.add(win);
+}
+
+// --- gallery platform (corbel ring) at y=27 ---
+const galleryY = 27.0;
+const gRad = radAt(galleryY);
+// flared corbel under the deck
+const corbel = new THREE.Mesh(new THREE.CylinderGeometry(gRad+1.7, gRad+0.2, 1.1, RADSEG, 1), STONE_W);
+corbel.geometry.translate(0, galleryY+0.55, 0);
+g.add(corbel);
+// the walkway deck
+const deck = new THREE.Mesh(new THREE.CylinderGeometry(gRad+1.9, gRad+1.9, 0.35, RADSEG, 1), DARKMET);
+deck.geometry.translate(0, galleryY+1.25, 0);
+g.add(deck);
+const deckTop = galleryY + 1.42;
+
+// --- railing around the gallery: top rail (torus) + vertical balusters ---
+const railR = gRad + 1.78;
+const topRail = new THREE.Mesh(new THREE.TorusGeometry(railR, 0.07, 8, RADSEG), DARKMET);
+topRail.rotation.x = Math.PI/2;
+topRail.position.y = deckTop + 1.15;
+g.add(topRail);
+const midRail = new THREE.Mesh(new THREE.TorusGeometry(railR, 0.05, 8, RADSEG), DARKMET);
+midRail.rotation.x = Math.PI/2;
+midRail.position.y = deckTop + 0.6;
+g.add(midRail);
+// instanced balusters
+const nBal = 24;
+const balGeo = new THREE.CylinderGeometry(0.045, 0.045, 1.15, 6);
+balGeo.translate(0, 0.575, 0);
+const bals = new THREE.InstancedMesh(balGeo, DARKMET, nBal);
+const dummy = new THREE.Object3D();
+for(let i=0;i<nBal;i++){
+  const a = i/nBal*Math.PI*2;
+  dummy.position.set(Math.cos(a)*railR, deckTop, Math.sin(a)*railR);
+  dummy.rotation.set(0,0,0);
+  dummy.updateMatrix();
+  bals.setMatrixAt(i, dummy.matrix);
+}
+bals.instanceMatrix.needsUpdate = true;
+g.add(bals);
+
+// --- lantern room: glass cylinder with mullions, y from deckTop to +3.2 ---
+const lanternR = gRad + 0.2;
+const lanternH = 3.2;
+const lanternY0 = deckTop + 0.05;
+// base ring of the lantern housing
+const lanRingB = new THREE.Mesh(new THREE.CylinderGeometry(lanternR+0.15, lanternR+0.15, 0.4, RADSEG, 1), DARKMET);
+lanRingB.geometry.translate(0, lanternY0+0.2, 0);
+g.add(lanRingB);
+// glass
+const glass = new THREE.Mesh(new THREE.CylinderGeometry(lanternR, lanternR, lanternH-0.4, RADSEG, 1, true), GLASS);
+glass.geometry.translate(0, lanternY0+0.4+(lanternH-0.4)/2, 0);
+g.add(glass);
+// vertical mullions (instanced)
+const nMul = 12;
+const mulGeo = new THREE.BoxGeometry(0.1, lanternH-0.4, 0.12);
+mulGeo.translate(0, lanternY0+0.4+(lanternH-0.4)/2, 0);
+const muls = new THREE.InstancedMesh(mulGeo, DARKMET, nMul);
+for(let i=0;i<nMul;i++){
+  const a = i/nMul*Math.PI*2;
+  dummy.position.set(Math.cos(a)*lanternR, 0, Math.sin(a)*lanternR);
+  dummy.rotation.set(0, -a, 0);
+  dummy.updateMatrix();
+  muls.setMatrixAt(i, dummy.matrix);
+}
+muls.instanceMatrix.needsUpdate = true;
+g.add(muls);
+// top ring of lantern housing
+const lanRingT = new THREE.Mesh(new THREE.CylinderGeometry(lanternR+0.15, lanternR+0.15, 0.35, RADSEG, 1), DARKMET);
+const lanternTopY = lanternY0 + lanternH;
+lanRingT.geometry.translate(0, lanternTopY-0.1, 0);
+g.add(lanRingT);
+
+// --- domed roof + finial/ventilator ball ---
+const dome = new THREE.Mesh(new THREE.SphereGeometry(lanternR+0.2, RADSEG, 12, 0, Math.PI*2, 0, Math.PI*0.5), DARKMET);
+dome.position.y = lanternTopY;
+g.add(dome);
+const ballR = 0.42;
+const finialBall = new THREE.Mesh(new THREE.SphereGeometry(ballR, 12, 10), DARKMET);
+const ballY = lanternTopY + (lanternR+0.2) + 0.15;
+finialBall.position.y = ballY;
+g.add(finialBall);
+const spire = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 1.0, 6), DARKMET);
+spire.position.y = ballY + ballR + 0.5;
+g.add(spire);
+
+// --- the rotating beacon assembly (inside the lantern) ---
+const beaconY = lanternY0 + 0.4 + (lanternH-0.4)/2;
+const beaconGroup = new THREE.Group();
+beaconGroup.position.y = beaconY;
+g.add(beaconGroup);
+// the glowing lamp core
+const LAMP = new THREE.MeshStandardMaterial({color:0xffffff, emissive:0xfff2c4, emissiveIntensity:3.4, roughness:0.3, metalness:0.0});
+const lampCore = new THREE.Mesh(new THREE.SphereGeometry(0.55, 16, 12), LAMP);
+beaconGroup.add(lampCore);
+// a Fresnel-style drum of glowing prisms around the lamp
+const DRUM = new THREE.MeshStandardMaterial({color:0xfff6da, emissive:0xffe39a, emissiveIntensity:1.6, roughness:0.15, metalness:0.0, transparent:true, opacity:0.85});
+const drum = new THREE.Mesh(new THREE.CylinderGeometry(0.95, 0.95, 1.7, 16, 1, true), DRUM);
+beaconGroup.add(drum);
+// bright directional emitter that defines the beam direction (tucked just inside the drum)
+const EMIT = new THREE.MeshStandardMaterial({color:0xffffff, emissive:0xfff4cf, emissiveIntensity:5.0, roughness:0.2, metalness:0.0});
+const emitter = new THREE.Mesh(new THREE.BoxGeometry(0.5, 1.3, 0.25), EMIT);
+emitter.position.set(0.78, 0, 0); // points +x in beacon local space
+beaconGroup.add(emitter);
+
+// --- two thin rotating light cones (the visible swept beams), opposite sides ---
+const BEAM = new THREE.MeshBasicMaterial({color:0xfff3cc, transparent:true, opacity:0.16, side:THREE.DoubleSide, depthWrite:false, blending:THREE.AdditiveBlending});
+const beamLen = 34;
+const beamGeo = new THREE.ConeGeometry(2.6, beamLen, 20, 1, true);
+// orient cone so its axis lies along +x; tip ends near the lamp, widens toward +x
+beamGeo.rotateZ(Math.PI/2);
+beamGeo.translate(beamLen/2, 0, 0);
+const beam1 = new THREE.Mesh(beamGeo, BEAM);
+beaconGroup.add(beam1);
+const beam2 = new THREE.Mesh(beamGeo.clone(), BEAM);
+beam2.rotation.y = Math.PI; // opposite direction
+beaconGroup.add(beam2);
+
+// --- a moving PointLight from the beacon for real illumination ---
+const beaconLight = new THREE.PointLight(0xfff0c4, 2.2, 90, 2.0);
+beaconLight.position.copy(beaconGroup.position);
+g.add(beaconLight);
+
+// stash animated parts
+g.userData.beacon = beaconGroup;
+g.userData.lampCore = lampCore;
+g.userData.beaconLight = beaconLight;
+g.userData.lanternMat = LAMP;
+},
+animate:function(g,t,dt){
+// rotate the beacon ~ one sweep every 6 s
+const beacon = g.userData.beacon;
+if(beacon){
+  beacon.rotation.y += dt * (Math.PI*2/6.0);
+}
+// gentle pulse on the lamp so the bloom shimmers
+if(g.userData.lanternMat){
+  const pulse = 3.0 + Math.sin(t*2.3)*0.6;
+  g.userData.lanternMat.emissiveIntensity = pulse;
+}
+if(g.userData.beaconLight){
+  g.userData.beaconLight.intensity = 2.0 + Math.sin(t*2.3)*0.5;
+}
+}},
+{name:"Skyline Observation Needle", dx:-85, dz:-15, faceWater:false, clear:34,
+build:function(g){
+// ---- Materials ----
+const matStruct = new THREE.MeshStandardMaterial({ color:0xeef0f3, roughness:0.42, metalness:0.35, envMapIntensity:0.7 });
+const matAccent = new THREE.MeshStandardMaterial({ color:0xcbd3da, roughness:0.5, metalness:0.4, envMapIntensity:0.6 });
+const matDeck   = new THREE.MeshStandardMaterial({ color:0xf4f6f8, roughness:0.35, metalness:0.45, envMapIntensity:0.8, side:THREE.DoubleSide });
+const matGlass  = new THREE.MeshStandardMaterial({ color:0x254056, roughness:0.12, metalness:0.85, envMapIntensity:0.9, emissive:0x0e2238, emissiveIntensity:0.35, side:THREE.DoubleSide });
+const matDark   = new THREE.MeshStandardMaterial({ color:0x2b3138, roughness:0.6, metalness:0.5, envMapIntensity:0.4 });
+const matLight  = new THREE.MeshStandardMaterial({ color:0xfff2cf, emissive:0xffcf66, emissiveIntensity:2.4, roughness:0.4, metalness:0.1 });
+const matBeacon = new THREE.MeshStandardMaterial({ color:0xff5a3c, emissive:0xff3318, emissiveIntensity:3.2, roughness:0.5, metalness:0.0 });
+
+const SEG = 40; // radial segments for round parts
+
+// ---- 1) Base / foundation plinth ----
+const plinth = new THREE.Mesh(new THREE.CylinderGeometry(9, 11, 4, SEG), matAccent);
+plinth.position.y = 2; plinth.castShadow = plinth.receiveShadow = true; g.add(plinth);
+const plinthStep = new THREE.Mesh(new THREE.CylinderGeometry(7, 9, 2.2, SEG), matStruct);
+plinthStep.position.y = 4.6; plinthStep.castShadow = plinthStep.receiveShadow = true; g.add(plinthStep);
+
+// ---- 2) Tapered column (LatheGeometry) ----
+const colProfile = [
+  [6.5,5.0],[5.6,6.5],[5.0,8.5],[3.6,13],[2.4,20],[1.75,34],
+  [1.45,48],[1.35,57],[1.5,60.5],[1.65,62]
+].map(p => new THREE.Vector2(p[0], p[1]));
+const column = new THREE.Mesh(new THREE.LatheGeometry(colProfile, SEG), matStruct);
+column.castShadow = column.receiveShadow = true; g.add(column);
+
+// three slim structural legs/ribs hugging the lower column for a Needle look
+const legGeo = new THREE.CylinderGeometry(0.5, 0.85, 56, 10);
+for (let i=0;i<3;i++){
+  const a = i/3 * Math.PI*2;
+  const leg = new THREE.Mesh(legGeo, matAccent);
+  leg.position.set(Math.cos(a)*3.2, 33, Math.sin(a)*3.2);
+  leg.rotation.z = Math.cos(a)*0.05; leg.rotation.x = -Math.sin(a)*0.05;
+  leg.castShadow = true; g.add(leg);
+}
+
+// ---- 3) Flying-saucer observation deck (~y 62-70) ----
+const deck = new THREE.Group(); deck.position.y = 62; g.add(deck);
+
+// underside skirt cone (apex DOWN) — rigid rotation flip keeps winding correct (no mirror scale)
+const saucerBot = new THREE.Mesh(new THREE.ConeGeometry(11, 5, SEG, 1, true), matDeck);
+saucerBot.rotation.x = Math.PI; saucerBot.position.y = 1.4;
+deck.add(saucerBot);
+// main saucer disc (lathe lens shape)
+const lensProfile = [
+  [0,0],[5,0.3],[9,1.1],[11,2.4],[11.2,3.4],[10.6,4.2],[8.5,4.7],[5,4.9],[0,5.0]
+].map(p=>new THREE.Vector2(p[0],p[1]));
+const saucer = new THREE.Mesh(new THREE.LatheGeometry(lensProfile, SEG), matDeck);
+saucer.position.y = 1.4; saucer.castShadow = true; deck.add(saucer);
+
+// glazed observation band (passengers look out here)
+const obsGlass = new THREE.Mesh(new THREE.CylinderGeometry(10.4, 10.8, 2.6, SEG, 1, true), matGlass);
+obsGlass.position.y = 3.0; deck.add(obsGlass);
+const obsTrimT = new THREE.Mesh(new THREE.TorusGeometry(10.5, 0.25, 8, SEG), matDark);
+obsTrimT.rotation.x = Math.PI/2; obsTrimT.position.y = 4.3; deck.add(obsTrimT);
+const obsTrimB = new THREE.Mesh(new THREE.TorusGeometry(10.7, 0.3, 8, SEG), matDark);
+obsTrimB.rotation.x = Math.PI/2; obsTrimB.position.y = 1.7; deck.add(obsTrimB);
+
+// outdoor observation ring deck on top of the saucer
+const topDeck = new THREE.Mesh(new THREE.CylinderGeometry(8.4, 8.4, 0.4, SEG), matAccent);
+topDeck.position.y = 4.9; deck.add(topDeck);
+const topRail = new THREE.Mesh(new THREE.TorusGeometry(8.2, 0.12, 6, SEG), matDark);
+topRail.rotation.x = Math.PI/2; topRail.position.y = 6.0; deck.add(topRail);
+
+// ---- 4) Rotating restaurant band (slow spin) — its own group on userData ----
+const restaurant = new THREE.Group(); restaurant.position.y = -0.4; deck.add(restaurant);
+const restGlass = new THREE.Mesh(new THREE.CylinderGeometry(9.6, 9.6, 1.8, SEG, 1, true), matGlass);
+restaurant.add(restGlass);
+// vertical mullions around the restaurant band (InstancedMesh)
+const MULL = 28;
+const mullGeo = new THREE.BoxGeometry(0.18, 1.8, 0.3);
+const mullions = new THREE.InstancedMesh(mullGeo, matDark, MULL);
+const tmpM = new THREE.Matrix4();
+for (let i=0;i<MULL;i++){
+  const a = i/MULL*Math.PI*2;
+  tmpM.makeRotationY(-a);
+  tmpM.setPosition(Math.cos(a)*9.62, 0, Math.sin(a)*9.62);
+  mullions.setMatrixAt(i, tmpM);
+}
+mullions.instanceMatrix.needsUpdate = true; restaurant.add(mullions);
+
+// ---- 5) Ring of lights under the saucer rim (InstancedMesh, emissive) ----
+const RING = 28;
+const bulbGeo = new THREE.SphereGeometry(0.32, 8, 6);
+const ringLights = new THREE.InstancedMesh(bulbGeo, matLight, RING);
+const tmpL = new THREE.Matrix4();
+for (let i=0;i<RING;i++){
+  const a = i/RING*Math.PI*2;
+  tmpL.makeTranslation(Math.cos(a)*11.0, 1.5, Math.sin(a)*11.0);
+  ringLights.setMatrixAt(i, tmpL);
+}
+ringLights.instanceMatrix.needsUpdate = true; deck.add(ringLights);
+g.userData.ringLights = ringLights;
+
+// ---- 6) Antenna spire (~y 67 -> 90) with beacon ----
+const spireBase = new THREE.Mesh(new THREE.ConeGeometry(2.4, 6, SEG), matStruct);
+spireBase.position.y = 70; g.add(spireBase);
+const spireProfile = [[1.6,0],[1.1,5],[0.7,12],[0.35,18],[0.12,21]].map(p=>new THREE.Vector2(p[0],p[1]));
+const spire = new THREE.Mesh(new THREE.LatheGeometry(spireProfile, 18), matAccent);
+spire.position.y = 71; spire.castShadow = true; g.add(spire);
+// three antenna collars
+for (let i=0;i<3;i++){
+  const collar = new THREE.Mesh(new THREE.TorusGeometry(0.7 - i*0.18, 0.12, 6, 16), matDark);
+  collar.rotation.x = Math.PI/2; collar.position.y = 75 + i*4; g.add(collar);
+}
+// beacon at the very top
+const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.9, 16, 12), matBeacon);
+beacon.position.y = 92.5; g.add(beacon);
+g.userData.beacon = beacon;
+g.userData.restaurant = restaurant;
+},
+animate:function(g,t,dt){
+// slow rotating restaurant band (one rev ~ 45 s)
+if (g.userData.restaurant) g.userData.restaurant.rotation.y += dt * (2*Math.PI/45);
+// gentle twinkle on the ring of lights
+if (g.userData.ringLights) g.userData.ringLights.material.emissiveIntensity = 1.9 + Math.sin(t*2.0)*0.7;
+// pulsing aircraft-warning beacon
+if (g.userData.beacon){
+  const p = 0.5 + 0.5*Math.sin(t*3.0);
+  g.userData.beacon.material.emissiveIntensity = 1.6 + p*2.6;
+  g.userData.beacon.scale.setScalar(0.9 + p*0.25);
+}
+}},
+{name:"Port Cargo Cranes", dx:205, dz:150, faceWater:true, clear:46,
+build:function(g){
+// ---- Port cargo cranes (gantry / container cranes) ----
+// Coordinate convention: after faceWater yaw, +Z points toward the water.
+// Booms cantilever along +Z over the water; the cranes line up along X on the dock.
+
+const steelBlue = new THREE.MeshStandardMaterial({ color:0x2b6cb0, roughness:0.55, metalness:0.55, envMapIntensity:0.55 });
+const steelYel  = new THREE.MeshStandardMaterial({ color:0xf2c14e, roughness:0.5,  metalness:0.5,  envMapIntensity:0.55 });
+const steelGrey = new THREE.MeshStandardMaterial({ color:0x8a93a0, roughness:0.6,  metalness:0.7,  envMapIntensity:0.6 });
+const steelDark = new THREE.MeshStandardMaterial({ color:0x3a4250, roughness:0.65, metalness:0.7,  envMapIntensity:0.5 });
+const railMat   = new THREE.MeshStandardMaterial({ color:0x55585f, roughness:0.45, metalness:0.85, envMapIntensity:0.7 });
+const cableMat  = new THREE.MeshStandardMaterial({ color:0x1c1f24, roughness:0.8,  metalness:0.3 });
+const beaconMat = new THREE.MeshStandardMaterial({ color:0xff5a2a, emissive:0xff4a1a, emissiveIntensity:3.2, roughness:0.4 });
+const lampMat   = new THREE.MeshStandardMaterial({ color:0xfff3c0, emissive:0xffe08a, emissiveIntensity:2.4, roughness:0.5 });
+
+// ---------- shared truss-leg builder (cheap X-braced box) ----------
+function buildLeg(height, foot){
+  const leg = new THREE.Group();
+  const post = 0.55, half = foot/2;
+  const corners = [[-half,-half],[half,-half],[half,half],[-half,half]];
+  for(const [cx,cz] of corners){
+    const m = new THREE.Mesh(new THREE.BoxGeometry(post,height,post), steelBlue);
+    m.position.set(cx, height/2, cz); m.castShadow=true; leg.add(m);
+  }
+  // X cross-braces on the two long faces, stacked in bays
+  const bays = Math.max(2, Math.round(height/9));
+  const bayH = height/bays, braceLen = Math.hypot(foot, bayH);
+  for(let b=0;b<bays;b++){
+    const y0 = b*bayH + bayH/2;
+    for(const side of [-half, half]){          // two opposite faces (along z)
+      for(const s of [1,-1]){
+        const br = new THREE.Mesh(new THREE.BoxGeometry(0.22, braceLen, 0.22), steelGrey);
+        br.position.set(0, y0, side);
+        br.rotation.z = s * Math.atan2(foot, bayH);
+        leg.add(br);
+      }
+    }
+    // horizontal ties between bays
+    if(b>0){
+      for(const side of [-half, half]){
+        const t = new THREE.Mesh(new THREE.BoxGeometry(foot,0.24,0.24), steelGrey);
+        t.position.set(0, b*bayH, side); leg.add(t);
+      }
+    }
+  }
+  return leg;
+}
+
+// ---------- single crane prototype ----------
+function buildCrane(){
+  const c = new THREE.Group();
+  const legH = 30;          // height of the portal legs (rail to gantry beam)
+  const span = 16;          // distance between the two leg-rows (along X)
+  const foot = 3.4;
+  const waterReach = 34;    // boom cantilever over the water (+Z)
+  const landReach  = 13;    // back-reach over the dock (-Z)
+
+  // four legs (2 rows x 2, forming a portal); rows offset along Z
+  const rowZ = [-6, 6];
+  for(const z of rowZ){
+    for(const x of [-span/2, span/2]){
+      const leg = buildLeg(legH, foot);
+      leg.position.set(x, 0, z);
+      c.add(leg);
+    }
+  }
+
+  // bogies / rail trucks at the feet
+  for(const z of rowZ){
+    for(const x of [-span/2, span/2]){
+      const bog = new THREE.Mesh(new THREE.BoxGeometry(foot+0.8, 1.6, 3.6), steelDark);
+      bog.position.set(x, 0.8, z); bog.castShadow=true; c.add(bog);
+    }
+  }
+
+  // portal cross-beams linking the leg tops along X (front and back rows)
+  for(const z of rowZ){
+    const beam = new THREE.Mesh(new THREE.BoxGeometry(span+foot, 2.2, 2.0), steelBlue);
+    beam.position.set(0, legH+1.1, z); beam.castShadow=true; c.add(beam);
+  }
+  // sill beams linking the two rows along Z (top ties for rigidity)
+  for(const x of [-span/2, span/2]){
+    const sill = new THREE.Mesh(new THREE.BoxGeometry(2.0, 1.6, rowZ[1]-rowZ[0]+foot), steelBlue);
+    sill.position.set(x, legH+1.1, 0); c.add(sill);
+  }
+
+  const gantryY = legH + 2.6;   // top of the portal — boom sits here
+
+  // ---------- the boom (horizontal girder over the water) ----------
+  const boomLen = waterReach + landReach;
+  const boomGroup = new THREE.Group();
+  boomGroup.position.set(0, gantryY, 0);
+  c.add(boomGroup);
+  const boomMidZ = (waterReach - landReach)/2;   // boom centre offset toward water
+
+  // two parallel main girders of the boom (yellow)
+  const girGap = 5;
+  for(const x of [-girGap/2, girGap/2]){
+    const g1 = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1.6, boomLen), steelYel);
+    g1.position.set(x, 1.2, boomMidZ); g1.castShadow=true; boomGroup.add(g1);
+    // bottom rail the trolley rides on
+    const r1 = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.4, boomLen), railMat);
+    r1.position.set(x, 0.2, boomMidZ); boomGroup.add(r1);
+  }
+  // boom lattice cross-ties + true zig-zag diagonals along its length
+  const nTies = Math.round(boomLen/4);
+  const _up = new THREE.Vector3(0,1,0), _dir = new THREE.Vector3();
+  for(let i=0;i<=nTies;i++){
+    const z = boomMidZ - boomLen/2 + i*(boomLen/nTies);
+    const tie = new THREE.Mesh(new THREE.BoxGeometry(girGap,0.24,0.24), steelGrey);
+    tie.position.set(0, 0.5, z); boomGroup.add(tie);
+    if(i<nTies){
+      const seg = boomLen/nTies, dl = Math.hypot(girGap, seg);
+      const dg = new THREE.Mesh(new THREE.BoxGeometry(0.2, dl, 0.2), steelGrey);
+      // true diagonal: alternate which girder it springs from so it zig-zags
+      const sx = (i % 2) ? 1 : -1;
+      dg.position.set(0, 0.5, z + seg/2);
+      _dir.set(sx*girGap, 0, seg).normalize();
+      dg.quaternion.setFromUnitVectors(_up, _dir);
+      boomGroup.add(dg);
+    }
+  }
+
+  // ---------- A-frame mast + stay cables that hold the boom up ----------
+  const mastH = 12, mastApex = new THREE.Vector3(0, gantryY+mastH, 0);
+  for(const x of [-girGap/2, girGap/2]){
+    const m = new THREE.Mesh(new THREE.BoxGeometry(0.6, mastH+1.2, 0.6), steelBlue);
+    m.position.set(x*0.5, gantryY + mastH/2 + 0.6, 0);   // lean inward to apex
+    m.rotation.z = Math.atan2(x*0.5, mastH);
+    m.castShadow=true; c.add(m);
+  }
+  // stay cables from apex to seaward boom tips and a back-stay over the dock
+  function stay(toLocalZ, toLocalY){
+    const a = mastApex.clone();
+    const b = new THREE.Vector3(0, gantryY + toLocalY, toLocalZ);
+    const dir = b.clone().sub(a); const len = dir.length();
+    const cab = new THREE.Mesh(new THREE.CylinderGeometry(0.14,0.14,len,6), cableMat);
+    cab.position.copy(a).add(b).multiplyScalar(0.5);
+    cab.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), dir.normalize());
+    c.add(cab);
+  }
+  stay(waterReach, 1.4);        // forward stay to the seaward boom tip
+  stay(waterReach*0.55, 1.4);
+  stay(-landReach, 1.4);        // back-stay over the dock
+
+  // machinery house + counterweight at the landward end
+  const house = new THREE.Mesh(new THREE.BoxGeometry(span*0.55, 4.5, 8), steelGrey);
+  house.position.set(0, gantryY + 2.8, -landReach + 2.5); house.castShadow=true; c.add(house);
+  const cwt = new THREE.Mesh(new THREE.BoxGeometry(span*0.5, 4, 4), steelDark);
+  cwt.position.set(0, gantryY + 2.5, -landReach - 0.5); c.add(cwt);
+
+  // operator cabin slung under the gantry, facing the water
+  const cabin = new THREE.Mesh(new THREE.BoxGeometry(4, 3, 3.4),
+    new THREE.MeshStandardMaterial({ color:0xeef2f6, roughness:0.4, metalness:0.2, envMapIntensity:0.5 }));
+  cabin.position.set(span/2-1, gantryY-2.0, 7); c.add(cabin);
+  const cabGlass = new THREE.Mesh(new THREE.BoxGeometry(4.05, 1.6, 3.45),
+    new THREE.MeshStandardMaterial({ color:0x0d2233, roughness:0.1, metalness:0.6, envMapIntensity:0.9 }));
+  cabGlass.position.set(span/2-1, gantryY-1.4, 7); c.add(cabGlass);
+
+  // ---------- trolley + hoist + spreader (animated) ----------
+  const trolley = new THREE.Group();
+  trolley.position.set(0, gantryY, 0);   // travels in z along the boom
+  c.add(trolley);
+  const tbody = new THREE.Mesh(new THREE.BoxGeometry(girGap+1.2, 1.4, 3.2), steelYel);
+  tbody.position.y = 0.4; tbody.castShadow=true; trolley.add(tbody);
+
+  // hoist ropes + spreader bar with a container hanging (this part rises/falls)
+  const hoist = new THREE.Group();
+  trolley.add(hoist);
+  const ropeLen = 16;
+  for(const dx of [-2,2]) for(const dz of [-1.2,1.2]){
+    const rope = new THREE.Mesh(new THREE.CylinderGeometry(0.08,0.08,ropeLen,5), cableMat);
+    rope.position.set(dx, -ropeLen/2, dz); hoist.add(rope);
+  }
+  const spreader = new THREE.Mesh(new THREE.BoxGeometry(6.4, 0.7, 3.0), steelDark);
+  spreader.position.y = -ropeLen; hoist.add(spreader);
+  const slung = new THREE.Mesh(new THREE.BoxGeometry(6.1, 2.6, 2.44),
+    new THREE.MeshStandardMaterial({ color:0xc0392b, roughness:0.7, metalness:0.2, envMapIntensity:0.4 }));
+  slung.position.y = -ropeLen - 1.6; hoist.add(slung);
+
+  // beacons on the mast apex + seaward boom tip (glow / bloom)
+  const ba = new THREE.Mesh(new THREE.SphereGeometry(0.5,10,10), beaconMat);
+  ba.position.copy(mastApex); c.add(ba);
+  const bt = new THREE.Mesh(new THREE.SphereGeometry(0.45,10,10), beaconMat);
+  bt.position.set(0, gantryY+1.0, waterReach); c.add(bt);
+  // floodlights under the gantry
+  for(const x of [-span/2+2, span/2-2]){
+    const fl = new THREE.Mesh(new THREE.SphereGeometry(0.4,8,8), lampMat);
+    fl.position.set(x, gantryY-3, 6); c.add(fl);
+  }
+
+  c.userData.trolley = trolley;
+  c.userData.hoist = hoist;
+  c.userData.beacons = [ba, bt];
+  c.userData.boomReach = waterReach;
+  c.userData.boomBack  = landReach;
+  return c;
+}
+
+// ---------- place a row of 3 cranes along X on the dock ----------
+const craneSpacingX = 46;
+const cranes = [];
+for(let i=0;i<3;i++){
+  const cr = buildCrane();
+  cr.position.set((i-1)*craneSpacingX, 0, 0);
+  cr.userData.phase = i*1.7;       // de-sync the trolley animations
+  g.add(cr);
+  cranes.push(cr);
+}
+
+// ---------- shared ground rails the whole row sits on (base at y=0) ----------
+const railTotal = craneSpacingX*2 + 40;
+for(const z of [-6, 6]){
+  const tie = new THREE.Mesh(new THREE.BoxGeometry(railTotal, 0.3, 2.2), steelDark);
+  tie.position.set(0, 0.15, z); tie.receiveShadow=true; g.add(tie);   // sleeper, bottom at y=0
+  const rail = new THREE.Mesh(new THREE.BoxGeometry(railTotal, 0.5, 1.2), railMat);
+  rail.position.set(0, 0.55, z); rail.receiveShadow=true; g.add(rail); // rail head rides on the sleeper
+}
+
+// ---------- instanced container stacks at the base (landward yard) ----------
+const contGeo = new THREE.BoxGeometry(6.06, 2.59, 2.44);   // ~20ft TEU
+const contColors = [0xb23a30, 0x2f6f4f, 0x2b5c8a, 0xc9a227, 0x7a4ea8, 0xcf6a2a, 0x9aa0a6, 0x3a7d44];
+const contMats = contColors.map(col => new THREE.MeshStandardMaterial({
+  color:col, roughness:0.72, metalness:0.18, envMapIntensity:0.35 }));
+const buckets = contColors.map(()=>[]);   // one transform list per colour
+for(let row=0; row<3; row++){
+  for(let col=0; col<14; col++){
+    const x = -railTotal/2 + 8 + col*6.4;
+    const z = -16 - row*3.0;                 // behind the landward rail
+    // pseudo-random stack height 1..3 from a hash of position
+    const stack = 1 + (Math.floor(Math.abs(Math.sin(x*12.9898 + z*78.233)*43758.5453)) % 3);
+    for(let h=0; h<stack; h++){
+      const ci = Math.abs(Math.floor(x*7 + z*13 + h*5)) % contColors.length;
+      const m = new THREE.Matrix4().compose(
+        new THREE.Vector3(x, 1.3 + h*2.62, z),   // bottom of lowest box sits at y≈0
+        new THREE.Quaternion(),
+        new THREE.Vector3(1,1,1));
+      buckets[ci].push(m);
+    }
+  }
+}
+for(let ci=0; ci<contColors.length; ci++){
+  const arr = buckets[ci];
+  if(!arr.length) continue;
+  const inst = new THREE.InstancedMesh(contGeo, contMats[ci], arr.length);
+  for(let k=0;k<arr.length;k++) inst.setMatrixAt(k, arr[k]);
+  inst.instanceMatrix.needsUpdate = true;
+  inst.castShadow = true; inst.receiveShadow = true;
+  g.add(inst);
+}
+
+g.userData.cranes = cranes;
+},
+animate:function(g,t,dt){
+const cranes = g.userData.cranes;
+if(!cranes) return;
+for(let i=0;i<cranes.length;i++){
+  const c = cranes[i];
+  const ph = c.userData.phase || 0;
+  const reach = c.userData.boomReach, back = c.userData.boomBack;
+  // trolley glides between the back-reach and the seaward tip (eased)
+  const s = 0.5 - 0.5*Math.cos(t*0.32 + ph);             // 0..1 smooth
+  c.userData.trolley.position.z = -back*0.5 + s*(reach + back*0.5);
+  // hoist lifts and lowers as the trolley travels (double-freq bob)
+  const lift = 0.5 - 0.5*Math.cos((t*0.32 + ph)*2.0);
+  c.userData.hoist.position.y = -2.5 + lift*2.5;
+  // beacon pulse
+  const pulse = 2.4 + 1.6*Math.sin(t*3.0 + i);
+  for(const b of c.userData.beacons) b.material.emissiveIntensity = pulse;
+}
+}},
+{name:"Civic Clock Tower (Town Hall)", dx:25, dz:-75, faceWater:false, clear:26,
+build:function(g){
+// ---------- palette ----------
+const stone = new THREE.MeshStandardMaterial({color:0xe7ddc7, roughness:0.85, metalness:0.0, envMapIntensity:0.45});
+const stoneDark = new THREE.MeshStandardMaterial({color:0xcfc3a6, roughness:0.9, metalness:0.0, envMapIntensity:0.4});
+const trim = new THREE.MeshStandardMaterial({color:0xf2ead6, roughness:0.7, metalness:0.05, envMapIntensity:0.5});
+const copper = new THREE.MeshStandardMaterial({color:0x3fae8e, roughness:0.55, metalness:0.35, envMapIntensity:0.6});
+const copperDark = new THREE.MeshStandardMaterial({color:0x2c8a72, roughness:0.6, metalness:0.35, envMapIntensity:0.5});
+const gold = new THREE.MeshStandardMaterial({color:0xd9b24a, roughness:0.3, metalness:0.9, envMapIntensity:0.9, emissive:0x3a2c08, emissiveIntensity:0.35});
+const dark = new THREE.MeshStandardMaterial({color:0x1c1c20, roughness:0.5, metalness:0.3});
+
+// ---------- proportions (base at y=0) ----------
+const W = 9.5, Hbody = 36, plinthH = 3.0;
+
+// ---------- clock-face canvas (defined first; used below) ----------
+function makeClockFace(){
+  const c = document.createElement('canvas'); c.width = c.height = 256;
+  const x = c.getContext('2d');
+  x.fillStyle = '#f4eedd'; x.beginPath(); x.arc(128,128,124,0,Math.PI*2); x.fill();
+  x.strokeStyle = '#b9a874'; x.lineWidth = 5; x.beginPath(); x.arc(128,128,120,0,Math.PI*2); x.stroke();
+  x.strokeStyle = '#23201a';
+  for(let i=0;i<60;i++){ const a=i/60*Math.PI*2, big=(i%5===0), r1=big?96:104, r2=112;
+    x.lineWidth=big?5:2; x.beginPath();
+    x.moveTo(128+Math.cos(a)*r1,128+Math.sin(a)*r1); x.lineTo(128+Math.cos(a)*r2,128+Math.sin(a)*r2); x.stroke(); }
+  x.fillStyle='#23201a'; x.font='bold 26px Georgia, serif'; x.textAlign='center'; x.textBaseline='middle';
+  const rom=['XII','I','II','III','IV','V','VI','VII','VIII','IX','X','XI'];
+  for(let h=0;h<12;h++){ const a=(h/12)*Math.PI*2 - Math.PI/2; x.fillText(rom[h], 128+Math.cos(a)*78, 128+Math.sin(a)*78); }
+  const t = new THREE.CanvasTexture(c); t.encoding = THREE.sRGBEncoding; t.anisotropy = 4; return t;
+}
+
+// ---------- plinth / base ----------
+const plinth = new THREE.Mesh(new THREE.BoxGeometry(W+3.2, plinthH, W+3.2), stoneDark);
+plinth.position.y = plinthH/2; plinth.castShadow = plinth.receiveShadow = true; g.add(plinth);
+const plinthCap = new THREE.Mesh(new THREE.BoxGeometry(W+2.2, 0.7, W+2.2), trim);
+plinthCap.position.y = plinthH+0.35; plinthCap.castShadow = true; g.add(plinthCap);
+
+// ---------- main shaft ----------
+const shaft = new THREE.Mesh(new THREE.BoxGeometry(W, Hbody, W), stone);
+shaft.position.y = plinthH + Hbody/2; shaft.castShadow = shaft.receiveShadow = true; g.add(shaft);
+
+// corner quoins (4 corners)
+const pilGeo = new THREE.BoxGeometry(1.4, Hbody, 1.4);
+for(let i=0;i<4;i++){ const sx=(i&1)?1:-1, sz=(i&2)?1:-1;
+  const p = new THREE.Mesh(pilGeo, trim); p.position.set(sx*(W/2), plinthH+Hbody/2, sz*(W/2)); p.castShadow=true; g.add(p); }
+
+// string courses
+for(let k=1;k<=2;k++){ const band = new THREE.Mesh(new THREE.BoxGeometry(W+0.5, 0.7, W+0.5), trim);
+  band.position.y = plinthH + (Hbody*k/3); band.castShadow=true; g.add(band); }
+
+// tall recessed windows (2 per face)
+const winMat = new THREE.MeshStandardMaterial({color:0x20303a, roughness:0.4, metalness:0.2, envMapIntensity:0.5});
+for(let f=0;f<4;f++){ const ang=f*Math.PI/2, nx=Math.sin(ang), nz=Math.cos(ang), tx=Math.cos(ang), tz=-Math.sin(ang);
+  for(let w=-1;w<=1;w+=2){ const win = new THREE.Mesh(new THREE.BoxGeometry(2.0, 6.0, 0.4), winMat);
+    const off=w*2.4; win.position.set(nx*(W/2+0.05)+tx*off, plinthH+10, nz*(W/2+0.05)+tz*off); win.rotation.y=ang; g.add(win); } }
+
+// ---------- belfry / clock stage ----------
+const clockY = plinthH + Hbody, stageH = 7.0, Ws = W + 1.6;
+const stage = new THREE.Mesh(new THREE.BoxGeometry(Ws, stageH, Ws), stone);
+stage.position.y = clockY + stageH/2; stage.castShadow = stage.receiveShadow = true; g.add(stage);
+const corn = new THREE.Mesh(new THREE.BoxGeometry(Ws+1.0, 0.9, Ws+1.0), trim);
+corn.position.y = clockY + stageH + 0.45; corn.castShadow=true; g.add(corn);
+const cornB = new THREE.Mesh(new THREE.BoxGeometry(Ws+0.6, 0.6, Ws+0.6), trim);
+cornB.position.y = clockY - 0.3; cornB.castShadow=true; g.add(cornB);
+
+// ---------- clock faces on all 4 sides ----------
+const clockTex = makeClockFace();
+const faceMat = new THREE.MeshStandardMaterial({map:clockTex, roughness:0.5, metalness:0.05,
+  emissive:0xffffff, emissiveMap:clockTex, emissiveIntensity:0.22, envMapIntensity:0.4});
+const faceCY = clockY + stageH*0.55, faceR = 2.55;
+g.userData.hands = [];
+for(let f=0;f<4;f++){ const ang=f*Math.PI/2, nx=Math.sin(ang), nz=Math.cos(ang);
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(faceR+0.18, 0.22, 8, 36), gold);
+  ring.position.set(nx*(Ws/2+0.18), faceCY, nz*(Ws/2+0.18)); ring.rotation.y=ang; g.add(ring);
+  const disc = new THREE.Mesh(new THREE.CircleGeometry(faceR, 48), faceMat);
+  disc.position.set(nx*(Ws/2+0.12), faceCY, nz*(Ws/2+0.12)); disc.rotation.y=ang; g.add(disc);
+  // hub pushed clearly proud of the disc so the hands never z-fight / get occluded by the dial
+  const hub = new THREE.Group(); hub.position.set(nx*(Ws/2+0.30), faceCY, nz*(Ws/2+0.30)); hub.rotation.y=ang; g.add(hub);
+  const hh = new THREE.Mesh(new THREE.BoxGeometry(0.22, faceR*0.55, 0.08), dark);
+  hh.geometry.translate(0, faceR*0.55/2 - 0.2, 0.06); hub.add(hh);   // hour hand, in front of dial
+  const mh = new THREE.Mesh(new THREE.BoxGeometry(0.15, faceR*0.85, 0.06), dark);
+  mh.geometry.translate(0, faceR*0.85/2 - 0.2, 0.10); hub.add(mh);   // minute hand, in front of hour hand
+  const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.28,0.28,0.14,14), gold);
+  cap.rotation.x = Math.PI/2; cap.position.z = 0.12; hub.add(cap);    // round gold boss proud of the face
+  g.userData.hands.push({hour:hh, minute:mh}); }
+
+// ---------- corner urns on the stage cornice ----------
+for(let i=0;i<4;i++){ const sx=(i&1)?1:-1, sz=(i&2)?1:-1;
+  const urn = new THREE.Mesh(new THREE.SphereGeometry(0.55,10,8), trim);
+  urn.position.set(sx*(Ws/2+0.2), clockY+stageH+1.2, sz*(Ws/2+0.2)); urn.scale.y=1.4; g.add(urn); }
+
+// ---------- copper pyramidal roof ----------
+const roofBaseY = clockY + stageH + 0.9, roofH = 11;
+const roof = new THREE.Mesh(new THREE.ConeGeometry(Ws*0.72, roofH, 4, 1, false), copper);
+roof.rotation.y = Math.PI/4; roof.position.y = roofBaseY + roofH/2; roof.castShadow=true; g.add(roof);
+const roofTrim = new THREE.Mesh(new THREE.ConeGeometry(Ws*0.74, 1.2, 4, 1, false), copperDark);
+roofTrim.rotation.y = Math.PI/4; roofTrim.position.y = roofBaseY+0.6; roofTrim.castShadow=true; g.add(roofTrim);
+
+// ---------- finial + flagpole + flag ----------
+const finBall = new THREE.Mesh(new THREE.SphereGeometry(0.7,12,10), gold); finBall.position.y = roofBaseY + roofH + 0.3; g.add(finBall);
+const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.12,0.12,6.5,8), dark); pole.position.y = roofBaseY + roofH + 3.6; g.add(pole);
+const poleTop = new THREE.Mesh(new THREE.SphereGeometry(0.22,8,8), gold); poleTop.position.y = roofBaseY + roofH + 6.9; g.add(poleTop);
+const flagMat = new THREE.MeshStandardMaterial({color:0xc7402f, roughness:0.7, metalness:0.0, emissive:0x330d08, emissiveIntensity:0.2, side:THREE.DoubleSide});
+const flagW = 4.2, flagH = 2.6, flagSegs = 8;
+const flagGeo = new THREE.PlaneGeometry(flagW, flagH, flagSegs, 1); flagGeo.translate(flagW/2, 0, 0);
+const flag = new THREE.Mesh(flagGeo, flagMat); flag.position.set(0.12, roofBaseY + roofH + 5.5, 0); flag.castShadow=true; g.add(flag);
+const fpos = flagGeo.attributes.position; const baseX = new Float32Array(fpos.count);
+for(let i=0;i<fpos.count;i++) baseX[i] = fpos.getX(i);
+g.userData.flag = {mesh:flag, geo:flagGeo, baseX:baseX, w:flagW};
+
+// ---------- entrance porch at the base ----------
+const porch = new THREE.Mesh(new THREE.BoxGeometry(W*0.7, 4.2, 2.4), stoneDark); porch.position.set(0, 2.1, W/2+1.0); porch.castShadow=true; g.add(porch);
+const doorMat = new THREE.MeshStandardMaterial({color:0x4a2f1c, roughness:0.6, metalness:0.1});
+const door = new THREE.Mesh(new THREE.BoxGeometry(2.4, 3.4, 0.3), doorMat); door.position.set(0, 1.9, W/2+2.25); g.add(door);
+const arch = new THREE.Mesh(new THREE.CylinderGeometry(1.3,1.3,0.3,16,1,false,0,Math.PI), trim);
+arch.rotation.x = Math.PI/2; arch.position.set(0,3.6,W/2+2.25); g.add(arch);
+
+// ---------- glowing ground lanterns ----------
+const lampMat = new THREE.MeshStandardMaterial({color:0xfff2c0, emissive:0xffd27a, emissiveIntensity:2.2, roughness:0.4});
+g.userData.lamps = [];
+for(let s=-1;s<=1;s+=2){
+  const post = new THREE.Mesh(new THREE.CylinderGeometry(0.12,0.16,3.2,8), dark); post.position.set(s*4.2, 1.6, W/2+2.6); g.add(post);
+  const glob = new THREE.Mesh(new THREE.SphereGeometry(0.45,10,8), lampMat); glob.position.set(s*4.2, 3.4, W/2+2.6); g.add(glob);
+  g.userData.lamps.push(glob); }
+
+// ---------- hand driver (stashed for animate) ----------
+g.userData.setHands = function(grp, t){
+  if(!grp.userData.hands) return;
+  const totalMin = (t*4) % (12*60), minute = totalMin % 60, hour = totalMin/60;
+  const mAng = -(minute/60)*Math.PI*2, hAng = -(hour/12)*Math.PI*2;
+  for(const h of grp.userData.hands){ h.minute.rotation.z = mAng; h.hour.rotation.z = hAng; }
+};
+g.userData.setHands(g, 0);
+},
+animate:function(g,t,dt){
+const u = g.userData;
+// ticking hands
+if(u.setHands) u.setHands(g, t);
+// flag wave: amplitude grows toward the free (fly) edge, pinned at the pole
+if(u.flag){
+  const f = u.flag, pos = f.geo.attributes.position, bx = f.baseX, W = f.w;
+  for(let i=0;i<pos.count;i++){
+    const x = bx[i], frac = x / W;
+    pos.setZ(i, Math.sin(x*1.6 - t*5.0) * 0.45 * frac);
+    pos.setX(i, x*(1 - 0.04*frac));
+  }
+  pos.needsUpdate = true;
+  f.geo.computeVertexNormals();
+}
+// lantern flicker (drives bloom)
+if(u.lamps){
+  const fl = 1.9 + Math.sin(t*7.0)*0.25 + Math.sin(t*2.3)*0.15;
+  for(const l of u.lamps) l.material.emissiveIntensity = fl;
+}
+}},
+{name:"Waterfront Plaza & Tiered Fountain", dx:-45, dz:85, faceWater:false, clear:30,
+build:function(g){
+// ===== palette =====
+const tileLight=new THREE.MeshStandardMaterial({color:0xd9c7b0,roughness:0.85,metalness:0.05,envMapIntensity:0.5});
+const tileDark =new THREE.MeshStandardMaterial({color:0x9c8a72,roughness:0.85,metalness:0.05,envMapIntensity:0.5});
+const rim      =new THREE.MeshStandardMaterial({color:0xe7e1d4,roughness:0.6,metalness:0.1,envMapIntensity:0.7});
+const stone    =new THREE.MeshStandardMaterial({color:0xcfc7b6,roughness:0.7,metalness:0.05,envMapIntensity:0.6});
+const stoneDk  =new THREE.MeshStandardMaterial({color:0xa79e8a,roughness:0.75,metalness:0.05,envMapIntensity:0.5});
+const metal    =new THREE.MeshStandardMaterial({color:0x2b2f36,roughness:0.45,metalness:0.85,envMapIntensity:0.9});
+const brass    =new THREE.MeshStandardMaterial({color:0x6b5a2e,roughness:0.4,metalness:0.9,envMapIntensity:0.9});
+const wood     =new THREE.MeshStandardMaterial({color:0x7a4f2c,roughness:0.7,metalness:0.05,envMapIntensity:0.5});
+const foliage  =new THREE.MeshStandardMaterial({color:0x2f6b35,roughness:0.9,metalness:0,envMapIntensity:0.4});
+const foliage2 =new THREE.MeshStandardMaterial({color:0x3a7d40,roughness:0.9,metalness:0,envMapIntensity:0.4});
+const trunk    =new THREE.MeshStandardMaterial({color:0x5a3c22,roughness:0.85,metalness:0,envMapIntensity:0.3});
+const planterM =new THREE.MeshStandardMaterial({color:0xb9b1a0,roughness:0.8,metalness:0.05,envMapIntensity:0.5});
+const waterMat =new THREE.MeshStandardMaterial({color:0x2f9fc7,roughness:0.1,metalness:0.0,transparent:true,opacity:0.78,envMapIntensity:1.2,emissive:0x10708f,emissiveIntensity:0.35,side:THREE.DoubleSide});
+const jetMat   =new THREE.MeshStandardMaterial({color:0xbfeeff,roughness:0.05,metalness:0,transparent:true,opacity:0.5,emissive:0x9fe6ff,emissiveIntensity:1.6,depthWrite:false,side:THREE.DoubleSide});
+const globeOff =new THREE.MeshStandardMaterial({color:0xfff4d6,roughness:0.3,metalness:0,emissive:0xffe9b0,emissiveIntensity:2.4,envMapIntensity:0.4});
+
+const R=18;                                   // plaza radius (36 m across)
+
+// ===== plaza disc (two-tone ring tiling) =====
+const base=new THREE.Mesh(new THREE.CylinderGeometry(R,R,0.6,40),tileLight);
+base.position.y=0.3; base.receiveShadow=true; g.add(base);
+for(let i=0;i<5;i++){                          // concentric alternating tile rings
+  const r0=2.4+i*3.0, r1=r0+1.6;
+  const ring=new THREE.Mesh(new THREE.RingGeometry(r0,r1,36), i%2?tileDark:tileLight);
+  ring.rotation.x=-Math.PI/2; ring.position.y=0.605; ring.receiveShadow=true; g.add(ring);
+}
+for(let s=0;s<8;s++){                          // radial paving spokes
+  const band=new THREE.Mesh(new THREE.BoxGeometry(0.5,0.02,R-2.0),tileDark);
+  band.position.set(Math.sin(s*Math.PI/4)*((R-2.0)/2),0.61,Math.cos(s*Math.PI/4)*((R-2.0)/2));
+  band.rotation.y=s*Math.PI/4; g.add(band);
+}
+const kerb=new THREE.Mesh(new THREE.TorusGeometry(R-0.4,0.55,8,48),rim);  // outer kerb
+kerb.rotation.x=-Math.PI/2; kerb.position.y=0.55; kerb.castShadow=kerb.receiveShadow=true; g.add(kerb);
+
+// ===== central tiered fountain (single Lathe profile) =====
+const fountain=new THREE.Group(); fountain.position.y=0.6; g.add(fountain);
+const P=[[0.0,0.0],[3.6,0.0],[3.6,0.55],[3.3,0.75],[3.1,0.55],[3.1,0.45],[1.2,0.45],
+  [1.2,2.0],[2.4,2.0],[2.4,2.5],[2.2,2.65],[2.0,2.5],[2.0,2.4],[0.8,2.4],
+  [0.8,3.7],[1.4,3.7],[1.4,4.1],[1.25,4.2],[1.1,4.1],[1.1,4.0],[0.0,4.0]];
+const profile=P.map(p=>new THREE.Vector2(p[0],p[1]));
+const lat=new THREE.Mesh(new THREE.LatheGeometry(profile,32),stone);
+lat.castShadow=lat.receiveShadow=true; fountain.add(lat);
+[[3.45,0.7],[2.3,2.55],[1.32,4.12]].forEach(([rr,yy])=>{   // brass lip rings
+  const t=new THREE.Mesh(new THREE.TorusGeometry(rr,0.08,6,28),brass);
+  t.rotation.x=-Math.PI/2; t.position.y=yy; fountain.add(t);
+});
+const wd=[];                                   // glowing water surface in each basin
+[[3.0,0.5],[1.95,2.45],[1.05,4.02]].forEach(([rr,yy])=>{
+  const w=new THREE.Mesh(new THREE.CircleGeometry(rr,24),waterMat);
+  w.rotation.x=-Math.PI/2; w.position.y=yy; w.userData.y0=yy; fountain.add(w); wd.push(w);
+});
+const jet=new THREE.Mesh(new THREE.ConeGeometry(0.45,5.2,14,1,true),jetMat.clone());  // central jet (own material so its glow pulse doesn't drag the core)
+jet.position.y=6.6; fountain.add(jet);
+const jetCore=new THREE.Mesh(new THREE.SphereGeometry(0.35,12,10),jetMat);
+jetCore.position.y=4.1; fountain.add(jetCore);
+[[3.3,1.2,2.5],[2.2,1.0,4.1]].forEach(([rbot,h,ytop])=>{   // falling-water sheets
+  const sh=new THREE.Mesh(new THREE.ConeGeometry(rbot,h,18,1,true),waterMat);
+  sh.position.y=ytop-h/2; fountain.add(sh);
+});
+g.userData.jet=jet; g.userData.jetCore=jetCore; g.userData.water=wd;
+
+// ===== ring of lamp posts (InstancedMesh) =====
+const NL=8, lampR=R-2.6;
+const poles=new THREE.InstancedMesh(new THREE.CylinderGeometry(0.16,0.22,4.6,10),metal,NL); poles.castShadow=true;
+const arms =new THREE.InstancedMesh(new THREE.TorusGeometry(0.5,0.08,6,16,Math.PI),metal,NL);
+const bases=new THREE.InstancedMesh(new THREE.CylinderGeometry(0.45,0.55,0.5,10),stoneDk,NL); bases.castShadow=true;
+const globes=new THREE.InstancedMesh(new THREE.SphereGeometry(0.4,12,10),globeOff,NL);
+const m4=new THREE.Matrix4(), q=new THREE.Quaternion(), v=new THREE.Vector3(), one=new THREE.Vector3(1,1,1), up=new THREE.Vector3(0,1,0);
+for(let i=0;i<NL;i++){
+  const a=i/NL*Math.PI*2, x=Math.cos(a)*lampR, z=Math.sin(a)*lampR;
+  bases.setMatrixAt(i,m4.compose(v.set(x,0.85,z),q.identity(),one));
+  poles.setMatrixAt(i,m4.compose(v.set(x,2.9,z),q.identity(),one));
+  q.setFromAxisAngle(up,a+Math.PI/2);
+  arms.setMatrixAt(i,m4.compose(v.set(x,5.15,z),q,one));
+  globes.setMatrixAt(i,m4.compose(v.set(x,5.15,z),q.identity(),one));
+}
+bases.instanceMatrix.needsUpdate=true; poles.instanceMatrix.needsUpdate=true;
+arms.instanceMatrix.needsUpdate=true; globes.instanceMatrix.needsUpdate=true;
+g.add(bases,poles,arms,globes);
+g.userData.lampMat=globeOff;
+
+// ===== benches around inner ring (InstancedMesh) =====
+const NB=6, benchR=8.6;
+const seats=new THREE.InstancedMesh(new THREE.BoxGeometry(2.2,0.18,0.6),wood,NB); seats.castShadow=true;
+const backs=new THREE.InstancedMesh(new THREE.BoxGeometry(2.2,0.6,0.12),wood,NB); backs.castShadow=true;
+const legs =new THREE.InstancedMesh(new THREE.BoxGeometry(0.14,0.5,0.5),metal,NB*2); legs.castShadow=true;
+let li=0;
+for(let i=0;i<NB;i++){
+  const a=i/NB*Math.PI*2+0.3, x=Math.cos(a)*benchR, z=Math.sin(a)*benchR;
+  q.setFromAxisAngle(up,-a+Math.PI/2);
+  seats.setMatrixAt(i,m4.compose(v.set(x,1.2,z),q,one));
+  backs.setMatrixAt(i,m4.compose(v.set(x+Math.cos(a)*0.24,1.6,z+Math.sin(a)*0.24),q,one));
+  for(let s=-1;s<=1;s+=2)
+    legs.setMatrixAt(li++,m4.compose(v.set(x+Math.cos(a+Math.PI/2)*0.9*s,0.9,z+Math.sin(a+Math.PI/2)*0.9*s),q,one));
+}
+seats.instanceMatrix.needsUpdate=true; backs.instanceMatrix.needsUpdate=true; legs.instanceMatrix.needsUpdate=true;
+g.add(seats,backs,legs);
+
+// ===== planter cone-trees (human-scale greenery) =====
+const NT=6, treeR=14.4;
+for(let i=0;i<NT;i++){
+  const a=i/NT*Math.PI*2+0.6, x=Math.cos(a)*treeR, z=Math.sin(a)*treeR;
+  const pl=new THREE.Mesh(new THREE.CylinderGeometry(1.1,0.9,1.0,10),planterM);
+  pl.position.set(x,1.1,z); pl.castShadow=pl.receiveShadow=true; g.add(pl);
+  const tk=new THREE.Mesh(new THREE.CylinderGeometry(0.18,0.24,1.4,6),trunk);
+  tk.position.set(x,2.3,z); tk.castShadow=true; g.add(tk);
+  const c1=new THREE.Mesh(new THREE.ConeGeometry(1.5,3.0,9),foliage);
+  c1.position.set(x,4.5,z); c1.castShadow=true; g.add(c1);
+  const c2=new THREE.Mesh(new THREE.ConeGeometry(1.1,2.2,9),foliage2);
+  c2.position.set(x,6.0,z); c2.castShadow=true; g.add(c2);
+}
+},
+animate:function(g,t,dt){
+const u=g.userData;
+if(u.jet){
+  u.jet.scale.y=1+Math.sin(t*3.0)*0.12;
+  u.jet.material.emissiveIntensity=1.4+Math.sin(t*5.0)*0.4;
+}
+if(u.jetCore) u.jetCore.scale.setScalar(0.9+Math.sin(t*4.0)*0.15);
+if(u.water){
+  for(let i=0;i<u.water.length;i++){
+    const w=u.water[i];
+    w.position.y=w.userData.y0+Math.sin(t*2.0+i*1.3)*0.02;   // subtle basin shimmer
+  }
+}
+if(u.lampMat) u.lampMat.emissiveIntensity=2.2+Math.sin(t*1.3)*0.25;   // gentle lamp flicker
+}},
+{name:"WIPEOUT BAY Marina Gateway Arch Sign", dx:155, dz:92, faceWater:true, clear:52,
+build:function(g){
+const STEEL = new THREE.MeshStandardMaterial({color:0x9aa6b2, metalness:0.86, roughness:0.4, envMapIntensity:0.7});
+const DARK  = new THREE.MeshStandardMaterial({color:0x10151d, metalness:0.35, roughness:0.72, envMapIntensity:0.35});
+const TRIM  = new THREE.MeshStandardMaterial({color:0x222a36, metalness:0.6, roughness:0.5, envMapIntensity:0.5});
+
+const span=72, halfSpan=span/2, towerH=17, apexY=29;
+const archR=18, archCx=0, archCy=apexY-archR;   // arc centre so the apex sits at apexY
+
+// ---------------- truss members: build matrices, render as ONE InstancedMesh ----------------
+const memberGeo=new THREE.CylinderGeometry(0.17,0.17,1,6,1,true); // unit-tall tube, scaled per instance
+const mats=[];
+const up=new THREE.Vector3(0,1,0);
+function member(ax,ay,az,bx,by,bz,rad){
+  const dx=bx-ax, dy=by-ay, dz=bz-az, len=Math.hypot(dx,dy,dz)||0.001;
+  const q=new THREE.Quaternion().setFromUnitVectors(up, new THREE.Vector3(dx/len,dy/len,dz/len));
+  mats.push(new THREE.Matrix4().compose(
+    new THREE.Vector3((ax+bx)/2,(ay+by)/2,(az+bz)/2), q,
+    new THREE.Vector3(rad/0.17,len,rad/0.17)));
+}
+const hw=2.1; // tower half-width in x and z
+// two lattice towers (4 chords + horizontal rings + X-bracing)
+for(const sx of [-1,1]){
+  const tx=sx*halfSpan;
+  const corners=[[tx-hw,-hw],[tx+hw,-hw],[tx+hw,hw],[tx-hw,hw]];
+  for(const c of corners) member(c[0],0,c[1], c[0],towerH,c[1], 0.2);
+  const levels=7, dh=towerH/levels;
+  for(let l=0;l<=levels;l++){ const y=l*dh;
+    for(let k=0;k<4;k++){ const a=corners[k], b=corners[(k+1)%4]; member(a[0],y,a[1], b[0],y,b[1], 0.12); } }
+  for(let l=0;l<levels;l++){ const y0=l*dh, y1=(l+1)*dh;
+    for(let k=0;k<4;k++){ const a=corners[k], b=corners[(k+1)%4]; member(a[0],y0,a[1], b[0],y1,b[1], 0.09); } }
+}
+// top arch: two curved chords (front/back) + cross posts + zig brace
+const angL=Math.atan2(towerH-archCy, -halfSpan-archCx);
+const angR=Math.atan2(towerH-archCy,  halfSpan-archCx);
+function archPt(tt,zoff){ const ang=angL+(angR-angL)*tt; return [archCx+Math.cos(ang)*archR, archCy+Math.sin(ang)*archR, zoff]; }
+const segs=18;
+for(const z of [-hw,hw]) for(let s=0;s<segs;s++){ const p=archPt(s/segs,z), q=archPt((s+1)/segs,z); member(p[0],p[1],p[2], q[0],q[1],q[2], 0.18); }
+for(let s=0;s<=segs;s++){ const f=archPt(s/segs,-hw), b=archPt(s/segs,hw); member(f[0],f[1],f[2], b[0],b[1],b[2], 0.1);
+  if(s<segs){ const q=archPt((s+1)/segs,hw); member(f[0],f[1],f[2], q[0],q[1],q[2], 0.08); } }
+const trussInst=new THREE.InstancedMesh(memberGeo, STEEL, mats.length);
+trussInst.castShadow=true; trussInst.receiveShadow=true;
+for(let i=0;i<mats.length;i++) trussInst.setMatrixAt(i,mats[i]);
+trussInst.instanceMatrix.needsUpdate=true; g.add(trussInst);
+
+// base plinths
+for(const sx of [-1,1]){ const pl=new THREE.Mesh(new THREE.BoxGeometry(hw*2+1.6,1.4,hw*2+1.6),TRIM);
+  pl.position.set(sx*halfSpan,0.7,0); pl.castShadow=pl.receiveShadow=true; g.add(pl); }
+
+// ---------------- sign backboard + frame ----------------
+const board=new THREE.Mesh(new THREE.BoxGeometry(45,16.5,1.2),DARK);
+board.position.set(0,12.5,0); board.castShadow=board.receiveShadow=true; g.add(board);
+const frame=new THREE.Mesh(new THREE.BoxGeometry(46.6,18,0.8),TRIM); frame.position.set(0,12.5,-0.5); g.add(frame);
+
+// ---------------- bold emissive block letters (one InstancedMesh of cubes) ----------------
+const FONT={
+  'W':["X...X","X...X","X...X","X.X.X","X.X.X","XX.XX","X...X"],
+  'I':["XXXXX","..X..","..X..","..X..","..X..","..X..","XXXXX"],
+  'P':["XXXX.","X...X","X...X","XXXX.","X....","X....","X...."],
+  'E':["XXXXX","X....","X....","XXXX.","X....","X....","XXXXX"],
+  'O':[".XXX.","X...X","X...X","X...X","X...X","X...X",".XXX."],
+  'U':["X...X","X...X","X...X","X...X","X...X","X...X",".XXX."],
+  'T':["XXXXX","..X..","..X..","..X..","..X..","..X..","..X.."],
+  'B':["XXXX.","X...X","X...X","XXXX.","X...X","X...X","XXXX."],
+  'A':[".XXX.","X...X","X...X","XXXXX","X...X","X...X","X...X"],
+  'Y':["X...X","X...X",".X.X.","..X..","..X..","..X..","..X.."],
+  ' ':[".....",".....",".....",".....",".....",".....","....."]};
+function lay(text){ const out=[], W=text.length*6-1; let ci=0;
+  for(const ch of text){ const gl=FONT[ch]||FONT[' ']; for(let r=0;r<7;r++) for(let c=0;c<5;c++) if(gl[r][c]==='X') out.push([ci*6+c,r]); ci++; }
+  return {cells:out, W}; }
+const lines=[{t:"WIPEOUT", cell:1.45, yc:16.2},{t:"BAY", cell:1.95, yc:8.0}];
+const placed=[];
+for(const ln of lines){ const L=lay(ln.t), cs=ln.cell, x0=-(L.W*cs)/2, y0=ln.yc+3*cs;
+  for(const cell of L.cells) placed.push([x0+cell[0]*cs, y0-cell[1]*cs, cs]); }
+const lettersMat=new THREE.MeshStandardMaterial({color:0xfff2cf, emissive:0xff8a3c, emissiveIntensity:2.6, metalness:0.1, roughness:0.5, envMapIntensity:0.3});
+const lettersInst=new THREE.InstancedMesh(new THREE.BoxGeometry(1,1,0.7), lettersMat, placed.length);
+const m4=new THREE.Matrix4(), qI=new THREE.Quaternion();
+for(let i=0;i<placed.length;i++){ const p=placed[i]; const cs=p[2];
+  m4.compose(new THREE.Vector3(p[0],p[1],1.0), qI, new THREE.Vector3(cs*0.86,cs*0.86,1)); lettersInst.setMatrixAt(i,m4); }
+lettersInst.instanceMatrix.needsUpdate=true; lettersInst.castShadow=true; g.add(lettersInst);
+g.userData.lettersMat=lettersMat;
+
+// ---------------- chasing marquee bulbs (one InstancedMesh, per-instance colour) ----------------
+const bulbPts=[];
+for(const sx of [-1,1]) for(let i=0;i<=7;i++) bulbPts.push([sx*(halfSpan+hw+0.4), i/7*towerH, hw+0.3]);
+const NA=24;
+for(let s=0;s<=NA;s++){ const ang=angL+(angR-angL)*(s/NA); bulbPts.push([archCx+Math.cos(ang)*(archR+0.7), archCy+Math.sin(ang)*(archR+0.7), hw+0.3]); }
+const fw=23.3, fh=9;
+for(let i=0;i<=8;i++){ const tt=i/8; bulbPts.push([-fw+2*fw*tt,12.5+fh,0.9]); bulbPts.push([-fw+2*fw*tt,12.5-fh,0.9]); }
+for(let i=1;i<8;i++){ const tt=i/8; bulbPts.push([-fw,12.5-fh+2*fh*tt,0.9]); bulbPts.push([fw,12.5-fh+2*fh*tt,0.9]); }
+const NB=bulbPts.length;
+const bulbMat=new THREE.MeshStandardMaterial({color:0xfff6e0, emissive:0xffd27a, emissiveIntensity:2.2, metalness:0, roughness:0.3, envMapIntensity:0.3});
+const bulbInst=new THREE.InstancedMesh(new THREE.SphereGeometry(0.4,6,4), bulbMat, NB);
+const bc=new THREE.Color();
+for(let i=0;i<NB;i++){ const p=bulbPts[i]; m4.compose(new THREE.Vector3(p[0],p[1],p[2]), qI, new THREE.Vector3(1,1,1)); bulbInst.setMatrixAt(i,m4); bulbInst.setColorAt(i,bc.setRGB(1,0.92,0.6)); }
+bulbInst.instanceMatrix.needsUpdate=true; if(bulbInst.instanceColor) bulbInst.instanceColor.needsUpdate=true; g.add(bulbInst);
+g.userData.bulbs=bulbInst; g.userData.bulbCount=NB; g.userData.bulbMat=bulbMat; g.userData._bc=new THREE.Color();
+
+// ---------------- rotating red beacon at the apex ----------------
+const beacon=new THREE.Group(); beacon.position.set(0, apexY+1.4, 0); g.add(beacon);
+beacon.add(new THREE.Mesh(new THREE.SphereGeometry(0.9,10,8),
+  new THREE.MeshStandardMaterial({color:0xff3344, emissive:0xff2233, emissiveIntensity:3.0, roughness:0.3})));
+const halo=new THREE.Mesh(new THREE.ConeGeometry(2.6,7,12,1,true),
+  new THREE.MeshStandardMaterial({color:0xff3344, emissive:0xff3344, emissiveIntensity:1.4, transparent:true, opacity:0.26, side:THREE.DoubleSide, depthWrite:false}));
+halo.position.set(3.4,0,0); halo.rotation.z=Math.PI/2; beacon.add(halo);
+g.userData.beacon=beacon;
+},
+animate:function(g,t,dt){
+const ud=g.userData;
+if(ud.beacon) ud.beacon.rotation.y = t*1.6;
+if(ud.lettersMat) ud.lettersMat.emissiveIntensity = 2.4 + Math.sin(t*2.4)*0.5;
+if(ud.bulbs && ud.bulbs.instanceColor){
+  const inst=ud.bulbs, n=ud.bulbCount, c=ud._bc;
+  for(let i=0;i<n;i++){ const ph=Math.sin(t*6 - i*0.6)*0.5+0.5; const v=0.35+ph*0.65;
+    c.setRGB(v, v*0.9, v*0.55); inst.setColorAt(i,c); }
+  inst.instanceColor.needsUpdate=true;
+  if(ud.bulbMat) ud.bulbMat.emissiveIntensity = 1.8 + Math.sin(t*3)*0.4;
+}
+}},
+];
+function buildLandmarks(parent){ const out=[]; const yaw=Math.atan2(-CITY.x,-CITY.z);
+  LANDMARK_DEFS.forEach(function(L){ const g=new THREE.Group();
+    try{ L.build(g); }catch(e){ console.warn('landmark '+L.name+' build failed:', e.message); return; }
+    const wx=CITY.x+L.dx, wz=CITY.z+L.dz; g.position.set(wx, landH(wx,wz)-1.0, wz);
+    if(L.faceWater) g.rotation.y=yaw;
+    parent.add(g);
+    if(L.animate) out.push({g:g, fn:L.animate}); });
+  return out; }
+
 
 function buildWorld(){
   // ---- terrain (islands + seabed) ----
@@ -687,6 +1945,7 @@ function loop(now){
 
   hudAcc+=dt; if(hudAcc>0.1){ hudAcc=0; updateHUD(); }
   mapAcc+=dt; if(mapAcc>0.08){ mapAcc=0; drawMap(); }
+  for(let i=0;i<LM_ANIMS.length;i++){ try{ LM_ANIMS[i].fn(LM_ANIMS[i].g, gameT, dt); }catch(e){} }
   composer.render();
 }
 function boostFov(){ return keys['shift']?4:0; }
