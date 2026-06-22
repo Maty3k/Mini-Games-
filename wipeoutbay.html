@@ -311,22 +311,35 @@ const benchMat=new THREE.MeshStandardMaterial({color:0x6e4a2c, roughness:0.85});
 const lampPostMat=new THREE.MeshStandardMaterial({color:0x2c2f34, roughness:0.5, metalness:0.7, envMapIntensity:0.6});
 const lampGlowMat=new THREE.MeshStandardMaterial({color:0xfff2c0, emissive:0xffdf9a, emissiveIntensity:1.8, roughness:0.4});
 // paved + sidewalked causeway down the shore ramp from the city to the dock (was bare dirt)
+// Causeway from the city down the shore ramp to the dock. Built as short THICK segments that
+// FOLLOW the terrain height (landH) so the deck always sits ON the ground (no floating gap);
+// the boxes extend well below grade so you never see daylight underneath — it reads as a solid
+// graded embankment / raised road.
 function buildCauseway(parent){
-  const cx=CITY.x,cz=CITY.z, c0=304,c1=364, mid=(c0+c1)/2;
-  const y0=landH(cx+DOCK.dx*c0,cz+DOCK.dz*c0), y1=landH(cx+DOCK.dx*c1,cz+DOCK.dz*c1);
-  const len=Math.hypot(c1-c0,y0-y1), tilt=-Math.atan2(y0-y1,c1-c0);
-  const mx=cx+DOCK.dx*mid, mz=cz+DOCK.dz*mid, my=(y0+y1)/2;
-  function tiltMesh(geo,mat,offRight,dy){ const m=new THREE.Mesh(geo,mat); m.rotation.order='YXZ'; m.rotation.y=DOCK.ang; m.rotation.x=tilt;
-    m.position.set(mx+DOCK.rx*offRight, my+dy, mz+DOCK.rz*offRight); m.receiveShadow=true; parent.add(m); return m; }
-  tiltMesh(new THREE.BoxGeometry(14,0.4,len), roadMat, 0, 0.2);
-  tiltMesh(new THREE.BoxGeometry(4.5,0.6,len), sidewalkMat, 9.2, 0.32);
-  tiltMesh(new THREE.BoxGeometry(4.5,0.6,len), sidewalkMat, -9.2, 0.32);
-  for(let s=-len/2+5;s<len/2-3;s+=7){ const cc=mid+s*(c1-c0)/len; const px=cx+DOCK.dx*cc, pz=cz+DOCK.dz*cc;
-    const d=new THREE.Mesh(new THREE.BoxGeometry(0.4,0.02,3.2),roadLineMat); d.rotation.order='YXZ'; d.rotation.y=DOCK.ang; d.rotation.x=tilt; d.position.set(px,landH(px,pz)+0.43,pz); parent.add(d); }
-  for(let s=-len/2+9;s<len/2;s+=18){ for(let sg=-1;sg<=1;sg+=2){ const cc=mid+s*(c1-c0)/len;
-    const px=cx+DOCK.dx*cc+DOCK.rx*10.6*sg, pz=cz+DOCK.dz*cc+DOCK.rz*10.6*sg, py=landH(px,pz);
-    const post=new THREE.Mesh(new THREE.CylinderGeometry(0.12,0.16,4,8),lampPostMat); post.position.set(px,py+2,pz); post.castShadow=true; parent.add(post);
-    const lamp=new THREE.Mesh(new THREE.SphereGeometry(0.3,10,8),lampGlowMat); lamp.position.set(px,py+4,pz); parent.add(lamp); } }
+  const cx=CITY.x,cz=CITY.z, c0=302,c1=366, RW=14, SW=4.6, step=7;
+  function segAt(a){ const x=cx+DOCK.dx*a, z=cz+DOCK.dz*a; return {x:x,z:z,y:landH(x,z)}; }
+  for(let a=c0;a<c1-0.01;a+=step){
+    const run=Math.min(step,c1-a), p0=segAt(a), p1=segAt(a+run);
+    const mx=(p0.x+p1.x)/2, mz=(p0.z+p1.z)/2, my=(p0.y+p1.y)/2;
+    const len=Math.hypot(run, p1.y-p0.y)+0.5, tilt=-Math.atan2(p1.y-p0.y, run);
+    // road deck — thick box, top surface seated at terrain+0.12, bottom buried
+    const road=new THREE.Mesh(new THREE.BoxGeometry(RW,3.0,len), roadMat);
+    road.rotation.order='YXZ'; road.rotation.y=DOCK.ang; road.rotation.x=tilt;
+    road.position.set(mx, my+0.12-1.5, mz); road.receiveShadow=true; parent.add(road);
+    // raised sidewalk curbs either side
+    for(let sg=-1;sg<=1;sg+=2){ const sw=new THREE.Mesh(new THREE.BoxGeometry(SW,3.1,len), sidewalkMat);
+      sw.rotation.order='YXZ'; sw.rotation.y=DOCK.ang; sw.rotation.x=tilt;
+      const off=RW/2+SW/2-0.4; sw.position.set(mx+DOCK.rx*off*sg, my+0.27-1.55, mz+DOCK.rz*off*sg);
+      sw.receiveShadow=true; parent.add(sw); }
+  }
+  // centre dashes, seated just above the deck along the path
+  for(let a=c0+5;a<c1-3;a+=7){ const x=cx+DOCK.dx*a, z=cz+DOCK.dz*a;
+    const d=new THREE.Mesh(new THREE.BoxGeometry(0.4,0.06,3.2),roadLineMat); d.rotation.y=DOCK.ang; d.position.set(x,landH(x,z)+0.18,z); parent.add(d); }
+  // lamp posts along the curbs
+  for(let a=c0+9;a<c1;a+=18){ for(let sg=-1;sg<=1;sg+=2){ const off=RW/2+SW-0.8;
+    const x=cx+DOCK.dx*a+DOCK.rx*off*sg, z=cz+DOCK.dz*a+DOCK.rz*off*sg, y=landH(x,z);
+    const post=new THREE.Mesh(new THREE.CylinderGeometry(0.12,0.16,4,8),lampPostMat); post.position.set(x,y+2,z); post.castShadow=true; parent.add(post);
+    const lamp=new THREE.Mesh(new THREE.SphereGeometry(0.3,10,8),lampGlowMat); lamp.position.set(x,y+4,z); parent.add(lamp); } }
 }
 // ---- traffic: cars driving the road grid ----
 const TRAFFIC=[]; const NLO=-6, NHI=5;
@@ -383,16 +396,10 @@ function buildCity(){
     if(avLat<16 && avAlong>30) continue;                          // clear a harbour avenue from the dock into the city
     if(Math.hypot(wx-csx,wz-csz)<22) continue;                    // keep the car spot clear
     if(LANDMARK_DEFS.some(function(L){return !L.abs && Math.hypot(wx-(cx+L.dx),wz-(cz+L.dz))<L.clear;})) continue;  // leave room for plateau landmarks
-    const roll=Math.random();
-    if(roll<0.14){                                                // a green PARK block — breaks up the perfect grid
-      const gp=new THREE.Mesh(new THREE.PlaneGeometry(GRID-13,GRID-13),parkMat); gp.rotation.x=-Math.PI/2; gp.position.set(wx,plateauY+0.05,wz); gp.receiveShadow=true; grp.add(gp);
-      const nt=2+(Math.random()*3|0); for(let t=0;t<nt;t++) treeSlots.push({x:wx+(Math.random()-0.5)*(GRID-20), z:wz+(Math.random()-0.5)*(GRID-20), s:0.6+Math.random()*0.35});
-      for(let b=0;b<2;b++){ const bn=new THREE.Mesh(new THREE.BoxGeometry(2.2,0.5,0.6),benchMat); bn.position.set(wx+(Math.random()-0.5)*11,plateauY+0.4,wz+(Math.random()-0.5)*11); bn.rotation.y=Math.random()*6.28; bn.castShadow=true; grp.add(bn); }
-    } else if(roll<0.22){                                         // open plaza (leave paved), maybe a tree
-      if(Math.random()<0.6) treeSlots.push({x:wx,z:wz,s:0.7});
-    } else {
-      placeBuilding(grp, wx, plateauY, wz, cd);
-    }
+    // raised sidewalk pad for this block — roads sink between pads, giving real curbs; buildings sit on it
+    const pad=new THREE.Mesh(new THREE.BoxGeometry(GRID-12,0.6,GRID-12),sidewalkMat);
+    pad.position.set(wx,plateauY+0.26-0.3,wz); pad.receiveShadow=true; grp.add(pad);
+    fillBlock(grp, wx, wz, cd, treeSlots);
   }
   // street lamps + trees along the sidewalks at intersections
   for(let i=-5;i<=5;i++) for(let j=-5;j<=5;j++){
@@ -2822,23 +2829,183 @@ function pickDistrict(cd){ const r=Math.random();
   if(cd<120) return r<0.82?'core':'mid';
   if(cd<210) return r<0.7?'mid':(r<0.86?'core':'edge');
   return r<0.8?'edge':'mid'; }
-function placeBuilding(parent, wx, baseY, wz, cd){
-  const dist=pickDistrict(cd);
+// pick a district-appropriate archetype, avoiding back-to-back repeats
+function chooseArch(dist){
   let pool=ARCHES.filter(function(a){return a.district===dist;}); if(!pool.length) pool=ARCHES;
   let A=pool[(Math.random()*pool.length)|0];
-  if(pool.length>1 && A===placeBuilding._last) A=pool[(Math.random()*pool.length)|0];  // avoid back-to-back repeats
-  placeBuilding._last=A;
+  if(pool.length>1 && A===chooseArch._last) A=pool[(Math.random()*pool.length)|0];
+  chooseArch._last=A; return A;
+}
+function chooseHeight(dist, A){
   let h; if(dist==='core') h=46+Math.random()*40; else if(dist==='mid') h=25+Math.random()*22; else h=15+Math.random()*13;
-  h=Math.max(A.hMin,Math.min(A.hMax,h));
-  const CAP=24;   // keep footprints within the block so they don't overrun the streets
-  const w=Math.min(CAP,A.wMin+Math.random()*(A.wMax-A.wMin)), d=Math.min(CAP,A.wMin+Math.random()*(A.wMax-A.wMin));
+  return Math.max(A.hMin,Math.min(A.hMax,h));
+}
+// Build ONE building (footprint w×d, height h, archetype A) at (wx,wz), axis rotation rotQ∈{0,1}×90°.
+// Seated on the ground AND hard-clamped: uniformly scaled down if its footprint would exceed the
+// (maxX,maxZ) half-extents — so a building can NEVER overrun the sidewalk/road. Returns the group.
+function spawnBuilding(parent, wx, wz, w, d, h, A, rotQ, maxX, maxZ){
+  if(!A) A=chooseArch('mid');
   const g=new THREE.Group();
-  try{ A.build(g,w,d,h); }catch(e){ console.warn('arch '+A.name+' build failed:', e.message); return; }
+  try{ A.build(g, w, d, h); }catch(e){ console.warn('arch '+(A&&A.name)+' build failed:', e.message); return null; }
+  g.rotation.y = rotQ?Math.PI/2:0;
   g.updateMatrixWorld(true);
-  const bb=new THREE.Box3().setFromObject(g);                                     // seat the lowest point on the ground (fixes buildings sunk/floating)
-  g.position.set(wx, baseY - THREE.MathUtils.clamp(bb.min.y, -3, 0.4), wz);
-  g.rotation.y=(Math.random()<0.5?0:Math.PI/2)+(Math.random()-0.5)*0.12;
-  parent.add(g);
+  let bb=new THREE.Box3().setFromObject(g);
+  const hx=Math.max(Math.abs(bb.max.x),Math.abs(bb.min.x)), hz=Math.max(Math.abs(bb.max.z),Math.abs(bb.min.z));
+  let s=1; if(maxX&&hx>maxX) s=Math.min(s,maxX/hx); if(maxZ&&hz>maxZ) s=Math.min(s,maxZ/hz);
+  if(s<1){ g.scale.setScalar(s); g.updateMatrixWorld(true); bb=new THREE.Box3().setFromObject(g); }
+  g.position.set(wx, plateauY - THREE.MathUtils.clamp(bb.min.y, -3, 0.4), wz);
+  parent.add(g); return g;
+}
+// back-compat single-building placement (centre of block)
+function placeBuilding(parent, wx, baseY, wz, cd){
+  const dist=pickDistrict(cd), A=chooseArch(dist);
+  spawnBuilding(parent, wx, wz,
+    Math.min(24,A.wMin+Math.random()*(A.wMax-A.wMin)), Math.min(24,A.wMin+Math.random()*(A.wMax-A.wMin)),
+    chooseHeight(dist,A), A, Math.random()<0.5?0:1, 12.5, 12.5);
+}
+// Fill one city block (centred bx,bz) with a realistic, varied arrangement. Buildable square is
+// bx±13 / bz±13 — buildings sit FLUSH at the street frontage so the streets read as continuous
+// walls, not isolated boxes. (Temporary version — replaced by the design-workflow output.)
+function fillBlock(parent, bx, bz, cd, treeSlots){
+  var HALF = 13;
+  var R = Math.random;
+  function rr(a,b){ return a + (b-a)*R(); }
+  function tree(x,z,s){ try{ treeSlots.push({x:x, z:z, s:s||(0.5+R()*0.3)}); }catch(e){} }
+
+  var roll = R();
+
+  // PARK (~12%)
+  if(roll < 0.12){
+    try{
+      var gp = new THREE.Mesh(new THREE.PlaneGeometry(24,24), parkMat);
+      gp.rotation.x = -Math.PI/2;
+      gp.position.set(bx, plateauY+0.29, bz);
+      gp.receiveShadow = true;
+      parent.add(gp);
+    }catch(e){}
+    var nt = 2 + (R()*3|0);
+    for(var t=0; t<nt; t++) tree(bx+rr(-10,10), bz+rr(-10,10), 0.6+R()*0.35);
+    var nb = 2 + (R()*2|0);
+    for(var b=0; b<nb; b++){
+      try{
+        var bn = new THREE.Mesh(new THREE.BoxGeometry(2.2,0.5,0.6), benchMat);
+        bn.position.set(bx+rr(-9,9), plateauY+0.55, bz+rr(-9,9));
+        bn.rotation.y = R()*6.28;
+        bn.castShadow = true;
+        parent.add(bn);
+      }catch(e){}
+    }
+    return;
+  }
+
+  // PLAZA (~8%)
+  if(roll < 0.20){
+    if(R() < 0.75) tree(bx+rr(-6,6), bz+rr(-6,6), 0.65+R()*0.2);
+    return;
+  }
+
+  // BUILT BLOCK
+  var dist = pickDistrict(cd);
+
+  var baseA = chooseArch(dist);
+  var corn = chooseHeight(dist, baseA);
+  if(dist === 'core') corn = Math.min(corn, baseA.hMin + rr(0,16));
+
+  var FR = [ {ax:'z', sgn:1}, {ax:'z', sgn:-1}, {ax:'x', sgn:1}, {ax:'x', sgn:-1} ];
+  for(var i=FR.length-1; i>0; i--){ var j=R()*(i+1)|0; var tmp=FR[i]; FR[i]=FR[j]; FR[j]=tmp; }
+
+  var rf = R(), nFront;
+  if(dist === 'core')      nFront = rf<0.20 ? 1 : (rf<0.66 ? 2 : 3);
+  else if(dist === 'mid')  nFront = rf<0.34 ? 1 : (rf<0.82 ? 2 : 3);
+  else                     nFront = rf<0.52 ? 1 : 2;
+
+  var built = 0, usedFront = [];
+
+  for(var f=0; f<nFront && f<FR.length; f++){
+    var E = FR[f];
+    var axisZ = (E.ax === 'z');
+    var sgn = E.sgn;
+
+    var run = 24;
+    var nLots = 1 + (R()*3|0);
+    var cap = (run/12)|0;
+    if(nLots > cap) nLots = cap;
+    if(nLots < 1) nLots = 1;
+    var lotW = run / nLots;
+
+    var feature = (R()*nLots)|0;
+    var start = -run/2 + lotW/2;
+
+    var depth = rr(11, 15);
+    if(depth > HALF-1) depth = HALF-1;
+
+    for(var l=0; l<nLots; l++){
+      var along = start + l*lotW;
+      var w = Math.max(12, lotW - 0.6);
+      var A = (R() < 0.7) ? baseA : chooseArch(dist);
+
+      var h;
+      if(l === feature) h = corn * (1.4 + R()*0.5);
+      else              h = corn * (0.90 + R()*0.12);
+      if(A.hMin) h = Math.max(A.hMin, Math.min(A.hMax, h));
+
+      var wx, wz, rotQ, maxX, maxZ;
+      if(axisZ){
+        rotQ = 0;
+        wx = bx + along;
+        wz = bz + sgn*(HALF - depth/2);
+        maxX = w/2;
+        maxZ = depth/2 + 0.3;
+      } else {
+        rotQ = 1;
+        wz = bz + along;
+        wx = bx + sgn*(HALF - depth/2);
+        maxZ = w/2;
+        maxX = depth/2 + 0.3;
+      }
+
+      try{
+        if(spawnBuilding(parent, wx, wz, w, depth, h, A, rotQ, maxX, maxZ)) built++;
+      }catch(e){}
+    }
+
+    usedFront.push(E);
+
+    if(R() < 0.5){
+      var tx = axisZ ? (bx + (R()<0.5?-1:1)*11) : (bx + sgn*11);
+      var tz = axisZ ? (bz + sgn*11) : (bz + (R()<0.5?-1:1)*11);
+      tree(tx, tz, 0.5+R()*0.3);
+    }
+  }
+
+  // SET-BACK CORE TOWER (skyline spike)
+  var wantTower;
+  if(dist === 'core')      wantTower = R() < 0.42;
+  else if(dist === 'mid')  wantTower = R() < 0.14;
+  else                     wantTower = false;
+  if(built >= 3) wantTower = false;
+  else if(built >= 2 && R() < 0.6) wantTower = false;
+
+  if(wantTower){
+    var TA = chooseArch('core');
+    var th = chooseHeight('core', TA);
+    th = Math.max(th, 52 + rr(0,32));
+    var ox = 0, oz = 0;
+    for(var u=0; u<usedFront.length; u++){
+      var U = usedFront[u];
+      if(U.ax === 'x') ox -= U.sgn*3.0; else oz -= U.sgn*3.0;
+    }
+    if(!usedFront.length){ ox = rr(-1.5,1.5); oz = rr(-1.5,1.5); }
+    var lim = HALF - 11.5;
+    if(ox >  lim) ox =  lim; if(ox < -lim) ox = -lim;
+    if(oz >  lim) oz =  lim; if(oz < -lim) oz = -lim;
+    try{
+      if(spawnBuilding(parent, bx+ox, bz+oz, rr(13,18), rr(13,18), th, TA, R()<0.5?0:1, 11.5, 11.5)) built++;
+    }catch(e){}
+    if(R() < 0.5) tree(bx+ox*0.25, bz+oz*0.25, 0.5+R()*0.2);
+  }
+
+  if(built <= 1 && R() < 0.7) tree(bx + 11*(R()<0.5?1:-1), bz + 11*(R()<0.5?1:-1), 0.5+R()*0.25);
 }
 
 // ===== CITY LANDMARKS (designed + r128-verified by the landmarks workflow) =====
@@ -4499,32 +4666,47 @@ function buildPerson(g, col){
 function buildAvatar(){ const p=buildPerson(avatar, {shirt:0xd23b30, pants:0x21466e, skin:0xc98b66, hair:0x2a1c12});
   avatar.userData.armL=p.armL; avatar.userData.armR=p.armR; avatar.userData.legL=p.legL; avatar.userData.legR=p.legR; }
 buildAvatar();
-// ---- pedestrians walking the city ----
-const NPCS=[];
+// ---- pedestrians: walk the raised sidewalk network (corner-graph along block edges) ----
+const NPCS=[]; const NPC_NODES=[];
 const NPC_SHIRT=[0x2f6fd0,0x3a8a5a,0xd9b531,0xe06a2a,0x9a4bd0,0xdedede,0xcf3f31,0x40b0c0,0xf06090,0x507060];
 const NPC_PANTS=[0x2a2f38,0x4a3526,0x35506e,0x555a60,0x6b5a3a];
 const NPC_SKIN=[0xd8a07a,0xc98b66,0x9c6a44,0xe7b48f,0xb07a52];
 const NPC_HAIR=[0x2a1c12,0x161616,0x6b4423,0x8a6a3a,0x9a9a9a];
 function pick(a){ return a[(Math.random()*a.length)|0]; }
-function buildNPCs(parent){
-  for(let n=0;n<16;n++){ const grp=new THREE.Group(); grp.rotation.order='YXZ';
-    const p=buildPerson(grp, {shirt:pick(NPC_SHIRT), pants:pick(NPC_PANTS), skin:pick(NPC_SKIN), hair:pick(NPC_HAIR)});
-    const a=Math.random()*6.283, r=Math.random()*240, x=CITY.x+Math.cos(a)*r, z=CITY.z+Math.sin(a)*r;
-    parent.add(grp); NPCS.push({grp:grp, x:x, z:z, heading:Math.random()*6.283, speed:0, step:Math.random()*6, tx:x, tz:z, lp:p, retarget:0}); }
+// nodes = sidewalk corners at (roadCentre ± 8.5); edges run along block-edge sidewalks (len 31)
+// and across intersections as crosswalks (len 17). Shared corner points → fully continuous paths.
+function buildNPCGraph(){
+  const cx=CITY.x,cz=CITY.z, key=new Map();
+  const K=function(x,z){ return Math.round(x)+'_'+Math.round(z); };
+  for(let i=-7;i<=6;i++)for(let j=-7;j<=6;j++){ const Xi=cx+(i+0.5)*GRID, Zj=cz+(j+0.5)*GRID;
+    for(let sx=-1;sx<=1;sx+=2)for(let sz=-1;sz<=1;sz+=2){ const x=Xi+8.5*sx, z=Zj+8.5*sz;
+      if(Math.hypot(x-cx,z-cz)>290) continue; const k=K(x,z); if(key.has(k)) continue; key.set(k,NPC_NODES.length); NPC_NODES.push({x:x,z:z,adj:[]}); } }
+  const offs=[31,-31,17,-17];
+  for(const n of NPC_NODES){ for(const o of offs){
+    let k=K(n.x+o,n.z); if(key.has(k)) n.adj.push(key.get(k));
+    k=K(n.x,n.z+o); if(key.has(k)) n.adj.push(key.get(k)); } }
 }
-function npcTarget(){ const a=Math.random()*6.283, r=20+Math.random()*220; return [CITY.x+Math.cos(a)*r, CITY.z+Math.sin(a)*r]; }
+function buildNPCs(parent){
+  buildNPCGraph(); if(!NPC_NODES.length) return;
+  for(let n=0;n<20;n++){ const grp=new THREE.Group(); grp.rotation.order='YXZ';
+    const p=buildPerson(grp, {shirt:pick(NPC_SHIRT), pants:pick(NPC_PANTS), skin:pick(NPC_SKIN), hair:pick(NPC_HAIR)});
+    let a=(Math.random()*NPC_NODES.length)|0, tries=0; while(!NPC_NODES[a].adj.length && tries++<30) a=(Math.random()*NPC_NODES.length)|0;
+    const adj=NPC_NODES[a].adj, b=adj.length?adj[(Math.random()*adj.length)|0]:a;
+    parent.add(grp); NPCS.push({grp:grp, lp:p, a:a, b:b, t:Math.random(), speed:1.0+Math.random()*0.55, step:Math.random()*6, heading:Math.random()*6.28}); }
+}
 function updateNPCs(dt){
-  for(const c of NPCS){ c.retarget-=dt;
-    let dx=c.tx-c.x, dz=c.tz-c.z, d=Math.hypot(dx,dz);
-    if(d<2 || c.retarget<=0){ const t=npcTarget(); c.tx=t[0]; c.tz=t[1]; c.retarget=6+Math.random()*8; dx=c.tx-c.x; dz=c.tz-c.z; d=Math.hypot(dx,dz)||1; }
-    const want=Math.atan2(dx,dz); let dh=((want-c.heading+Math.PI*3)%(Math.PI*2))-Math.PI; c.heading+=THREE.MathUtils.clamp(dh,-3*dt,3*dt);
-    c.speed += (1.4-c.speed)*Math.min(1,dt*4);
-    c.x+=Math.sin(c.heading)*c.speed*dt; c.z+=Math.cos(c.heading)*c.speed*dt;
-    if(Math.hypot(c.x-CITY.x,c.z-CITY.z)>275){ c.tx=CITY.x; c.tz=CITY.z; }
-    c.step += c.speed*dt*2.4;
-    const sw=Math.sin(c.step)*0.55*Math.min(1,c.speed/1.4), L=c.lp;
+  for(const c of NPCS){ const A=NPC_NODES[c.a], B=NPC_NODES[c.b]; if(!A||!B) continue;
+    const seg=Math.hypot(B.x-A.x,B.z-A.z)||1; c.t += c.speed*dt/seg;
+    if(c.t>=1){ c.t-=1; const prev=c.a; c.a=c.b; const adj=NPC_NODES[c.a].adj, na=NPC_NODES[c.a];
+      let cand=adj.filter(function(k){return k!==prev;}); if(!cand.length) cand=adj.slice();
+      // weight by segment length² → prefer long sidewalk runs over short crosswalks (cross less often)
+      let tot=0; const wt=cand.map(function(k){ const L=Math.hypot(NPC_NODES[k].x-na.x,NPC_NODES[k].z-na.z); const w=L*L; tot+=w; return w; });
+      let rr=Math.random()*tot; c.b=cand[cand.length-1]; for(let q=0;q<cand.length;q++){ rr-=wt[q]; if(rr<=0){ c.b=cand[q]; break; } } }
+    const P=NPC_NODES[c.a], Q=NPC_NODES[c.b], x=P.x+(Q.x-P.x)*c.t, z=P.z+(Q.z-P.z)*c.t;
+    const want=Math.atan2(Q.x-P.x,Q.z-P.z); let dh=((want-c.heading+Math.PI*3)%(Math.PI*2))-Math.PI; c.heading+=THREE.MathUtils.clamp(dh,-6*dt,6*dt);
+    c.step += c.speed*dt*2.6; const sw=Math.sin(c.step)*0.55, L=c.lp;
     if(L){ L.legL.rotation.x=sw; L.legR.rotation.x=-sw; L.armL.rotation.x=-sw; L.armR.rotation.x=sw; }
-    c.grp.position.set(c.x, plateauY, c.z); c.grp.rotation.y=c.heading; }
+    c.grp.position.set(x, plateauY+0.28, z); c.grp.rotation.y=c.heading; }
 }
 function buildBoxCar(){
   const body=new THREE.Mesh(new THREE.BoxGeometry(2,0.7,4.4),new THREE.MeshStandardMaterial({color:0xcf3a2e,roughness:0.35,metalness:0.3,envMapIntensity:0.8})); body.position.y=0.75; car3d.add(body);
