@@ -220,8 +220,11 @@ const ISLANDS=[];
     {a:3.0,r:1540,h:120,s:290}, {a:3.8,r:1420,h:175,s:340}, {a:4.7,r:1490,h:145,s:305}, {a:5.6,r:1440,h:185,s:345} ];
   ring.forEach(o=>ISLANDS.push({x:Math.cos(o.a)*o.r, z:Math.sin(o.a)*o.r, h:o.h, s:o.s}));
   ISLANDS.push({x:90,z:70,h:20,s:85});       // one small rock well inside the loop, decoration
+  ISLANDS.push({x:-705,z:-309,h:46,s:62});   // rocky lighthouse islet guarding the harbour mouth
 })();
 const CITY={x:-1180,z:-360};      // port-city coastal shelf on the bay's rim (gap between islands)
+const LH_ISLE={x:-705,z:-309};    // the lighthouse sits out here, not in the city
+const plateauY=15;                // flat city-core ground height
 function fbm(x,z){ let v=0,a=0.5,fx=x,fz=z; for(let o=0;o<5;o++){ v+=a*Math.sin(fx)*Math.cos(fz); fx=fx*1.93+1.7; fz=fz*2.07-0.9; a*=0.5; } return v; }
 function ridged(x,z){ let v=0,a=0.5,fx=x,fz=z; for(let o=0;o<4;o++){ v+=a*(1.0-Math.abs(Math.sin(fx)*Math.cos(fz))); fx=fx*1.97+1.3; fz=fz*2.03-0.7; a*=0.5; } return v-0.62; }
 function landH(x,z){              // metres above sea (negative = seabed)
@@ -233,8 +236,8 @@ function landH(x,z){              // metres above sea (negative = seabed)
     h += ridged(wx*0.0085,wz*0.0085)*(20+mass*0.22)*m + ridged(wx*0.022,wz*0.022)*7*m + fbm(x*0.05,z*0.05)*3*m; }
   // city coastal shelf: flat plateau (~15 m) ramping down to the shoreline, deep water beyond
   const cd=Math.hypot(x-CITY.x,z-CITY.z); let shelf=-26;
-  if(cd<300) shelf=15; else if(cd<452) shelf=15+(cd-300)/152*(-41);
-  if(shelf>-26){ h=Math.max(h, shelf + fbm(x*0.03,z*0.03)*1.4); }
+  if(cd<288) shelf=15; else if(cd<452) shelf=15+(cd-288)/164*(-41);   // flat city core (paved); ramps to the shore
+  if(shelf>-26){ h=Math.max(h, shelf); }                              // no noise on the city plateau — keep it dead flat for streets
   return h;
 }
 function slopeAt(x,z){ const e=8, hx=landH(x+e,z)-landH(x-e,z), hz=landH(x,z+e)-landH(x,z-e); return 2*e/Math.hypot(hx,2*e,hz); }
@@ -295,15 +298,33 @@ function windowTex(lit){ const c=document.createElement('canvas'); c.width=64;c.
     g.fillStyle=on?(Math.random()<0.5?'#ffe6a8':'#ffd070'):'#10161e'; g.fillRect(fx,fy,9,7); }
   const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; t.encoding=THREE.sRGBEncoding; return t; }
 function scaleBoxUV(geo,u,v){ const uv=geo.attributes.uv; for(let i=0;i<uv.count;i++) uv.setXY(i,uv.getX(i)*u,uv.getY(i)*v); uv.needsUpdate=true; }
+const GRID=40;   // city block spacing
+const pavementMat=new THREE.MeshStandardMaterial({color:0x8f9296, roughness:0.93, metalness:0, envMapIntensity:0.25});
+const roadMat=new THREE.MeshStandardMaterial({color:0x23262b, roughness:0.82, metalness:0, envMapIntensity:0.18});
+const roadLineMat=new THREE.MeshStandardMaterial({color:0xd8c25a, roughness:0.6, metalness:0});
+function buildStreets(parent){
+  const cx=CITY.x, cz=CITY.z, R=300, RW=12, GR=GRID;
+  const pav=new THREE.Mesh(new THREE.CircleGeometry(R,56), pavementMat);
+  pav.rotation.x=-Math.PI/2; pav.position.set(cx, plateauY+0.03, cz); pav.receiveShadow=true; parent.add(pav);
+  const dashGeo=new THREE.BoxGeometry(0.4,0.02,3.4);
+  for(let i=-7;i<=6;i++){ const off=(i+0.5)*GR; if(Math.abs(off)>R-10) continue;
+    const half=Math.sqrt(Math.max(1,(R-7)*(R-7)-off*off));
+    let r=new THREE.Mesh(new THREE.BoxGeometry(RW,0.14,half*2),roadMat); r.position.set(cx+off,plateauY+0.08,cz); r.receiveShadow=true; parent.add(r);
+    for(let s=-half+5;s<half-5;s+=7.5){ const d=new THREE.Mesh(dashGeo,roadLineMat); d.position.set(cx+off,plateauY+0.17,cz+s); parent.add(d); }
+    r=new THREE.Mesh(new THREE.BoxGeometry(half*2,0.14,RW),roadMat); r.position.set(cx,plateauY+0.08,cz+off); r.receiveShadow=true; parent.add(r);
+    for(let s=-half+5;s<half-5;s+=7.5){ const d=new THREE.Mesh(dashGeo,roadLineMat); d.rotation.y=Math.PI/2; d.position.set(cx+s,plateauY+0.17,cz+off); parent.add(d); }
+  }
+}
 function buildCity(){
   const cx=CITY.x, cz=CITY.z, grp=new THREE.Group(); scene.add(grp);
+  buildStreets(grp);
   for(let i=-7;i<=7;i++) for(let j=-7;j<=7;j++){
-    if((i+70)%3===0 || (j+70)%4===0) continue;                    // street grid gaps
-    const wx=cx+i*34+(Math.random()-0.5)*7, wz=cz+j*34+(Math.random()-0.5)*7, h0=landH(wx,wz);
+    if((i+70)%4===0 && (j+70)%5===0) continue;                    // occasional open plaza
+    const wx=cx+i*GRID+(Math.random()-0.5)*3, wz=cz+j*GRID+(Math.random()-0.5)*3, h0=landH(wx,wz);
     if(h0<3.5) continue;                                          // only on the dry plateau
-    if(LANDMARK_DEFS.some(function(L){return Math.hypot(wx-(cx+L.dx),wz-(cz+L.dz))<L.clear;})) continue;  // leave room for landmarks
+    if(LANDMARK_DEFS.some(function(L){return !L.abs && Math.hypot(wx-(cx+L.dx),wz-(cz+L.dz))<L.clear;})) continue;  // leave room for plateau landmarks
     const cd=Math.hypot(wx-cx,wz-cz);
-    placeBuilding(grp, wx, h0-1, wz, cd);
+    placeBuilding(grp, wx, h0, wz, cd);
   }
   buildDock(grp);
   LM_ANIMS=buildLandmarks(grp);
@@ -1357,10 +1378,13 @@ function pickDistrict(cd){ const r=Math.random();
 function placeBuilding(parent, wx, baseY, wz, cd){
   const dist=pickDistrict(cd);
   let pool=ARCHES.filter(function(a){return a.district===dist;}); if(!pool.length) pool=ARCHES;
-  const A=pool[(Math.random()*pool.length)|0];
+  let A=pool[(Math.random()*pool.length)|0];
+  if(pool.length>1 && A===placeBuilding._last) A=pool[(Math.random()*pool.length)|0];  // avoid back-to-back repeats
+  placeBuilding._last=A;
   let h; if(dist==='core') h=46+Math.random()*40; else if(dist==='mid') h=25+Math.random()*22; else h=15+Math.random()*13;
   h=Math.max(A.hMin,Math.min(A.hMax,h));
-  const w=A.wMin+Math.random()*(A.wMax-A.wMin), d=A.wMin+Math.random()*(A.wMax-A.wMin);
+  const CAP=26;   // keep footprints within the block so they don't overrun the streets
+  const w=Math.min(CAP,A.wMin+Math.random()*(A.wMax-A.wMin)), d=Math.min(CAP,A.wMin+Math.random()*(A.wMax-A.wMin));
   const g=new THREE.Group();
   try{ A.build(g,w,d,h); }catch(e){ console.warn('arch '+A.name+' build failed:', e.message); return; }
   g.position.set(wx, baseY, wz);
@@ -1614,7 +1638,7 @@ ud.arms.instanceMatrix.needsUpdate = true;
 if (ud.bulbs) ud.bulbs.material.emissiveIntensity = 1.9 + Math.sin(t * 2.0) * 0.7;
 
 }},
-{name:"Harborlight Lighthouse", dx:255, dz:40, faceWater:false, clear:24,
+{name:"Harborlight Lighthouse", abs:true, ax:LH_ISLE.x, az:LH_ISLE.z, dx:0, dz:0, faceWater:false, clear:0,
 build:function(g){
 // ===== Harborlight Lighthouse =====
 // Base sits at g local y=0. Total height ~36.6 m.
@@ -2617,7 +2641,7 @@ if(ud.bulbs && ud.bulbs.instanceColor){
 function buildLandmarks(parent){ const out=[]; const yaw=Math.atan2(-CITY.x,-CITY.z);
   LANDMARK_DEFS.forEach(function(L){ const g=new THREE.Group();
     try{ L.build(g); }catch(e){ console.warn('landmark '+L.name+' build failed:', e.message); return; }
-    const wx=CITY.x+L.dx, wz=CITY.z+L.dz; g.position.set(wx, landH(wx,wz)-1.0, wz);
+    const wx=L.abs?L.ax:(CITY.x+L.dx), wz=L.abs?L.az:(CITY.z+L.dz); g.position.set(wx, landH(wx,wz)-1.0, wz);
     if(L.faceWater) g.rotation.y=yaw;
     parent.add(g);
     if(L.animate) out.push({g:g, fn:L.animate}); });
