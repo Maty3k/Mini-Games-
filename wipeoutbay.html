@@ -4209,7 +4209,7 @@ cv.addEventListener('touchmove',e=>{ if(!e.touches.length)return; const r=cv.get
 cv.addEventListener('touchend',()=>{touching=false;touchSteer=0;});
 cv.addEventListener('touchcancel',()=>{touching=false;touchSteer=0;});
 addEventListener('resize',()=>{ VW=innerWidth; VH=innerHeight; camera.aspect=VW/VH; camera.updateProjectionMatrix();
-  renderer.setSize(VW,VH); composer.setSize(VW,VH); });
+  setRenderScale(renderScale); });   // re-applies renderer + composer + fxaa at the current scale
 
 function applyModeUI(){ const free=(mode==='free');
   el('obj').style.display=free?'none':'block'; timeStat.style.display=free?'none':'flex';
@@ -4247,7 +4247,10 @@ const _fwd=new THREE.Vector3(), _camT=new THREE.Vector3();
 let lastT=0;
 function loop(now){
   requestAnimationFrame(loop);
-  let dt=(now-lastT)/1000; lastT=now; if(!(dt>0))dt=0.016; if(dt>0.05)dt=0.05;
+  const rawDt=(now-lastT)/1000; lastT=now;
+  let dt=rawDt; if(!(dt>0))dt=0.016; if(dt>0.05)dt=0.05;
+  if(rawDt>0.001 && rawDt<0.5) fpsSmooth += (1/rawDt - fpsSmooth)*0.08;   // smoothed FPS for adaptive resolution
+  adaptResolution(dt);
   gameT+=dt;
 
   if(running){
@@ -4383,9 +4386,19 @@ const composer=new THREE.EffectComposer(renderer);
 composer.addPass(new THREE.RenderPass(scene,camera));
 const bloom=new THREE.UnrealBloomPass(new THREE.Vector2(VW,VH),0.32,0.55,0.86); composer.addPass(bloom);
 const fxaa=new THREE.ShaderPass(THREE.FXAAShader); composer.addPass(fxaa);
-function sizePost(){ fxaa.material.uniforms.resolution.value.set(1/(VW*DPR),1/(VH*DPR)); }
-sizePost(); addEventListener('resize',sizePost);
 composer.setSize(VW,VH);
+// ---------- adaptive resolution: drop the render scale when FPS sags, recover when smooth ----------
+let fpsSmooth=60, renderScale=1, scaleAcc=0, warmup=0;
+const RS_FLOOR=0.6;
+function setRenderScale(s){ renderScale=s; const pr=DPR*s;
+  renderer.setPixelRatio(pr); renderer.setSize(VW,VH,false);
+  composer.setPixelRatio(pr);
+  fxaa.material.uniforms.resolution.value.set(1/(VW*pr),1/(VH*pr)); }
+setRenderScale(1);
+function adaptResolution(dt){ warmup+=dt; if(warmup<2.5) return;       // let things settle first
+  scaleAcc+=dt; if(scaleAcc<0.8) return; scaleAcc=0;
+  if(fpsSmooth<48 && renderScale>RS_FLOOR) setRenderScale(Math.max(RS_FLOOR, renderScale-0.12));
+  else if(fpsSmooth>58 && renderScale<1)   setRenderScale(Math.min(1, renderScale+0.07)); }
 
 // expose for headless verification
 window.__wb={B,WAVES,seaY,seaNormal,GATES,keys,get composer(){return composer;},
@@ -4393,7 +4406,8 @@ window.__wb={B,WAVES,seaY,seaNormal,GATES,keys,get composer(){return composer;},
   get gatesPassed(){return gatesPassed;}, get score(){return score;}, get nextGate(){return nextGate;},
   get running(){return running;},set running(v){running=v;}, set lastT(v){lastT=v;}, reset:resetRun, loopOnce:loop,
   start:start, get mode(){return mode;}, set mode(v){mode=v;}, CITY, landH, recenter,
-  camera, THREE:window.THREE, renderRaw(){ composer.render(); }};
+  camera, THREE:window.THREE, renderRaw(){ composer.render(); },
+  setRenderScale:setRenderScale, get renderScale(){return renderScale;}, get fps(){return fpsSmooth;}};
 </script>
 </body>
 </html>
