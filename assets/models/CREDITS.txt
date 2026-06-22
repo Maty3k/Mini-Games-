@@ -1,0 +1,8 @@
+Third-party 3D models used in wipeoutbay.html — all Public Domain (CC0):
+
+- pier/modular_wooden_pier  — "Modular Wooden Pier" by Poly Haven (CC0)
+    https://polyhaven.com/a/modular_wooden_pier
+- nature/tree.glb           — "Tree" by Quaternius, via Poly Pizza (CC0)
+    https://poly.pizza/m/qZtx0AHhcy
+
+Sky HDRI: assets/skies/sky_day.hdr — "kloppenheim_06_puresky" by Poly Haven (CC0)

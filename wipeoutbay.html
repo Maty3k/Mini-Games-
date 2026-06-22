@@ -15,6 +15,7 @@
 <script src="lib/RenderPass.js"></script>
 <script src="lib/ShaderPass.js"></script>
 <script src="lib/UnrealBloomPass.js"></script>
+<script src="lib/GLTFLoader.js"></script>
 <style>
   *{ margin:0; padding:0; box-sizing:border-box; }
   html,body{ width:100%; height:100%; overflow:hidden; background:#0a1118; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; }
@@ -192,21 +193,21 @@ const waterNormal=texL.load('assets/textures/water_nor.jpg'); waterNormal.wrapS=
 const sandTex=loadTex('sand_diff.jpg',40), grassTex=loadTex('grass_diff.jpg',60), rockTex=loadTex('gravel_diff.jpg',50);
 const landNor=texL.load('assets/textures/asphalt_nor.jpg'); landNor.wrapS=landNor.wrapT=THREE.RepeatWrapping;   // rock surface detail normal
 
-let WATER=null, seaU=null;
-let started=false;
+let WATER=null, seaU=null, started=false, treeProto=null, pierProto=null, built=false, pend=3;
+function assetReady(){ if(--pend===0 && !built){ built=true; buildWorld(); loadingEl.style.display='none'; } }
 new THREE.RGBELoader().load('assets/skies/sky_day.hdr', hdr=>{
-  hdr.mapping=THREE.EquirectangularReflectionMapping;
-  scene.background=hdr;
-  scene.environment=pmrem.fromEquirectangular(hdr).texture;
-  buildWorld();
-  loadingEl.style.display='none';
-}, undefined, err=>{ // fallback: procedural Sky if the HDRI fails
+  hdr.mapping=THREE.EquirectangularReflectionMapping; scene.background=hdr;
+  scene.environment=pmrem.fromEquirectangular(hdr).texture; assetReady();
+}, undefined, ()=>{ // fallback: procedural Sky if the HDRI fails
   const sky=new THREE.Sky(); sky.scale.setScalar(20000); scene.add(sky);
   const u=sky.material.uniforms; u.turbidity.value=5; u.rayleigh.value=2.2; u.mieCoefficient.value=0.006; u.mieDirectionalG.value=0.8;
   u.sunPosition.value.copy(sunDir);
   const es=new THREE.Scene(); const se=new THREE.Sky(); se.scale.setScalar(20000); se.material.uniforms.sunPosition.value.copy(sunDir); es.add(se);
-  scene.environment=pmrem.fromScene(es).texture; buildWorld(); loadingEl.style.display='none';
+  scene.environment=pmrem.fromScene(es).texture; assetReady();
 });
+const _gltf=new THREE.GLTFLoader();
+_gltf.load('assets/models/nature/tree.glb', g=>{ treeProto=g.scene; assetReady(); }, undefined, ()=>{ console.warn('tree load failed'); assetReady(); });
+_gltf.load('assets/models/pier/modular_wooden_pier_2k.gltf', g=>{ pierProto=g.scene; assetReady(); }, undefined, ()=>{ console.warn('pier load failed'); assetReady(); });
 
 // ============================================================
 //  THE BAY — heightfield islands ringing an open lagoon
@@ -262,7 +263,16 @@ function makeTerrainMat(){
   return m;
 }
 
-// ---- instanced trees scattered on the island slopes (wooded, not bare humps) ----
+// instance every mesh of a loaded GLB across N placement matrices → just a few draw calls
+function instanceModel(proto, mats, shadow){ proto.updateMatrixWorld(true);
+  const grp=new THREE.Group(), tmp=new THREE.Matrix4();
+  proto.traverse(o=>{ if(!o.isMesh) return; const local=o.matrixWorld.clone();
+    const inst=new THREE.InstancedMesh(o.geometry,o.material,mats.length);
+    inst.castShadow=!!shadow; inst.receiveShadow=true; inst.frustumCulled=false;
+    for(let i=0;i<mats.length;i++){ tmp.multiplyMatrices(mats[i],local); inst.setMatrixAt(i,tmp); }
+    inst.instanceMatrix.needsUpdate=true; grp.add(inst); });
+  return grp; }
+// ---- trees on the island slopes (real CC0 low-poly tree model, instanced) ----
 function buildTrees(){
   const slots=[];
   for(const is of ISLANDS){ if(is.h<60) continue;                 // only the big mountain islands
@@ -271,19 +281,12 @@ function buildTrees(){
       const x=is.x+Math.cos(a)*r, z=is.z+Math.sin(a)*r, h=landH(x,z);
       if(h<6||h>135) continue; if(slopeAt(x,z)<0.78) continue;     // skip beaches & cliffs
       slots.push({x,z,h,s:0.85+Math.random()*1.3,rot:Math.random()*6.28}); } }
-  if(!slots.length) return;
-  const trunkGeo=new THREE.CylinderGeometry(0.32,0.5,4,6); trunkGeo.translate(0,2,0);
-  const folGeo=new THREE.ConeGeometry(2.3,7.5,7); folGeo.translate(0,7.2,0);
-  const tm=new THREE.InstancedMesh(trunkGeo,new THREE.MeshStandardMaterial({color:0x5a3d24,roughness:0.95}),slots.length);
-  const fm=new THREE.InstancedMesh(folGeo,new THREE.MeshStandardMaterial({color:0x2f5d2a,roughness:0.92}),slots.length);
-  fm.instanceColor=new THREE.InstancedBufferAttribute(new Float32Array(slots.length*3),3);
-  const mtx=new THREE.Matrix4(), q=new THREE.Quaternion(), sc=new THREE.Vector3(), p=new THREE.Vector3(), up=new THREE.Vector3(0,1,0);
-  for(let i=0;i<slots.length;i++){ const t=slots[i];
-    q.setFromAxisAngle(up,t.rot); sc.set(t.s,t.s*(0.9+Math.random()*0.5),t.s); p.set(t.x,t.h-0.6,t.z); mtx.compose(p,q,sc);
-    tm.setMatrixAt(i,mtx); fm.setMatrixAt(i,mtx);
-    const g=0.28+Math.random()*0.18; fm.setColorAt(i,new THREE.Color(g*0.55,g,g*0.5)); }
-  tm.instanceMatrix.needsUpdate=true; fm.instanceMatrix.needsUpdate=true; if(fm.instanceColor)fm.instanceColor.needsUpdate=true;
-  scene.add(tm,fm);
+  if(!slots.length || !treeProto) return;
+  const box=new THREE.Box3().setFromObject(treeProto), th=Math.max(0.01,box.max.y-box.min.y), norm=13/th, minY=box.min.y, up=new THREE.Vector3(0,1,0);
+  const mats=slots.map(sl=>{ const s=norm*sl.s;
+    return new THREE.Matrix4().compose(new THREE.Vector3(sl.x, sl.h-minY*s-0.4, sl.z),
+      new THREE.Quaternion().setFromAxisAngle(up,sl.rot), new THREE.Vector3(s,s,s)); });
+  scene.add(instanceModel(treeProto, mats, false));
 }
 // ---- port city: skyline of window-lit buildings + a pier reaching into the bay ----
 function windowTex(lit){ const c=document.createElement('canvas'); c.width=64;c.height=128; const g=c.getContext('2d');
@@ -309,23 +312,22 @@ function buildCity(){
   buildDock(grp);
 }
 function buildDock(grp){
-  const cx=CITY.x, cz=CITY.z, d=new THREE.Vector2(-cx,-cz).normalize(), rg=new THREE.Vector2(d.y,-d.x);
-  const wood=new THREE.MeshStandardMaterial({color:0x6b4a2e,roughness:0.85}), dark=new THREE.MeshStandardMaterial({color:0x2a2620,roughness:0.7});
-  const lampMat=new THREE.MeshStandardMaterial({color:0xfff0c0,emissive:0xffcf73,emissiveIntensity:1.5,roughness:0.4});
-  const start=378, len=120, width=16, deckY=3.2, cxs=cx+d.x*(start+len/2), czs=cz+d.y*(start+len/2);
-  const deck=new THREE.Mesh(new THREE.BoxGeometry(width,0.5,len),wood); deck.position.set(cxs,deckY,czs);
-  deck.rotation.y=Math.atan2(d.x,d.y); deck.castShadow=deck.receiveShadow=true; grp.add(deck);
-  for(let s=0;s<=len;s+=12){ const px=cx+d.x*(start+s), pz=cz+d.y*(start+s);
-    [-1,1].forEach(side=>{ const ox=px+rg.x*width*0.5*side, oz=pz+rg.y*width*0.5*side;
-      const pil=new THREE.Mesh(new THREE.CylinderGeometry(0.5,0.5,deckY+28,8),dark); pil.position.set(ox,deckY-14,oz); grp.add(pil);
-      const post=new THREE.Mesh(new THREE.CylinderGeometry(0.16,0.16,1.6,6),wood); post.position.set(ox,deckY+0.8,oz); grp.add(post);
-      if(s%24===0){ const lp=new THREE.Mesh(new THREE.CylinderGeometry(0.11,0.11,3,6),dark); lp.position.set(ox,deckY+1.5,oz); grp.add(lp);
-        const lm=new THREE.Mesh(new THREE.SphereGeometry(0.4,10,10),lampMat); lm.position.set(ox,deckY+3,oz); grp.add(lm); } }); }
-  for(let k=0;k<6;k++){ const cr=new THREE.Mesh(new THREE.BoxGeometry(3,3,3),wood);
-    cr.position.set(cx+d.x*(start+9)+rg.x*(k*4-10), deckY+1.5, cz+d.y*(start+9)+rg.y*(k*4-10)); cr.castShadow=true; grp.add(cr); }
+  const cx=CITY.x, cz=CITY.z, d=new THREE.Vector2(-cx,-cz).normalize(), rg=new THREE.Vector2(d.y,-d.x), ang=Math.atan2(d.x,d.y);
+  if(!pierProto){ return; }
+  const box=new THREE.Box3().setFromObject(pierProto), S=1.7;
+  const segZ=(box.max.z-box.min.z)*S, segX=(box.max.x-box.min.x)*S, deckTop=box.max.y;
+  const y0=3.4 - deckTop*S*0.42;        // sit the planked deck ~3.4 m above the water (tuned to the model)
+  const cols=3, rows=10, startCd=345;
+  const q=new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0),ang), scl=new THREE.Vector3(S,S,S), mats=[];
+  for(let r=0;r<rows;r++) for(let c=0;c<cols;c++){
+    const along=startCd + r*segZ*0.98, lat=(c-(cols-1)/2)*segX*0.98;
+    const wx=cx+d.x*along+rg.x*lat, wz=cz+d.y*along+rg.y*lat;
+    mats.push(new THREE.Matrix4().compose(new THREE.Vector3(wx,y0,wz),q,scl)); }
+  grp.add(instanceModel(pierProto, mats, true));
+  // moored boats at the seaward end
+  const endCd=startCd+rows*segZ*0.98;
   for(let b=0;b<2;b++){ const bm=new THREE.Mesh(new THREE.BoxGeometry(3,1.6,8),new THREE.MeshStandardMaterial({color:b?0xdedede:0xbf3a30,roughness:0.4,metalness:0.2}));
-    bm.position.set(cx+d.x*(start+len-8)+rg.x*(width*0.5+5)*(b?1:-1),1.2,cz+d.y*(start+len-8)+rg.y*(width*0.5+5)*(b?1:-1));
-    bm.rotation.y=Math.atan2(d.x,d.y); grp.add(bm); }
+    bm.position.set(cx+d.x*(endCd-12)+rg.x*(segX*cols*0.5+5)*(b?1:-1),1.2,cz+d.y*(endCd-12)+rg.y*(segX*cols*0.5+5)*(b?1:-1)); bm.rotation.y=ang; grp.add(bm); }
 }
 
 function buildWorld(){
