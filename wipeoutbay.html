@@ -236,7 +236,7 @@ function landH(x,z){              // metres above sea (negative = seabed)
     h += ridged(wx*0.0085,wz*0.0085)*(20+mass*0.22)*m + ridged(wx*0.022,wz*0.022)*7*m + fbm(x*0.05,z*0.05)*3*m; }
   // city coastal shelf: flat plateau (~15 m) ramping down to the shoreline, deep water beyond
   const cd=Math.hypot(x-CITY.x,z-CITY.z); let shelf=-26;
-  if(cd<288) shelf=15; else if(cd<452) shelf=15+(cd-288)/164*(-41);   // flat city core (paved); ramps to the shore
+  if(cd<316) shelf=15; else if(cd<460) shelf=15+(cd-316)/144*(-41);   // flat city core (paved); ramps to the shore
   if(shelf>-26){ h=Math.max(h, shelf); }                              // no noise on the city plateau — keep it dead flat for streets
   return h;
 }
@@ -303,7 +303,7 @@ const pavementMat=new THREE.MeshStandardMaterial({color:0x8f9296, roughness:0.93
 const roadMat=new THREE.MeshStandardMaterial({color:0x23262b, roughness:0.82, metalness:0, envMapIntensity:0.18});
 const roadLineMat=new THREE.MeshStandardMaterial({color:0xd8c25a, roughness:0.6, metalness:0});
 function buildStreets(parent){
-  const cx=CITY.x, cz=CITY.z, R=300, RW=12, GR=GRID;
+  const cx=CITY.x, cz=CITY.z, R=310, RW=12, GR=GRID;
   const pav=new THREE.Mesh(new THREE.CircleGeometry(R,56), pavementMat);
   pav.rotation.x=-Math.PI/2; pav.position.set(cx, plateauY+0.03, cz); pav.receiveShadow=true; parent.add(pav);
   const dashGeo=new THREE.BoxGeometry(0.4,0.02,3.4);
@@ -320,32 +320,55 @@ function buildCity(){
   buildStreets(grp);
   for(let i=-7;i<=7;i++) for(let j=-7;j<=7;j++){
     if((i+70)%4===0 && (j+70)%5===0) continue;                    // occasional open plaza
-    const wx=cx+i*GRID+(Math.random()-0.5)*3, wz=cz+j*GRID+(Math.random()-0.5)*3, h0=landH(wx,wz);
-    if(h0<3.5) continue;                                          // only on the dry plateau
-    if(LANDMARK_DEFS.some(function(L){return !L.abs && Math.hypot(wx-(cx+L.dx),wz-(cz+L.dz))<L.clear;})) continue;  // leave room for plateau landmarks
+    const wx=cx+i*GRID+(Math.random()-0.5)*3, wz=cz+j*GRID+(Math.random()-0.5)*3;
     const cd=Math.hypot(wx-cx,wz-cz);
-    placeBuilding(grp, wx, h0, wz, cd);
+    if(cd>302) continue;                                          // FLAT paved core only — no buildings on the shore ramp (was floating)
+    if(LANDMARK_DEFS.some(function(L){return !L.abs && Math.hypot(wx-(cx+L.dx),wz-(cz+L.dz))<L.clear;})) continue;  // leave room for plateau landmarks
+    placeBuilding(grp, wx, plateauY, wz, cd);                     // sit every building on the flat plateau height
   }
   buildDock(grp);
   LM_ANIMS=buildLandmarks(grp);
 }
 function buildDock(grp){
   const cx=CITY.x, cz=CITY.z, d=new THREE.Vector2(-cx,-cz).normalize(), rg=new THREE.Vector2(d.y,-d.x), ang=Math.atan2(d.x,d.y);
-  if(!pierProto){ return; }
-  const box=new THREE.Box3().setFromObject(pierProto), S=1.7;
-  const segZ=(box.max.z-box.min.z)*S, segX=(box.max.x-box.min.x)*S, deckTop=box.max.y;
-  const y0=3.4 - deckTop*S*0.42;        // sit the planked deck ~3.4 m above the water (tuned to the model)
-  const cols=3, rows=10, startCd=345;
-  const q=new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0),ang), scl=new THREE.Vector3(S,S,S), mats=[];
-  for(let r=0;r<rows;r++) for(let c=0;c<cols;c++){
-    const along=startCd + r*segZ*0.98, lat=(c-(cols-1)/2)*segX*0.98;
-    const wx=cx+d.x*along+rg.x*lat, wz=cz+d.y*along+rg.y*lat;
-    mats.push(new THREE.Matrix4().compose(new THREE.Vector3(wx,y0,wz),q,scl)); }
-  grp.add(instanceModel(pierProto, mats, true));
-  // moored boats at the seaward end
-  const endCd=startCd+rows*segZ*0.98;
+  // reuse the pier model's WOOD TEXTURES but build a SOLID deck (a box) so there are no see-through holes
+  let pMap=null,pNor=null,qMap=null,qNor=null;
+  if(pierProto) pierProto.traverse(function(o){ if(o.isMesh&&o.material){
+    if(/plank/i.test(o.name)){ pMap=o.material.map; pNor=o.material.normalMap; }
+    if(/pole/i.test(o.name)){ qMap=o.material.map; qNor=o.material.normalMap; } }});
+  function tx(t,rx,ry){ if(!t)return null; const c=t.clone(); c.wrapS=c.wrapT=THREE.RepeatWrapping; c.repeat.set(rx,ry); c.needsUpdate=true; return c; }
+  const deckMat=new THREE.MeshStandardMaterial({map:tx(pMap,3,20), normalMap:tx(pNor,3,20), color:pMap?0xffffff:0x7a5635, roughness:0.85, metalness:0, envMapIntensity:0.4});
+  const poleMat=new THREE.MeshStandardMaterial({map:tx(qMap,1,5), normalMap:tx(qNor,1,5), color:qMap?0xffffff:0x6b4a2e, roughness:0.9, metalness:0, envMapIntensity:0.3});
+  const railMat=new THREE.MeshStandardMaterial({color:0x4d3720, roughness:0.85, metalness:0});
+  const start=360, len=104, width=15, deckY=3.0, dt=0.7, endCd=start+len;
+  const cxs=cx+d.x*(start+len/2), czs=cz+d.y*(start+len/2);
+  // SOLID plank deck — one closed box, no gaps
+  const deck=new THREE.Mesh(new THREE.BoxGeometry(width,dt,len), deckMat);
+  deck.position.set(cxs,deckY,czs); deck.rotation.y=ang; deck.castShadow=deck.receiveShadow=true; grp.add(deck);
+  // landward abutment ramp down to the shore
+  const ab=new THREE.Mesh(new THREE.BoxGeometry(width,dt,16), deckMat);
+  ab.position.set(cx+d.x*(start-5),deckY-1.7,cz+d.y*(start-5)); ab.rotation.y=ang; ab.rotation.x=0.24; ab.receiveShadow=true; grp.add(ab);
+  // pilings down into the water
+  const pileGeo=new THREE.CylinderGeometry(0.5,0.62,36,10);
+  for(let s=5;s<=len-3;s+=9){ for(let w=-1;w<=1;w+=2){
+    const px=cx+d.x*(start+s)+rg.x*(width*0.5-0.7)*w, pz=cz+d.y*(start+s)+rg.y*(width*0.5-0.7)*w;
+    const pile=new THREE.Mesh(pileGeo,poleMat); pile.position.set(px,deckY-dt/2-18,pz); pile.castShadow=true; grp.add(pile); } }
+  // railings: posts + two rails along both long edges
+  const postGeo=new THREE.BoxGeometry(0.16,1.15,0.16);
+  for(let s=0;s<=len;s+=3.5){ for(let w=-1;w<=1;w+=2){
+    const px=cx+d.x*(start+s)+rg.x*(width*0.5-0.25)*w, pz=cz+d.y*(start+s)+rg.y*(width*0.5-0.25)*w;
+    const post=new THREE.Mesh(postGeo,railMat); post.position.set(px,deckY+dt/2+0.57,pz); grp.add(post); } }
+  for(let w=-1;w<=1;w+=2) for(let rh=0;rh<2;rh++){
+    const rail=new THREE.Mesh(new THREE.BoxGeometry(0.1,0.1,len), railMat);
+    rail.position.set(cxs+rg.x*(width*0.5-0.25)*w, deckY+dt/2+0.5+rh*0.5, czs+rg.y*(width*0.5-0.25)*w); rail.rotation.y=ang; grp.add(rail); }
+  // bollards + crates near the seaward end
+  for(let b=0;b<4;b++){ const bol=new THREE.Mesh(new THREE.CylinderGeometry(0.3,0.36,1.3,8),railMat);
+    bol.position.set(cx+d.x*(endCd-7)+rg.x*(b*3-4.5),deckY+dt/2+0.65,cz+d.y*(endCd-7)+rg.y*(b*3-4.5)); grp.add(bol); }
+  for(let k=0;k<4;k++){ const cr=new THREE.Mesh(new THREE.BoxGeometry(2.4,2.4,2.4),deckMat);
+    cr.position.set(cx+d.x*(start+14)+rg.x*(k*3-4.5),deckY+dt/2+1.2,cz+d.y*(start+14)+rg.y*(k*3-4.5)); cr.castShadow=true; grp.add(cr); }
+  // moored boats alongside
   for(let b=0;b<2;b++){ const bm=new THREE.Mesh(new THREE.BoxGeometry(3,1.6,8),new THREE.MeshStandardMaterial({color:b?0xdedede:0xbf3a30,roughness:0.4,metalness:0.2}));
-    bm.position.set(cx+d.x*(endCd-12)+rg.x*(segX*cols*0.5+5)*(b?1:-1),1.2,cz+d.y*(endCd-12)+rg.y*(segX*cols*0.5+5)*(b?1:-1)); bm.rotation.y=ang; grp.add(bm); }
+    bm.position.set(cx+d.x*(endCd-16)+rg.x*(width*0.5+5)*(b?1:-1),1.2,cz+d.y*(endCd-16)+rg.y*(width*0.5+5)*(b?1:-1)); bm.rotation.y=ang; grp.add(bm); }
 }
 
 // ===== CITY BUILDING ARCHETYPES (designed + r128-verified by the buildings workflow) =====
@@ -3983,7 +4006,7 @@ if(ud.bulbs && ud.bulbs.instanceColor){
 function buildLandmarks(parent){ const out=[]; const yaw=Math.atan2(-CITY.x,-CITY.z);
   LANDMARK_DEFS.forEach(function(L){ const g=new THREE.Group();
     try{ L.build(g); }catch(e){ console.warn('landmark '+L.name+' build failed:', e.message); return; }
-    const wx=L.abs?L.ax:(CITY.x+L.dx), wz=L.abs?L.az:(CITY.z+L.dz); g.position.set(wx, landH(wx,wz)-1.0, wz);
+    const wx=L.abs?L.ax:(CITY.x+L.dx), wz=L.abs?L.az:(CITY.z+L.dz); g.position.set(wx, L.abs?(landH(wx,wz)-1.0):plateauY, wz);
     if(L.faceWater) g.rotation.y=yaw;
     parent.add(g);
     if(L.animate) out.push({g:g, fn:L.animate}); });
