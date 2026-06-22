@@ -594,8 +594,8 @@ function loop(now){
     const thr=(keys['w']||keys['arrowup']||touching)?1:0, brk=(keys['s']||keys['arrowdown'])?1:0;
     let steer=((keys['a']||keys['arrowleft'])?1:0)-((keys['d']||keys['arrowright'])?1:0)-touchSteer;
     steer=THREE.MathUtils.clamp(steer,-1,1);
-    const boost=keys['shift']?1:0, maxS=24+boost*11;
-    B.speed=THREE.MathUtils.clamp(B.speed+(thr*(32+boost*24)-brk*30-8)*dt,0,maxS);
+    const boost=keys['shift']?1:0, maxS=31+boost*14;
+    B.speed=THREE.MathUtils.clamp(B.speed+(thr*(40+boost*28)-brk*34-9)*dt,0,maxS);
     const grip=B.airborne?0.25:1;
     B.heading+=steer*dt*(1.0+B.speed*0.04)*grip;
     _fwd.set(Math.sin(B.heading),0,Math.cos(B.heading));
