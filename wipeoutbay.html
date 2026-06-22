@@ -301,7 +301,7 @@ function windowTex(lit){ const c=document.createElement('canvas'); c.width=64;c.
     g.fillStyle=on?(Math.random()<0.5?'#ffe6a8':'#ffd070'):'#10161e'; g.fillRect(fx,fy,9,7); }
   const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; t.encoding=THREE.sRGBEncoding; return t; }
 function scaleBoxUV(geo,u,v){ const uv=geo.attributes.uv; for(let i=0;i<uv.count;i++) uv.setXY(i,uv.getX(i)*u,uv.getY(i)*v); uv.needsUpdate=true; }
-const GRID=40;   // city block spacing
+const GRID=48;   // city block spacing
 const pavementMat=new THREE.MeshStandardMaterial({color:0x8f9296, roughness:0.93, metalness:0, envMapIntensity:0.25});
 const roadMat=new THREE.MeshStandardMaterial({color:0x23262b, roughness:0.82, metalness:0, envMapIntensity:0.18});
 const roadLineMat=new THREE.MeshStandardMaterial({color:0xd8c25a, roughness:0.6, metalness:0});
@@ -321,11 +321,15 @@ function buildStreets(parent){
 function buildCity(){
   const cx=CITY.x, cz=CITY.z, grp=new THREE.Group(); scene.add(grp);
   buildStreets(grp);
-  for(let i=-7;i<=7;i++) for(let j=-7;j<=7;j++){
+  const csx=cx+DOCK.dx*312, csz=cz+DOCK.dz*312;                   // the car parks here, in the open by the dock
+  for(let i=-6;i<=6;i++) for(let j=-6;j<=6;j++){
     if((i+70)%4===0 && (j+70)%5===0) continue;                    // occasional open plaza
-    const wx=cx+i*GRID+(Math.random()-0.5)*3, wz=cz+j*GRID+(Math.random()-0.5)*3;
+    const wx=cx+i*GRID, wz=cz+j*GRID;                             // align to blocks (no jitter) so nothing sits in the road
     const cd=Math.hypot(wx-cx,wz-cz);
-    if(cd>302) continue;                                          // FLAT paved core only — no buildings on the shore ramp (was floating)
+    if(cd>300) continue;                                          // FLAT paved core only
+    const avLat=Math.abs((wx-cx)*DOCK.rx+(wz-cz)*DOCK.rz), avAlong=(wx-cx)*DOCK.dx+(wz-cz)*DOCK.dz;
+    if(avLat<16 && avAlong>30) continue;                          // clear a harbour avenue from the dock into the city
+    if(Math.hypot(wx-csx,wz-csz)<22) continue;                    // keep the car spot clear
     if(LANDMARK_DEFS.some(function(L){return !L.abs && Math.hypot(wx-(cx+L.dx),wz-(cz+L.dz))<L.clear;})) continue;  // leave room for plateau landmarks
     placeBuilding(grp, wx, plateauY, wz, cd);                     // sit every building on the flat plateau height
   }
@@ -2751,7 +2755,7 @@ function placeBuilding(parent, wx, baseY, wz, cd){
   placeBuilding._last=A;
   let h; if(dist==='core') h=46+Math.random()*40; else if(dist==='mid') h=25+Math.random()*22; else h=15+Math.random()*13;
   h=Math.max(A.hMin,Math.min(A.hMax,h));
-  const CAP=26;   // keep footprints within the block so they don't overrun the streets
+  const CAP=24;   // keep footprints within the block so they don't overrun the streets
   const w=Math.min(CAP,A.wMin+Math.random()*(A.wMax-A.wMin)), d=Math.min(CAP,A.wMin+Math.random()*(A.wMax-A.wMin));
   const g=new THREE.Group();
   try{ A.build(g,w,d,h); }catch(e){ console.warn('arch '+A.name+' build failed:', e.message); return; }
@@ -4311,11 +4315,13 @@ function buildBoxCar(){
 }
 function placeCar(){
   while(car3d.children.length) car3d.remove(car3d.children[0]);
-  if(carProto){ const m=carProto.clone(true); const b=new THREE.Box3().setFromObject(m); const len=Math.max(b.max.z-b.min.z,b.max.x-b.min.x)||2, s=4.4/len; m.scale.setScalar(s);
-    const b2=new THREE.Box3().setFromObject(m); m.position.y=-b2.min.y; m.traverse(function(o){if(o.isMesh)o.castShadow=true;}); car3d.add(m);
-    carYaw=(b.max.x-b.min.x)>(b.max.z-b.min.z)?Math.PI/2:0; }
-  else buildBoxCar();
-  CAR.x=CITY.x+DOCK.dx*296; CAR.z=CITY.z+DOCK.dz*296; CAR.heading=DOCK.ang+Math.PI; CAR.y=landH(CAR.x,CAR.z); CAR.speed=0;
+  try{
+    if(carProto){ const m=carProto.clone(true); const b=new THREE.Box3().setFromObject(m); const len=Math.max(b.max.z-b.min.z,b.max.x-b.min.x)||2, s=4.4/len; m.scale.setScalar(s);
+      const b2=new THREE.Box3().setFromObject(m); m.position.y=-b2.min.y; m.traverse(function(o){if(o.isMesh)o.castShadow=true;}); car3d.add(m);
+      carYaw=(b.max.x-b.min.x)>(b.max.z-b.min.z)?Math.PI/2:0; }
+    else buildBoxCar();
+  }catch(e){ console.warn('car model failed, using box car:', e.message); carYaw=0; if(!car3d.children.length) buildBoxCar(); }
+  CAR.x=CITY.x+DOCK.dx*312; CAR.z=CITY.z+DOCK.dz*312; CAR.heading=DOCK.ang+Math.PI; CAR.y=landH(CAR.x,CAR.z); CAR.speed=0;
   car3d.position.set(CAR.x,CAR.y,CAR.z); car3d.rotation.y=CAR.heading+carYaw; car3d.visible=true; carReady=true;
 }
 _gltf.load('assets/cars/sedan-sports.glb', function(g){ carProto=g.scene; placeCar(); }, undefined, function(){ console.warn('car load failed'); placeCar(); });
@@ -4323,7 +4329,7 @@ function updateFoot(dt){
   const fwd=(keys['w']||keys['arrowup'])?1:0, bwd=(keys['s']||keys['arrowdown'])?1:0;
   const turn=((keys['a']||keys['arrowleft'])?1:0)-((keys['d']||keys['arrowright'])?1:0);
   AV.heading += turn*dt*2.6;
-  const tgt=(fwd?6*(keys['shift']?1.7:1):0)-(bwd?2.6:0);
+  const tgt=(fwd?2.0*(keys['shift']?2.6:1):0)-(bwd?1.3:0);   // walk ~7 km/h, jog (Shift) ~19 km/h
   AV.speed += (tgt-AV.speed)*Math.min(1,dt*9);
   const nx=AV.x+Math.sin(AV.heading)*AV.speed*dt, nz=AV.z+Math.cos(AV.heading)*AV.speed*dt;
   if(onDock(nx,nz)||landH(nx,nz)>0.4){ AV.x=nx; AV.z=nz; } else AV.speed=0;   // don't walk into deep water
