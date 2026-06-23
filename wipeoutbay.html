@@ -66,6 +66,10 @@
     background:rgba(30,60,90,.5); border:1px solid rgba(255,255,255,.18); border-radius:12px; padding:13px 18px; transition:all .12s; }
   #helimenu .hm-btn:hover{ background:rgba(60,120,180,.7); border-color:rgba(150,220,255,.7); transform:translateX(3px); }
   #helimenu .hm-btn.cancel{ font-size:14px; color:#9fb3c2; text-align:center; background:transparent; border-color:rgba(255,255,255,.12); }
+  #freecamBtn{ position:fixed; right:14px; top:54px; z-index:200; pointer-events:auto; font:inherit; font-size:13px; font-weight:700; color:#eaf6ff; cursor:pointer;
+    background:rgba(8,18,28,.7); border:1px solid rgba(120,200,255,.4); border-radius:11px; padding:8px 13px; transition:all .12s; }
+  #freecamBtn:hover{ background:rgba(60,120,180,.7); border-color:rgba(150,220,255,.7); }
+  #freecamBtn.on{ background:rgba(80,180,255,.82); border-color:#aef0ff; color:#04121c; box-shadow:0 0 14px rgba(120,210,255,.6); }
   /* cinematic letterbox */
   #cine{ position:fixed; inset:0; pointer-events:none; opacity:0; transition:opacity .4s; z-index:60; }
   #cine .bar{ position:absolute; left:0; right:0; height:11vh; background:#000; }
@@ -114,6 +118,7 @@
   <div class="ui" id="mapwrap"><canvas id="map" width="172" height="172"></canvas></div>
   <div class="ui" id="toast"></div>
   <div class="ui" id="prompt"></div>
+  <button id="freecamBtn" type="button" onclick="toggleFreecam(); this.blur();">🎥 Free Cam</button>
   <div class="ui" id="helimenu">
     <div class="hm-title">◢ HELIPAD ◣</div>
     <button class="hm-btn" data-hm="pilot">🚁&nbsp;&nbsp;Pilot the helicopter</button>
@@ -6827,7 +6832,7 @@ function _ease(t){ return t*t*(3-2*t); }
 function _lv(a,b,t){ return a+(b-a)*t; }
 function containerInstanced(parent, place){
   const geo=new THREE.BoxGeometry(2.44,2.59,12);                 // X width, Y height, Z length (along the shore)
-  const mat=new THREE.MeshStandardMaterial({roughness:0.72,metalness:0.1,envMapIntensity:0.4});
+  const mat=containerMats().materials;   // detailed corrugated/door materials; per-instance setColorAt tints all 6 faces
   const inst=new THREE.InstancedMesh(geo,mat,place.length); inst.castShadow=inst.receiveShadow=true; inst.frustumCulled=false;
   const m=new THREE.Matrix4(),q=new THREE.Quaternion(),up=new THREE.Vector3(0,1,0),one=new THREE.Vector3(1,1,1),col=new THREE.Color();
   for(let i=0;i<place.length;i++){ const p=place[i]; q.setFromAxisAngle(up,p.ry||0); m.compose(new THREE.Vector3(p.x,p.y,p.z),q,one); inst.setMatrixAt(i,m); inst.setColorAt(i,col.setHex(p.col)); }
@@ -6846,7 +6851,7 @@ function buildTruck(g, col){
   m(new THREE.BoxGeometry(2.3,1.1,0.12),glass,0,2.5,5.85);          // windscreen
   m(new THREE.BoxGeometry(2.5,0.4,0.6),dark,0,0.9,6.1);            // bumper
   m(new THREE.BoxGeometry(2.5,0.5,11),dark,0,0.95,-0.5);          // trailer bed
-  const cont=m(new THREE.BoxGeometry(2.44,2.55,12),new THREE.MeshStandardMaterial({color:CCOLS[(Math.random()*CCOLS.length)|0],roughness:0.72,metalness:0.1}),0,2.5,-1.0);
+  const cont=m(new THREE.BoxGeometry(2.44,2.55,12),containerMatsTinted(CCOLS[(Math.random()*CCOLS.length)|0]),0,2.5,-1.0);
   g.userData.cont=cont;
   for(const wz of [4.6,1.5,-1.5,-4.5]) for(const wx of [-1.25,1.25]){ const w=new THREE.Mesh(new THREE.CylinderGeometry(0.62,0.62,0.45,10),dark); w.rotation.z=Math.PI/2; w.position.set(wx,0.6,wz); w.castShadow=true; g.add(w); }
   return g;
@@ -6858,6 +6863,656 @@ function truckPos(s,L){
   s-=h; if(s<w) return {x:L.X1-s, z:L.Z1, h:-Math.PI/2};
   s-=w; return {x:L.X0, z:L.Z1-s, h:Math.PI};
 }
+// ===== detailed shipping containers + reach-stackers (design workflow) =====
+function makeContainerMaterials() {
+  // ------------------------------------------------------------------
+  // Procedural shipping-container materials for THREE.InstancedMesh in r128.
+  // Merged build: Candidate B's hand-drawn gradient hardware + per-face
+  // height->normal maps, refined with Candidate A's helper hygiene and
+  // light-albedo discipline. ALL material.color = 0xffffff and ALL albedo
+  // textures are kept LIGHT / low-contrast so per-instance instanceColor
+  // tints the whole container. One shared set of small (<=256px) canvas
+  // textures is reused on a 6-material array.
+  // BoxGeometry group order: [+X, -X, +Y, -Y, +Z, -Z].
+  // ------------------------------------------------------------------
+
+  function makeCanvas(w, h) {
+    var c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    return c;
+  }
+
+  function toTex(canvas, repX, repY, aniso) {
+    var t = new THREE.CanvasTexture(canvas);
+    t.wrapS = THREE.RepeatWrapping;
+    t.wrapT = THREE.RepeatWrapping;
+    t.repeat.set(repX || 1, repY || 1);
+    t.anisotropy = aniso || 8;
+    t.needsUpdate = true;
+    return t;
+  }
+
+  // Deterministic seeded PRNG so every container looks identical (textures
+  // are shared singletons); the per-instance variety comes from instanceColor.
+  function rng(seed) {
+    var s = seed || 1;
+    return function () { s = (s * 9301 + 49297) % 233280; return s / 233280; };
+  }
+
+  // Encode a height field (heightFn -> 0..1) into a tangent-space RGB normal
+  // map canvas via finite differences. wrapY controls vertical edge handling:
+  // wrap when the field is vertically periodic (roof beams), clamp otherwise
+  // so top/bottom rails don't produce a seam.
+  function heightToNormalCanvas(w, h, heightFn, scale, wrapY) {
+    var c = makeCanvas(w, h);
+    var ctx = c.getContext('2d');
+    var img = ctx.createImageData(w, h);
+    var d = img.data;
+    function H(x, y) {
+      x = (x + w) % w; // wrap horizontally (tiles along length / width)
+      if (wrapY) { y = (y + h) % h; }
+      else { if (y < 0) y = 0; else if (y >= h) y = h - 1; }
+      return heightFn(x, y);
+    }
+    for (var y = 0; y < h; y++) {
+      for (var x = 0; x < w; x++) {
+        var dx = (H(x + 1, y) - H(x - 1, y)) * scale;
+        var dy = (H(x, y + 1) - H(x, y - 1)) * scale;
+        var nx = -dx, ny = -dy, nz = 1.0;
+        var len = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1;
+        nx /= len; ny /= len; nz /= len;
+        var i = (y * w + x) * 4;
+        d[i] = Math.round((nx * 0.5 + 0.5) * 255);
+        d[i + 1] = Math.round((ny * 0.5 + 0.5) * 255);
+        d[i + 2] = Math.round((nz * 0.5 + 0.5) * 255);
+        d[i + 3] = 255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    return c;
+  }
+
+  // Subtle neutral grain over an existing canvas.
+  function seededNoise(ctx, w, h, amount, seed) {
+    var rnd = rng(seed);
+    var img = ctx.getImageData(0, 0, w, h);
+    var d = img.data;
+    for (var i = 0; i < d.length; i += 4) {
+      var n = (rnd() - 0.5) * amount;
+      d[i] = Math.max(0, Math.min(255, d[i] + n));
+      d[i + 1] = Math.max(0, Math.min(255, d[i + 1] + n));
+      d[i + 2] = Math.max(0, Math.min(255, d[i + 2] + n));
+    }
+    ctx.putImageData(img, 0, 0);
+  }
+
+  // Faint rust streaks dripping downward — kept very light, neutral-warm grey.
+  function rustStreaks(ctx, w, h, count, seed) {
+    var rnd = rng(seed);
+    ctx.save();
+    for (var k = 0; k < count; k++) {
+      var x = rnd() * w;
+      var y0 = rnd() * h * 0.5;
+      var len = (0.2 + rnd() * 0.5) * h;
+      var ww = 1 + rnd() * 2;
+      var g = ctx.createLinearGradient(0, y0, 0, y0 + len);
+      var a = 0.04 + rnd() * 0.05;
+      g.addColorStop(0, 'rgba(120,85,58,' + a + ')');
+      g.addColorStop(1, 'rgba(120,85,58,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(x, y0, ww, len);
+    }
+    ctx.restore();
+  }
+
+  // Trapezoidal rib profile (0..1) given fractional position across one rib.
+  function ribHeight(fx) {
+    if (fx < 0.25) return fx / 0.25;        // rising flank 0 -> 1
+    if (fx < 0.75) return 1.0;              // crest plateau
+    return (1.0 - fx) / 0.25;               // falling flank 1 -> 0
+  }
+
+  // Shared light brushed-metal rail gradient (top & bottom rails of faces).
+  function railShade(ctx, w, y0, y1) {
+    var g = ctx.createLinearGradient(0, y0, 0, y1);
+    g.addColorStop(0, '#ededed');
+    g.addColorStop(0.5, '#dcdcdc');
+    g.addColorStop(1, '#e6e6e6');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, y0, w, y1 - y0);
+  }
+
+  // ==================================================================
+  // 1) LONG SIDE (±X): vertical corrugation ribs across the height,
+  //    repeating along the 12 m length (texture U = length, V = height).
+  // ==================================================================
+  var SW = 256, SH = 128;
+  var sideC = makeCanvas(SW, SH);
+  var sctx = sideC.getContext('2d');
+  sctx.fillStyle = '#e6e6e6';
+  sctx.fillRect(0, 0, SW, SH);
+
+  var railH = Math.round(SH * 0.11);
+  railShade(sctx, SW, 0, railH);
+  railShade(sctx, SW, SH - railH, SH);
+
+  var ribs = 16, ribW = SW / ribs;
+  var corrTop = railH, corrBot = SH - railH;
+  for (var r = 0; r < ribs; r++) {
+    var x0 = r * ribW;
+    var g = sctx.createLinearGradient(x0, 0, x0 + ribW, 0);
+    g.addColorStop(0.00, '#d6d6d6');
+    g.addColorStop(0.22, '#dedede');
+    g.addColorStop(0.40, '#f0f0f0');
+    g.addColorStop(0.60, '#f0f0f0');
+    g.addColorStop(0.78, '#dadada');
+    g.addColorStop(1.00, '#d4d4d4');
+    sctx.fillStyle = g;
+    sctx.fillRect(x0, corrTop, ribW + 1, corrBot - corrTop);
+  }
+
+  rustStreaks(sctx, SW, SH, 10, 13);
+  seededNoise(sctx, SW, SH, 9, 3);
+
+  // Faint container ID / ISO type code / shipping-line block.
+  sctx.fillStyle = 'rgba(70,70,70,0.30)';
+  sctx.font = 'bold 13px Arial';
+  sctx.textBaseline = 'middle';
+  sctx.fillText('MSKU 482931', 14, railH * 0.55);
+  sctx.font = 'bold 10px Arial';
+  sctx.fillText('22G1', 14, SH - railH * 0.5);
+  sctx.fillStyle = 'rgba(95,95,95,0.16)';
+  sctx.fillRect(SW - 52, 8, 40, 14);
+  sctx.fillStyle = 'rgba(60,60,60,0.28)';
+  sctx.font = 'bold 8px Arial';
+  sctx.fillText('LINE', SW - 47, 16);
+
+  var sideTex = toTex(sideC, 4, 1, 8); // 16 ribs * 4 = ~64 ribs over 12 m
+
+  var sideNormalC = heightToNormalCanvas(SW, SH, function (x, y) {
+    if (y < railH || y > SH - railH) return 0.55 + 0.02 * Math.sin(x * 0.4);
+    var fx = (x % ribW) / ribW;
+    return 0.35 + ribHeight(fx) * 0.6;
+  }, 2.2, false);
+  var sideNormalTex = toTex(sideNormalC, 4, 1, 8);
+
+  // ==================================================================
+  // 2) +Z END = CARGO DOORS: two leaves split at centre, vertical locking
+  //    rods + cam handles, hinges on outer edges, CSC placard.
+  // ==================================================================
+  var DW = 200, DH = 212;
+  var doorC = makeCanvas(DW, DH);
+  var dctx = doorC.getContext('2d');
+  dctx.fillStyle = '#e4e4e4';
+  dctx.fillRect(0, 0, DW, DH);
+
+  var frame = 12;
+  dctx.fillStyle = '#d8d8d8';
+  dctx.fillRect(0, 0, DW, frame);
+  dctx.fillRect(0, DH - frame, DW, frame);
+  dctx.fillRect(0, 0, frame, DH);
+  dctx.fillRect(DW - frame, 0, frame, DH);
+
+  var leafGap = 3, midX = DW / 2;
+  function leaf(ctx, lx, lw, fr, dh) {
+    var g = ctx.createLinearGradient(lx, 0, lx + lw, 0);
+    g.addColorStop(0, '#e8e8e8');
+    g.addColorStop(0.5, '#dedede');
+    g.addColorStop(1, '#e6e6e6');
+    ctx.fillStyle = g;
+    ctx.fillRect(lx, fr, lw, dh - fr * 2);
+  }
+  var leafW = midX - frame - leafGap;
+  leaf(dctx, frame, leafW, frame, DH);
+  leaf(dctx, midX + leafGap, leafW, frame, DH);
+
+  dctx.fillStyle = 'rgba(80,80,80,0.28)';
+  dctx.fillRect(midX - 1, frame, 2, DH - frame * 2);
+
+  function lockingRod(ctx, x, fr, dh) {
+    var g = ctx.createLinearGradient(x - 3, 0, x + 3, 0);
+    g.addColorStop(0, 'rgba(150,150,150,0.45)');
+    g.addColorStop(0.5, 'rgba(235,235,235,0.7)');
+    g.addColorStop(1, 'rgba(150,150,150,0.45)');
+    ctx.fillStyle = g;
+    ctx.fillRect(x - 2, fr + 6, 4, dh - fr * 2 - 12);
+    ctx.fillStyle = 'rgba(120,120,120,0.45)';
+    ctx.fillRect(x - 5, fr + 8, 10, 7);          // top keeper
+    ctx.fillRect(x - 5, dh - fr - 15, 10, 7);    // bottom keeper
+  }
+  function camHandle(ctx, x, y) {
+    ctx.fillStyle = 'rgba(115,115,115,0.42)';
+    ctx.fillRect(x - 7, y - 11, 14, 26);         // bracket
+    var g = ctx.createLinearGradient(x - 8, y, x + 16, y);
+    g.addColorStop(0, 'rgba(165,165,165,0.6)');
+    g.addColorStop(1, 'rgba(220,220,220,0.75)');
+    ctx.fillStyle = g;
+    ctx.fillRect(x - 6, y - 3, 22, 6);           // lever
+    ctx.fillStyle = 'rgba(90,90,90,0.5)';
+    ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2); ctx.fill(); // pivot
+  }
+
+  var rx0 = midX + leafGap;
+  lockingRod(dctx, frame + leafW * 0.30, frame, DH);
+  lockingRod(dctx, frame + leafW * 0.66, frame, DH);
+  camHandle(dctx, frame + leafW * 0.30, DH * 0.52);
+  camHandle(dctx, frame + leafW * 0.66, DH * 0.52);
+  lockingRod(dctx, rx0 + leafW * 0.34, frame, DH);
+  lockingRod(dctx, rx0 + leafW * 0.70, frame, DH);
+  camHandle(dctx, rx0 + leafW * 0.34, DH * 0.52);
+  camHandle(dctx, rx0 + leafW * 0.70, DH * 0.52);
+
+  dctx.fillStyle = 'rgba(100,100,100,0.45)'; // outer-edge hinges
+  for (var hh = 0; hh < 3; hh++) {
+    var hy = frame + 16 + hh * ((DH - frame * 2 - 32) / 2);
+    dctx.fillRect(frame - 2, hy, 8, 14);
+    dctx.fillRect(DW - frame - 6, hy, 8, 14);
+  }
+
+  dctx.strokeStyle = 'rgba(70,70,70,0.38)'; // CSC placard
+  dctx.lineWidth = 1.5;
+  dctx.strokeRect(midX - 16, DH * 0.30, 32, 22);
+  dctx.fillStyle = 'rgba(70,70,70,0.20)';
+  dctx.font = 'bold 7px Arial';
+  dctx.textBaseline = 'middle';
+  dctx.fillText('CSC', midX - 11, DH * 0.30 + 14);
+  dctx.fillStyle = 'rgba(60,60,60,0.26)';
+  dctx.font = 'bold 9px Arial';
+  dctx.textBaseline = 'top';
+  dctx.fillText('MSKU 482931', frame + 6, frame + 6);
+
+  rustStreaks(dctx, DW, DH, 7, 22);
+  seededNoise(dctx, DW, DH, 7, 5);
+
+  var doorTex = toTex(doorC, 1, 1, 8);
+
+  var rodXs = [frame + leafW * 0.30, frame + leafW * 0.66,
+               rx0 + leafW * 0.34, rx0 + leafW * 0.70];
+  var doorNormalC = heightToNormalCanvas(DW, DH, function (x, y) {
+    var h = 0.5;
+    if (x < frame || x > DW - frame || y < frame || y > DH - frame) h = 0.7;
+    if (Math.abs(x - midX) < 2) h = 0.25;
+    for (var i = 0; i < rodXs.length; i++) {
+      if (Math.abs(x - rodXs[i]) < 2.5 && y > frame + 6 && y < DH - frame - 6) h = 0.85;
+      if (Math.abs(x - rodXs[i]) < 8 && Math.abs(y - DH * 0.52) < 13) h = Math.max(h, 0.78);
+    }
+    for (var k = 0; k < 3; k++) {
+      var hy2 = frame + 16 + k * ((DH - frame * 2 - 32) / 2);
+      if (((x > frame - 2 && x < frame + 6) || (x > DW - frame - 6 && x < DW - frame + 2))
+          && y > hy2 && y < hy2 + 14) h = 0.82;
+    }
+    return h;
+  }, 2.4, false);
+  var doorNormalTex = toTex(doorNormalC, 1, 1, 8);
+
+  // ==================================================================
+  // 3) -Z END = corrugated blank end (vertical ribs across the 2.44 width).
+  // ==================================================================
+  var EW = 160, EH = 170;
+  var endC = makeCanvas(EW, EH);
+  var ectx = endC.getContext('2d');
+  ectx.fillStyle = '#e4e4e4';
+  ectx.fillRect(0, 0, EW, EH);
+  var eRail = Math.round(EH * 0.10);
+  railShade(ectx, EW, 0, eRail);
+  railShade(ectx, EW, EH - eRail, EH);
+  var eribs = 9, eribW = EW / eribs;
+  for (var er = 0; er < eribs; er++) {
+    var ex0 = er * eribW;
+    var g2 = ectx.createLinearGradient(ex0, 0, ex0 + eribW, 0);
+    g2.addColorStop(0.00, '#d6d6d6');
+    g2.addColorStop(0.40, '#f0f0f0');
+    g2.addColorStop(0.60, '#f0f0f0');
+    g2.addColorStop(1.00, '#d4d4d4');
+    ectx.fillStyle = g2;
+    ectx.fillRect(ex0, eRail, eribW + 1, EH - 2 * eRail);
+  }
+  rustStreaks(ectx, EW, EH, 6, 31);
+  seededNoise(ectx, EW, EH, 8, 9);
+  var endTex = toTex(endC, 1, 1, 8);
+  var endNormalC = heightToNormalCanvas(EW, EH, function (x, y) {
+    if (y < eRail || y > EH - eRail) return 0.55;
+    var fx = (x % eribW) / eribW;
+    return 0.35 + ribHeight(fx) * 0.6;
+  }, 2.2, false);
+  var endNormalTex = toTex(endNormalC, 1, 1, 8);
+
+  // ==================================================================
+  // 4) ROOF (+Y): light base with transverse support-beam lines.
+  // ==================================================================
+  var RW = 128, RH = 128;
+  var roofC = makeCanvas(RW, RH);
+  var rctx = roofC.getContext('2d');
+  rctx.fillStyle = '#e2e2e2';
+  rctx.fillRect(0, 0, RW, RH);
+  for (var b = 0; b < 10; b++) {
+    var bx = (b + 0.5) * (RW / 10);
+    rctx.strokeStyle = 'rgba(155,155,155,0.28)';
+    rctx.lineWidth = 2;
+    rctx.beginPath(); rctx.moveTo(bx, 0); rctx.lineTo(bx, RH); rctx.stroke();
+    rctx.strokeStyle = 'rgba(240,240,240,0.4)';
+    rctx.beginPath(); rctx.moveTo(bx + 2, 0); rctx.lineTo(bx + 2, RH); rctx.stroke();
+  }
+  rustStreaks(rctx, RW, RH, 8, 41);
+  seededNoise(rctx, RW, RH, 9, 11);
+  var roofTex = toTex(roofC, 1, 1, 8);
+  var roofNormalC = heightToNormalCanvas(RW, RH, function (x, y) {
+    var fx = (x % (RW / 10)) / (RW / 10);
+    return 0.45 + 0.4 * Math.sin(fx * Math.PI);
+  }, 1.6, true);
+  var roofNormalTex = toTex(roofNormalC, 1, 1, 8);
+
+  // ==================================================================
+  // 5) BOTTOM (-Y): structural cross-member underside. Kept neutral and
+  //    only moderately darker (#bdbdbd) so instanceColor still reads here.
+  // ==================================================================
+  var floorC = makeCanvas(64, 64);
+  var fctx = floorC.getContext('2d');
+  fctx.fillStyle = '#bdbdbd';
+  fctx.fillRect(0, 0, 64, 64);
+  seededNoise(fctx, 64, 64, 12, 17);
+  fctx.fillStyle = 'rgba(70,70,70,0.30)'; // cross-member shadow lines
+  for (var f = 0; f < 8; f++) fctx.fillRect(0, f * 8 + 3, 64, 2);
+  var floorTex = toTex(floorC, 1, 1, 4);
+  var floorNormalC = heightToNormalCanvas(64, 64, function (x, y) {
+    return (y % 8) < 3 ? 0.3 : 0.6; // recessed channels between members
+  }, 1.4, false);
+  var floorNormalTex = toTex(floorNormalC, 1, 1, 4);
+
+  // ------------------------------------------------------------------
+  // Build the 6 materials. ALL color = 0xffffff so instanceColor tints.
+  // ------------------------------------------------------------------
+  function mat(map, normalMap, normScale) {
+    var m = new THREE.MeshStandardMaterial({
+      color: 0xffffff,          // MUST be white so instanceColor tints it
+      map: map,
+      roughness: 0.7,
+      metalness: 0.15
+    });
+    if (normalMap) {
+      m.normalMap = normalMap;
+      m.normalScale = new THREE.Vector2(normScale || 1, normScale || 1);
+    }
+    return m;
+  }
+
+  // Group order: [+X, -X, +Y, -Y, +Z, -Z]
+  var matPlusX = mat(sideTex, sideNormalTex, 1.0);
+  var matMinusX = mat(sideTex, sideNormalTex, 1.0);
+  var matPlusY = mat(roofTex, roofNormalTex, 0.6);
+  var matMinusY = mat(floorTex, floorNormalTex, 0.4);
+  var matPlusZ = mat(doorTex, doorNormalTex, 1.0);
+  var matMinusZ = mat(endTex, endNormalTex, 1.0);
+
+  var materials = [matPlusX, matMinusX, matPlusY, matMinusY, matPlusZ, matMinusZ];
+
+  var textures = {
+    side: sideTex, sideNormal: sideNormalTex,
+    door: doorTex, doorNormal: doorNormalTex,
+    end: endTex, endNormal: endNormalTex,
+    roof: roofTex, roofNormal: roofNormalTex,
+    floor: floorTex, floorNormal: floorNormalTex
+  };
+
+  return { materials: materials, textures: textures };
+}
+function buildReachStacker(g){
+  // ---------------------------------------------------------------
+  // CONTAINER REACH-STACKER
+  // Local frame: base on the ground at y=0, machine FACES +Z.
+  // Length ~13.5 m (Z), width ~3.9 m (X). Front (cab + big drive tyres)
+  // toward +Z, rear engine-deck + counterweight toward -Z.
+  // Heavy, believable proportions; no CapsuleGeometry (r128-safe).
+  // ---------------------------------------------------------------
+
+  // ---- materials ----
+  var YEL   = new THREE.MeshStandardMaterial({color:0xf2b01e, metalness:0.40, roughness:0.52}); // construction yellow
+  var YEL2  = new THREE.MeshStandardMaterial({color:0xd99a14, metalness:0.40, roughness:0.55}); // darker yellow trim
+  var CHAS  = new THREE.MeshStandardMaterial({color:0x33383d, metalness:0.60, roughness:0.52}); // dark grey chassis
+  var CHAS2 = new THREE.MeshStandardMaterial({color:0x4a5158, metalness:0.55, roughness:0.50}); // lighter grey
+  var STEEL = new THREE.MeshStandardMaterial({color:0x9aa1a7, metalness:0.75, roughness:0.40}); // bright steel
+  var BOOMM = new THREE.MeshStandardMaterial({color:0xe7a818, metalness:0.45, roughness:0.48}); // boom yellow (outer)
+  var BOOM2 = new THREE.MeshStandardMaterial({color:0xc98e10, metalness:0.45, roughness:0.48}); // inner boom
+  var RAM   = new THREE.MeshStandardMaterial({color:0xc2c8ce, metalness:0.88, roughness:0.22}); // chromed ram rod
+  var RAMC  = new THREE.MeshStandardMaterial({color:0x2c3137, metalness:0.70, roughness:0.42}); // ram cylinder
+  var TYRE  = new THREE.MeshStandardMaterial({color:0x16181b, metalness:0.20, roughness:0.85}); // tyre
+  var HUB   = new THREE.MeshStandardMaterial({color:0x8a9097, metalness:0.72, roughness:0.40}); // hub
+  var GLASS = new THREE.MeshStandardMaterial({color:0x9fd0e0, metalness:0.20, roughness:0.10,
+                                              transparent:true, opacity:0.45,
+                                              emissive:0x16384a, emissiveIntensity:0.22});
+  var BLACK = new THREE.MeshStandardMaterial({color:0x1c1f23, metalness:0.50, roughness:0.60});
+  var SPRD  = new THREE.MeshStandardMaterial({color:0xe23b2e, metalness:0.42, roughness:0.48}); // red spreader
+  var LIGHT = new THREE.MeshStandardMaterial({color:0xfff2c0, emissive:0xffdf9a, emissiveIntensity:1.4, roughness:0.4});
+
+  // ---- helpers ----
+  function box(w,h,d,mat,x,y,z,rx,ry,rz){
+    var m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat);
+    m.position.set(x||0,y||0,z||0);
+    if(rx)m.rotation.x=rx; if(ry)m.rotation.y=ry; if(rz)m.rotation.z=rz;
+    m.castShadow=true; m.receiveShadow=true;
+    return m;
+  }
+  function cyl(rt,rb,h,mat,x,y,z,rx,ry,rz,seg){
+    var m=new THREE.Mesh(new THREE.CylinderGeometry(rt,rb,h,seg||16),mat);
+    m.position.set(x||0,y||0,z||0);
+    if(rx)m.rotation.x=rx; if(ry)m.rotation.y=ry; if(rz)m.rotation.z=rz;
+    m.castShadow=true; m.receiveShadow=true;
+    return m;
+  }
+  function add(parent,m){ parent.add(m); return m; }
+
+  // ================================================================
+  // CHASSIS / BODY
+  // ================================================================
+  add(g, box(3.4, 1.4, 11.6, CHAS,  0, 1.3,  -0.2));   // heavy lower frame rail
+  add(g, box(3.0, 0.5, 11.0, CHAS2, 0, 0.55, -0.2));   // belly skid plate
+  add(g, box(3.8, 0.7,  9.0, YEL2,  0, 2.1,   0.2));   // side guards / fenders
+
+  // Upper engine deck / hood toward the rear
+  add(g, box(3.6, 1.9, 4.6, YEL,  0, 2.85, -3.6));
+  add(g, box(3.7, 0.4, 4.7, YEL2, 0, 3.90, -3.6));     // hood lip
+  add(g, box(2.4, 1.2, 0.25, BLACK, 0, 2.85, -5.95));  // rear engine grille
+  for(var gi=-1; gi<=1; gi++){
+    add(g, box(2.2, 0.12, 0.3, CHAS, 0, 2.85 + gi*0.4, -5.96));
+  }
+  add(g, cyl(0.16,0.18,1.8, STEEL, -1.5, 4.40, -2.4)); // exhaust stack
+  add(g, cyl(0.22,0.18,0.3, BLACK, -1.5, 5.35, -2.4)); // rain cap
+
+  // ---- REAR COUNTERWEIGHT (massive block hanging off the back) ----
+  add(g, box(3.9, 2.3, 1.7, CHAS,  0, 1.7, -6.2));
+  add(g, box(3.9, 0.5, 1.75, CHAS2, 0, 2.9, -6.2));    // cap
+  for(var ci=-1; ci<=1; ci++){
+    add(g, box(0.25, 2.0, 1.8, CHAS2, ci*1.1, 1.7, -6.2)); // ribs
+  }
+  add(g, box(0.6,0.5,0.8, STEEL, 0, 0.9, -7.1));       // tow hitch
+
+  // Front mid section under the boom tower (yellow body)
+  add(g, box(3.5, 1.6, 3.2, YEL,  0, 2.0, 3.4));
+  add(g, box(3.6, 0.35, 3.3, YEL2, 0, 2.85, 3.4));     // front deck lip
+  add(g, box(2.0, 0.9, 0.2, BLACK, 0, 1.7, 5.05));     // front grille
+  add(g, box(0.5,0.4,0.25, LIGHT,  1.3, 1.5, 5.0));    // headlight R
+  add(g, box(0.5,0.4,0.25, LIGHT, -1.3, 1.5, 5.0));    // headlight L
+  add(g, box(3.6, 0.5, 0.5, CHAS, 0, 0.9, 5.1));       // bumper
+
+  // ================================================================
+  // WHEELS  (big front drive tyres, smaller rear steer tyres)
+  // ================================================================
+  function makeWheel(R, width){
+    var w = new THREE.Group();
+    w.add(cyl(R, R, width, TYRE, 0,0,0, 0,0, Math.PI/2, 22)); // axis -> X
+    w.add(cyl(R*1.0, R*0.92, 0.12, TYRE,  width*0.5-0.06,0,0, 0,0,Math.PI/2, 22)); // shoulder
+    w.add(cyl(R*0.92, R*1.0, 0.12, TYRE, -width*0.5+0.06,0,0, 0,0,Math.PI/2, 22)); // shoulder
+    w.add(cyl(R*0.42, R*0.42, width*0.55, HUB, 0,0,0, 0,0,Math.PI/2, 16));         // hub
+    w.add(cyl(R*0.16, R*0.16, width*0.7, STEEL, 0,0,0, 0,0,Math.PI/2, 12));        // axle cap
+    for(var li=0; li<6; li++){                                                     // lug nuts
+      var a = li/6*Math.PI*2;
+      w.add(cyl(0.07,0.07,width*0.6, STEEL, 0, Math.cos(a)*R*0.28, Math.sin(a)*R*0.28, 0,0,Math.PI/2, 6));
+    }
+    return w;
+  }
+
+  var FR = 1.3, FW = 0.95;   // front drive tyre radius / width (large, wide)
+  var RR = 1.05, RW = 0.7;   // rear steer tyre radius / width
+  var FRONT_Z = 3.3, REAR_Z = -3.7;
+  var FRONT_X = 1.95, REAR_X = 1.75;
+
+  // front drive tyres (these SPIN) -- mounted just outboard of the chassis
+  var frontWheels = [];
+  for(var fs=-1; fs<=1; fs+=2){
+    var fw = makeWheel(FR, FW);
+    fw.position.set(fs*FRONT_X, FR, FRONT_Z);
+    g.add(fw);
+    frontWheels.push(fw);
+  }
+  add(g, cyl(0.25,0.25, 2*FRONT_X-0.4, STEEL, 0, FR, FRONT_Z, 0,0,Math.PI/2, 12)); // front axle
+
+  // rear steer tyres -- each wrapped in its own KINGPIN yaw pivot, all under 'steer'
+  var steer = new THREE.Group();
+  steer.position.set(0, 0, 0);
+  g.add(steer);
+  var rearWheels = [];
+  for(var rs=-1; rs<=1; rs+=2){
+    var pivot = new THREE.Group();
+    pivot.position.set(rs*REAR_X, RR, REAR_Z);
+    pivot.add(makeWheel(RR, RW));
+    steer.add(pivot);
+    rearWheels.push(pivot);
+  }
+  add(g, cyl(0.2,0.2, 2*REAR_X-0.3, STEEL, 0, RR, REAR_Z, 0,0,Math.PI/2, 12)); // rear axle
+
+  // ================================================================
+  // OPERATOR CAB  (high, near the front, offset to the +X / right side)
+  // ================================================================
+  var cab = new THREE.Group();
+  cab.position.set(1.25, 3.35, 2.4);
+  g.add(cab);
+  add(cab, box(1.7, 2.0, 2.4, YEL, 0, 0, 0));            // cab shell
+  add(cab, box(1.74, 0.18, 2.44, BLACK, 0,  1.0, 0));   // top frame band
+  add(cab, box(1.74, 0.18, 2.44, BLACK, 0, -1.0, 0));   // bottom frame band
+  add(cab, box(1.8, 0.25, 2.5, YEL2, 0, 1.05, 0));      // roof lip
+  add(cab, cyl(0.14,0.14,0.28, LIGHT, 0.6, 1.3, -0.8, 0,0,0, 10)); // roof beacon
+  add(cab, box(1.5, 1.6, 0.08, GLASS, 0, 0.05, 1.24));  // front windscreen
+  add(cab, box(0.08, 1.6, 2.1, GLASS, -0.88, 0.05, 0)); // inner side (toward boom)
+  add(cab, box(0.08, 1.6, 2.1, GLASS,  0.88, 0.05, 0)); // outer side
+  add(cab, box(1.5, 1.4, 0.08, GLASS, 0, 0.0, -1.24));  // rear glass
+  add(cab, box(0.15, 0.5, 0.9, CHAS, 0.9, -1.1, 0.3));  // door step
+  add(g, box(0.7,0.12,0.5, STEEL, 2.15, 1.9, 2.6));     // access steps
+  add(g, box(0.7,0.12,0.5, STEEL, 2.15, 2.7, 2.6));
+
+  // ================================================================
+  // BOOM TOWER  (rises behind the cab) + boomPivot at its top
+  // ================================================================
+  var TOWER_Z = -1.0, PIVOT_Y = 4.3;
+  add(g, box(0.6, PIVOT_Y-0.2, 0.9, CHAS,  0.9, (PIVOT_Y-0.2)/2+0.6, TOWER_Z)); // post R
+  add(g, box(0.6, PIVOT_Y-0.2, 0.9, CHAS, -0.9, (PIVOT_Y-0.2)/2+0.6, TOWER_Z)); // post L
+  add(g, box(2.4, 0.6, 0.9, CHAS2, 0, PIVOT_Y, TOWER_Z));      // top cross beam (pivot mount)
+  add(g, box(2.4, 0.5, 0.9, CHAS2, 0, 1.4, TOWER_Z));         // bottom tie
+  add(g, box(0.4, PIVOT_Y, 0.4, CHAS2, 0.9, PIVOT_Y/2+0.6, TOWER_Z-0.9, Math.atan2(0.9, PIVOT_Y))); // brace R
+  add(g, box(0.4, PIVOT_Y, 0.4, CHAS2,-0.9, PIVOT_Y/2+0.6, TOWER_Z-0.9, Math.atan2(0.9, PIVOT_Y))); // brace L
+  add(g, cyl(0.35,0.35,2.2, STEEL, 0, PIVOT_Y, TOWER_Z, 0,0,Math.PI/2, 14)); // pivot pin boss
+
+  // ----------------------------------------------------------------
+  // boomPivot : rotation.x luffs (raises/lowers) the boom.
+  // The boom is built pointing FORWARD (+Z) from the pivot.
+  // MORE NEGATIVE rotation.x => tip RISES higher & swings back over the machine.
+  // Rest pose is up & forward over the front (a = -0.45).
+  // ----------------------------------------------------------------
+  var boomPivot = new THREE.Group();
+  boomPivot.position.set(0, PIVOT_Y, TOWER_Z);
+  g.add(boomPivot);
+
+  // OUTER boom segment (heavy box) — built along +Z from the pivot.
+  var OUTER_LEN = 6.2, OUTER_W = 1.05, OUTER_H = 1.15;
+  add(boomPivot, box(OUTER_W, OUTER_H, OUTER_LEN, BOOMM, 0, 0, OUTER_LEN/2));
+  add(boomPivot, box(OUTER_W+0.06, 0.22, OUTER_LEN*0.9, YEL2, 0, OUTER_H/2+0.02, OUTER_LEN/2)); // top rib
+  for(var bi=1; bi<=4; bi++){
+    add(boomPivot, box(OUTER_W+0.06, OUTER_H+0.06, 0.12, BOOM2, 0, 0, bi*1.15)); // collar ribs
+  }
+  add(boomPivot, box(OUTER_W+0.2, OUTER_H+0.3, 0.8, BOOM2, 0, 0, 0.1)); // pivot heel block
+
+  // INNER (telescopic) boom — slightly THINNER, extends further along +Z.
+  var INNER_LEN = 4.0, INNER_W = 0.82, INNER_H = 0.9;
+  var BOOM_TIP_Z = OUTER_LEN + INNER_LEN - 0.4; // 0.4 overlap => tip at 9.8
+  add(boomPivot, box(INNER_W, INNER_H, INNER_LEN, BOOM2, 0, 0, OUTER_LEN - 0.4 + INNER_LEN/2));
+  add(boomPivot, box(OUTER_W, OUTER_H, 0.5, BOOMM, 0, 0, BOOM_TIP_Z)); // tip head plate
+
+  // ---- HYDRAULIC LUFFING RAMS ----
+  // Static struts from the lower body up toward the boom heel (read as the lift cylinders).
+  function ramStrut(side){
+    g.add(cyl(0.28,0.28,2.2, RAMC, side*0.95, 2.7, TOWER_Z+1.6, -0.5, 0, 0, 14)); // cylinder
+    g.add(cyl(0.16,0.16,1.6, RAM,  side*0.95, 4.0, TOWER_Z+2.4, -0.5, 0, 0, 12)); // chromed rod
+  }
+  ramStrut(1); ramStrut(-1);
+  // service rams that visibly follow the boom underside
+  add(boomPivot, cyl(0.18,0.18, OUTER_LEN*0.6, RAM,  0.62, -0.35, OUTER_LEN*0.4, 0,0,0, 12));
+  add(boomPivot, cyl(0.18,0.18, OUTER_LEN*0.6, RAM, -0.62, -0.35, OUTER_LEN*0.4, 0,0,0, 12));
+
+  // ================================================================
+  // SPREADER (top-grab twistlock head) hanging at the boom tip.
+  // headMount tracks the boom tip; 'spreader' counter-rotates so it
+  // hangs LEVEL.  Caller MUST keep  spreader.rotation.x = -boomPivot.rotation.x
+  // every frame; at build time it is baked level for the rest pose.
+  // ================================================================
+  var headMount = new THREE.Group();
+  headMount.position.set(0, 0, BOOM_TIP_Z);
+  boomPivot.add(headMount);
+
+  var BOOM_REST = -0.45;
+  var spreader = new THREE.Group();
+  spreader.rotation.x = -BOOM_REST; // keep level at the rest pose
+  headMount.add(spreader);
+
+  // rotator / headblock above the spreader frame + hang links
+  add(spreader, cyl(0.5,0.5,0.6, STEEL, 0, 0.10, 0, 0,0,0, 16));
+  add(spreader, box(1.2, 0.5, 1.2, CHAS2, 0, 0.45, 0));        // headblock
+  add(spreader, box(0.18,0.7,0.18, STEEL,  0.45, 0.70, 0));    // hang link R
+  add(spreader, box(0.18,0.7,0.18, STEEL, -0.45, 0.70, 0));    // hang link L
+
+  // ---- SPREADER FRAME (the long red beam that spans the container top) ----
+  var FRAME_LEN = 12.2, FRAME_W = 2.5;
+  add(spreader, box(FRAME_W, 0.55, FRAME_LEN, SPRD, 0, -0.35, 0));        // main beam (along Z)
+  add(spreader, box(FRAME_W+0.2, 0.25, 1.0, SPRD, 0, -0.35, 0));          // centre saddle
+  add(spreader, box(0.3, 0.4, FRAME_LEN, SPRD,  FRAME_W/2-0.15, -0.55, 0)); // side rail R
+  add(spreader, box(0.3, 0.4, FRAME_LEN, SPRD, -FRAME_W/2+0.15, -0.55, 0)); // side rail L
+  add(spreader, box(FRAME_W, 0.45, 1.0, STEEL, 0, -0.45,  5.85));         // end head A
+  add(spreader, box(FRAME_W, 0.45, 1.0, STEEL, 0, -0.45, -5.85));         // end head B
+
+  // ---- TWISTLOCKS at the four 40ft corner-cast positions ----
+  function twistlock(x,z){
+    add(spreader, box(0.5,0.4,0.5, STEEL, x, -0.70, z));                 // corner housing
+    add(spreader, cyl(0.12,0.12,0.45, RAM, x, -1.00, z, 0,0,0, 8));      // twistlock pin
+    add(spreader, box(0.22,0.12,0.22, STEEL, x, -1.22, z, 0, Math.PI/4, 0)); // cam head (grip plane)
+  }
+  twistlock( 1.16,  5.85); twistlock(-1.16,  5.85);
+  twistlock( 1.16, -5.85); twistlock(-1.16, -5.85);
+  // flippers / guide arms at the ends
+  add(spreader, box(0.25, 1.0, 0.25, SPRD,  1.2, -1.0,  6.1));
+  add(spreader, box(0.25, 1.0, 0.25, SPRD, -1.2, -1.0,  6.1));
+  add(spreader, box(0.25, 1.0, 0.25, SPRD,  1.2, -1.0, -6.1));
+  add(spreader, box(0.25, 1.0, 0.25, SPRD, -1.2, -1.0, -6.1));
+
+  // ---- HOLD : empty group. Add a container BoxGeometry(2.44,2.59,12)
+  //      centred at the hold origin and it is gripped from the TOP.
+  //      Twistlock cam heads sit at spreader-local y = -1.22 (grip plane);
+  //      container half-height = 2.59/2 = 1.295, so the hold origin
+  //      (= container centre) is at -1.22 - 1.295 = -2.515 in spreader-local
+  //      space -> container top edge meets the grip plane exactly.
+  // ----------------------------------------------------------------
+  var hold = new THREE.Group();
+  hold.position.set(0, -1.22 - 1.295, 0); // -2.515 spreader-local
+  spreader.add(hold);
+
+  // ================================================================
+  return { boomPivot: boomPivot, spreader: spreader, hold: hold,
+           frontWheels: frontWheels, steer: steer, rearWheels: rearWheels };
+}
+let _CONTAINER_MATS=null;
+function containerMats(){ if(!_CONTAINER_MATS) _CONTAINER_MATS=makeContainerMaterials(); return _CONTAINER_MATS; }
+const _tintCache={};
+function containerMatsTinted(hex){ if(_tintCache[hex]) return _tintCache[hex]; const base=containerMats().materials; const arr=base.map(function(m){ const c=m.clone(); c.color=new THREE.Color(hex); return c; }); _tintCache[hex]=arr; return arr; }
+const PORT_STACKERS=[]; let CONT_POOL=[];
+function poolGet(){ for(var i=0;i<CONT_POOL.length;i++){ if(!CONT_POOL[i].use){ CONT_POOL[i].use=true; CONT_POOL[i].m.visible=true; return CONT_POOL[i].m; } } return null; }
+function poolFree(m){ for(var i=0;i<CONT_POOL.length;i++){ if(CONT_POOL[i].m===m){ CONT_POOL[i].use=false; m.visible=false; if(portGroup&&m.parent!==portGroup)portGroup.add(m); return; } } }
 function buildPort(){
   const grp=new THREE.Group(); scene.add(grp); portGroup=grp;
   const concrete=new THREE.MeshStandardMaterial({color:0x9a9a92,roughness:0.95,metalness:0,envMapIntensity:0.22});
@@ -6871,7 +7526,7 @@ function buildPort(){
   for(const rr of [PORT.faceX+11, PORT.faceX+29]){ const rail=new THREE.Mesh(new THREE.BoxGeometry(1.0,0.4,lenZ),concDark); rail.position.set(rr,PORT.deckY+0.2,midZ); grp.add(rail); }
   // container yard (instanced colour boxes) on the landward portion
   const place=[], cw=2.44, cl=12, ch=2.59;
-  for(let gx=PORT.edgeX-8; gx>PORT.faceX+42; gx-=(cw+0.55)){
+  for(let gx=PORT.edgeX-8; gx>PORT.faceX+62; gx-=(cw+0.55)){
     for(let gz=PORT.z0+16; gz<PORT.z1-cl-6; gz+=(cl+0.7)){
       if(Math.random()<0.2) continue;
       const tiers=1+(Math.random()*5|0);
@@ -6890,7 +7545,7 @@ function buildPort(){
   for(let ci=0; ci<czs.length; ci++){
     const cg=new THREE.Group(); let parts; try{ parts=buildGantryCrane(cg)||{}; }catch(e){ console.warn('crane failed:',e.message); continue; }
     cg.rotation.y=Math.PI; cg.position.set(craneX,PORT.deckY,czs[ci]); grp.add(cg);     // boom reaches over the water
-    const cbox=new THREE.Mesh(new THREE.BoxGeometry(2.44,2.59,12), new THREE.MeshStandardMaterial({color:CCOLS[ci%CCOLS.length],roughness:0.72,metalness:0.1}));
+    const cbox=new THREE.Mesh(new THREE.BoxGeometry(2.44,2.59,12), containerMatsTinted(CCOLS[ci%CCOLS.length]));
     cbox.position.set(0,-1.8,0); cbox.castShadow=true; cbox.visible=false; if(parts.spreader) parts.spreader.add(cbox);
     const _bMin=(parts.boomMinX!=null?parts.boomMinX:-18);
     PORT_CRANES.push({parts:parts, box:cbox, t:ci*3.4, spotX:craneX-(_bMin+6), spotZ:czs[ci], occupant:null, prevPh:0});
@@ -6898,14 +7553,25 @@ function buildPort(){
   // container ships: one at the berth being loaded, one anchored offshore
   placePortShip(grp, PORT.faceX-26, midZ, 0);
   placePortShip(grp, PORT.faceX-165, PORT.z1+70, 0.22);
+  // reach-stackers in the apron: lift containers off the trucks and build 3-high stacks
+  const STK=[{sx:PORT.faceX+42,sz:PORT.z0+90},{sx:PORT.faceX+42,sz:PORT.z0+210}];
+  for(let s=0;s<STK.length;s++){ const sg=new THREE.Group(); let sp; try{ sp=buildReachStacker(sg)||{}; }catch(e){ console.warn('stacker failed',e.message); continue; }
+    sg.position.set(STK[s].sx,PORT.deckY,STK[s].sz); grp.add(sg);
+    if(sp.boomPivot) sp.boomPivot.rotation.x=-0.45; if(sp.spreader) sp.spreader.rotation.x=0.45;
+    const slotX=STK[s].sx+8, slotZ=STK[s].sz;
+    const base=new THREE.Mesh(new THREE.BoxGeometry(2.44,2.59,12), containerMatsTinted(CCOLS[s%CCOLS.length])); base.position.set(slotX,PORT.deckY+1.295,slotZ); base.rotation.y=Math.PI/2; base.castShadow=true; grp.add(base);
+    PORT_STACKERS.push({grp:sg, parts:sp, x:STK[s].sx, z:STK[s].sz, state:'idle', occupant:null, held:null, boomA:-0.45, boomTarget:-0.45, yaw:0, yawTarget:0, slotX:slotX, slotZ:slotZ, count:0, stack:[], truckSpotX:STK[s].sx, truckSpotZ:STK[s].sz+8.8}); }
+  // pooled containers the stackers carry + place
+  for(let i=0;i<10;i++){ const m=new THREE.Mesh(new THREE.BoxGeometry(2.44,2.59,12), containerMatsTinted(CCOLS[(i*3)%CCOLS.length])); m.visible=false; m.castShadow=true; grp.add(m); CONT_POOL.push({m:m,use:false}); }
   // terminal trucks that rendezvous with the cranes (drive under -> wait -> get a box -> haul it to the yard)
   const TCOLS=[0xd0d0cc,0x2f6fa0,0xc0392b,0xe0a020,0x3a7a4a,0x46506a];
   for(let i=0;i<6;i++){ const tg=new THREE.Group(); tg.rotation.order='YXZ'; buildTruck(tg,TCOLS[i%TCOLS.length]); if(tg.userData.cont)tg.userData.cont.visible=false; grp.add(tg);
     const sx=PORT.faceX+36, sz=PORT.z0+25+i*42, cr=PORT_CRANES.length?i%PORT_CRANES.length:0;
-    PORT_TRUCKS.push({g:tg, cont:tg.userData.cont, crane:cr, state:'toCrane', x:sx, z:sz, heading:Math.PI, speed:0, tx:sx, tz:sz, wait:0, loaded:false}); }
+    PORT_TRUCKS.push({g:tg, cont:tg.userData.cont, crane:cr, stacker:(PORT_STACKERS.length?i%PORT_STACKERS.length:0), state:'toCrane', x:sx, z:sz, heading:Math.PI, speed:0, tx:sx, tz:sz, wait:0, loaded:false}); }
 }
 function updatePort(dt){
-  for(let i=0;i<PORT_CRANES.length;i++){ const c=PORT_CRANES[i], p=c.parts; if(!p||!p.trolley) continue; c.t+=dt;
+  for(let i=0;i<PORT_CRANES.length;i++){ const c=PORT_CRANES[i], p=c.parts; if(!p||!p.trolley) continue;
+    { const _ph=(c.t%15)/15; const _hold=(_ph>=0.48 && _ph<0.505) && !(c.occupant && c.occupant.state==='waiting'); if(!_hold) c.t+=dt; }   // hover over the yard until a truck is in position
     const T=15, ph=(c.t%T)/T;
     const bMax=(p.boomMaxX!=null?p.boomMaxX:44), bMin=(p.boomMinX!=null?p.boomMinX:-18);
     const water=bMax-2, land=bMin+6, up=-5, down=-42; let tx,sy,carry=false;
@@ -6932,11 +7598,38 @@ function updatePort(dt){
         if(C.occupant===tk && Math.hypot(tk.x-C.spotX,tk.z-C.spotZ)<2.6){ tk.state='waiting'; tk.speed=0; } }
     }
     else if(tk.state==='waiting'){ tk.speed=0;
-      if(tk.loaded){ if(PORT_CRANES[tk.crane]) PORT_CRANES[tk.crane].occupant=null;
-        tk.state='toYard'; tk.tx=PORT.faceX+40; tk.tz=PORT.z0+25+Math.random()*(PORT.z1-PORT.z0-50); } }
-    else if(tk.state==='toYard'){ const d=driveTruck(tk,dt); if(d<3){ tk.state='dump'; tk.wait=1.4; tk.speed=0; } }
-    else if(tk.state==='dump'){ tk.wait-=dt; if(tk.wait<=0){ tk.loaded=false; if(tk.cont)tk.cont.visible=false; tk.crane=PORT_CRANES.length?(tk.crane+1)%PORT_CRANES.length:0; tk.state='toCrane'; } }
+      if(tk.loaded){ if(PORT_CRANES[tk.crane]) PORT_CRANES[tk.crane].occupant=null; tk.state='toStacker'; } }
+    else if(tk.state==='toStacker'){ const S=PORT_STACKERS[tk.stacker];
+      if(!S){ tk.loaded=false; if(tk.cont)tk.cont.visible=false; tk.crane=PORT_CRANES.length?(tk.crane+1)%PORT_CRANES.length:0; tk.state='toCrane'; }
+      else { const free=(!S.occupant||S.occupant===tk); tk.tx=S.truckSpotX; tk.tz=S.truckSpotZ+(free?0:16);
+        driveTruck(tk,dt);
+        if(free && Math.hypot(tk.x-S.truckSpotX,tk.z-S.truckSpotZ)<7) S.occupant=tk;
+        if(S.occupant===tk && Math.hypot(tk.x-S.truckSpotX,tk.z-S.truckSpotZ)<2.6){ tk.state='atStacker'; tk.speed=0; } }
+    }
+    else if(tk.state==='atStacker'){ tk.speed=0; /* the reach-stacker lifts the box off, then sends me back to a crane */ }
     tk.g.position.set(tk.x, PORT.deckY, tk.z); tk.g.rotation.y=tk.heading;
+  }
+  for(let i=0;i<PORT_STACKERS.length;i++){ const st=PORT_STACKERS[i], sp=st.parts; if(!sp||!sp.boomPivot) continue;
+    st.boomA += (st.boomTarget-st.boomA)*Math.min(1,dt*3.2);
+    st.yaw   += (st.yawTarget-st.yaw)*Math.min(1,dt*2.6);
+    sp.boomPivot.rotation.x=st.boomA; if(sp.spreader) sp.spreader.rotation.x=-st.boomA;   // counter-rotate so the head stays level
+    st.grp.rotation.y=st.yaw;
+    const atBoom=Math.abs(st.boomA-st.boomTarget)<0.012, atYaw=Math.abs(st.yaw-st.yawTarget)<0.03;
+    if(st.state==='idle'){ st.boomTarget=-0.45; st.yawTarget=0;
+      if(st.occupant && st.occupant.state==='atStacker' && st.occupant.loaded){ st.state='grab'; st.boomTarget=-0.084; st.yawTarget=0; } }
+    else if(st.state==='grab'){ if(atBoom && atYaw){ const tk=st.occupant;
+        if(tk){ if(tk.cont)tk.cont.visible=false; tk.loaded=false; tk.state='toCrane'; tk.crane=PORT_CRANES.length?(tk.crane+1)%PORT_CRANES.length:0; }
+        st.occupant=null;
+        st.held=poolGet(); if(st.held){ if(st.held.parent!==sp.hold) sp.hold.add(st.held); st.held.position.set(0,0,0); st.held.rotation.set(0,0,0); }
+        st.state='lift'; st.boomTarget=-0.45; } }
+    else if(st.state==='lift'){ if(atBoom){ if(st.count>=2){ for(const c of st.stack) poolFree(c); st.stack=[]; st.count=0; } st.yawTarget=Math.PI/2; st.state='swing'; } }
+    else if(st.state==='swing'){ if(atYaw){ st.state='place'; st.boomTarget=(st.count===0?-0.224:-0.509); } }
+    else if(st.state==='place'){ if(atBoom){ if(st.held){ const ty=PORT.deckY+1.295+(st.count+1)*2.63;
+          sp.hold.remove(st.held); (portGroup||scene).add(st.held); st.held.position.set(st.slotX,ty,st.slotZ); st.held.rotation.set(0,Math.PI/2,0);
+          st.stack.push(st.held); st.held=null; st.count++; }
+        st.state='retract'; st.boomTarget=-0.45; } }
+    else if(st.state==='retract'){ if(atBoom){ st.yawTarget=0; st.state='unswing'; } }
+    else if(st.state==='unswing'){ if(atYaw) st.state='idle'; }
   }
 }
 function driveTruck(tk,dt){
@@ -7166,7 +7859,8 @@ addEventListener('keydown',e=>{ const k=e.key.toLowerCase();
   if(typeof cutscene!=='undefined' && cutscene && (k===' '||k==='enter'||k==='escape')) cutsceneSkip=true;
   if(typeof heliMenuOpen!=='undefined' && heliMenuOpen && k==='escape') hideHeliMenu();
   if(k==='r'&&running&&mode==='free'&&pmode==='ski') recenter();
-  if(k==='f'&&running&&nearAction) doAction(nearAction); });
+  if(k==='f'&&running&&nearAction&&!freecam) doAction(nearAction);
+  if(k==='v'&&running) toggleFreecam(); });
 addEventListener('keyup',e=>{ keys[e.key.toLowerCase()]=false; });
 let touchSteer=0, touching=false;
 cv.addEventListener('touchstart',e=>{touching=true;e.preventDefault();},{passive:false});
@@ -8263,8 +8957,8 @@ function updateCar(dt){
   CAR.speed=THREE.MathUtils.clamp(CAR.speed+(thr*(26+boost*16)-brk*32-6)*dt, -9, 22+boost*10);
   CAR.heading += steer*dt*1.5*Math.min(1,Math.abs(CAR.speed)/5)*(CAR.speed>=0?1:-1);
   const nx=CAR.x+Math.sin(CAR.heading)*CAR.speed*dt, nz=CAR.z+Math.cos(CAR.heading)*CAR.speed*dt;
-  if(landH(nx,nz)>0.6){ CAR.x=nx; CAR.z=nz; } else CAR.speed*=-0.25;            // can't drive into the sea
-  CAR.y=landH(CAR.x,CAR.z);
+  if(onQuay(nx,nz)||landH(nx,nz)>0.6){ CAR.x=nx; CAR.z=nz; } else CAR.speed*=-0.25;   // can't drive into the sea — but CAN roll onto the quay deck
+  CAR.y=onQuay(CAR.x,CAR.z)?PORT.deckY:landH(CAR.x,CAR.z);
   car3d.position.set(CAR.x,CAR.y,CAR.z); car3d.rotation.y=CAR.heading+carYaw;
 }
 const PROMPTS={dock:'Press  F  — dock & explore on foot', drive:'Press  F  — get in the car', ride:'Press  F  — ride the jetski', exit:'Press  F  — get out of the car', board:'Press  F  — board the boat', land:'Press  F  — tie up at the dock', boardShip:'Press  F  — board the ship', leaveShip:'Press  F  — disembark', heli:'Press  F  — helicopter', heliExit:'Press  F  — get out of the helicopter'};
@@ -8325,6 +9019,24 @@ function chasePos(px,py,pz, baseYaw, baseBack, baseUp, dt, minY){
   camera.position.lerp(_camOrb, Math.min(1,dt*5));
   if(minY!==undefined && camera.position.y<minY) camera.position.y=minY;
 }
+// ---- free-fly spectator camera (toggle with V or the on-screen button) ----
+let freecam=false; const FC={x:0,y:40,z:0,yaw:0,pitch:-0.25};
+function toggleFreecam(){ if(!running && !freecam) return; freecam=!freecam; const btn=document.getElementById('freecamBtn'); if(btn) btn.classList.toggle('on',freecam);
+  if(freecam){ FC.x=camera.position.x; FC.y=camera.position.y; FC.z=camera.position.z;
+    const d=camera.getWorldDirection(new THREE.Vector3()); FC.yaw=Math.atan2(d.x,d.z); FC.pitch=Math.asin(THREE.MathUtils.clamp(d.y,-1,1));
+    toast('Free cam · WASD fly · R/F up·down · arrows look · Shift boost · V to exit','#aef0ff'); }
+  else toast('Free cam off','#aef0ff'); }
+function updateFreecam(dt){ const fast=keys['shift']?3.4:1, sp=48*fast*dt, rot=1.5*dt;
+  if(keys['arrowleft'])FC.yaw+=rot; if(keys['arrowright'])FC.yaw-=rot;
+  if(keys['arrowup'])FC.pitch=Math.min(1.45,FC.pitch+rot); if(keys['arrowdown'])FC.pitch=Math.max(-1.45,FC.pitch-rot);
+  const cy=Math.cos(FC.pitch), fwx=Math.sin(FC.yaw)*cy, fwy=Math.sin(FC.pitch), fwz=Math.cos(FC.yaw)*cy, rx=Math.cos(FC.yaw), rz=-Math.sin(FC.yaw);
+  let mx=0,my=0,mz=0;
+  if(keys['w']){mx+=fwx;my+=fwy;mz+=fwz;} if(keys['s']){mx-=fwx;my-=fwy;mz-=fwz;}
+  if(keys['d']){mx+=rx;mz+=rz;} if(keys['a']){mx-=rx;mz-=rz;}
+  if(keys['r']||keys[' ']){my+=1;} if(keys['f']){my-=1;}
+  FC.x+=mx*sp; FC.y+=my*sp; FC.z+=mz*sp; if(FC.y<1)FC.y=1;
+  camera.position.set(FC.x,FC.y,FC.z); camera.lookAt(FC.x+fwx*10,FC.y+fwy*10,FC.z+fwz*10);
+  camera.fov=68; camera.updateProjectionMatrix(); }
 
 function loop(now){
   requestAnimationFrame(loop);
@@ -8336,7 +9048,8 @@ function loop(now){
 
   if(running){
     storm = mode==='trial' ? Math.min(1, storm+dt*0.011) : Math.min(0.45, storm+dt*0.004);
-    if(pmode==='foot'){ updateFoot(dt); }
+    if(freecam){ /* player frozen while free-flying the camera */ }
+    else if(pmode==='foot'){ updateFoot(dt); }
     else if(pmode==='car'){ updateCar(dt); }
     else if(pmode==='boat'){ updateBoat(dt); }
     else if(pmode==='aboard'){ updateAboard(dt); }
@@ -8437,7 +9150,8 @@ function loop(now){
   // camera (per mode) — user orbit (cam.yaw/pitch/dist) layered on the chase view
   { const mv=(pmode==='ski')?B.speed:(pmode==='car')?Math.abs(CAR.speed):(pmode==='boat'&&typeof BOAT!=='undefined')?Math.abs(BOAT.speed):0;
     if(gameT-cam.lastDrag>1.5 && mv>6) cam.yaw-=cam.yaw*Math.min(0.9,dt*0.7); }   // at speed, ease the view back behind
-  if(running && pmode==='ski'){ const back=9.5+B.speed*0.2, up=4.0+B.pitch*4;
+  if(freecam){ updateFreecam(dt); }
+  else if(running && pmode==='ski'){ const back=9.5+B.speed*0.2, up=4.0+B.pitch*4;
     chasePos(B.x,B.y,B.z, B.heading, back, up, dt, surf+2.2);
     shake*=Math.pow(0.0001,dt); camera.position.x+=(Math.random()-0.5)*shake*2; camera.position.y+=(Math.random()-0.5)*shake*1.6;
     camera.lookAt(B.x+_fwd.x*10,B.y+1.6,B.z+_fwd.z*10);
