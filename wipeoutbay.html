@@ -7295,12 +7295,19 @@ function loadHeliModel(){
     wrap.updateMatrixWorld(true); bb=new THREE.Box3().setFromObject(root); const c=bb.getCenter(new THREE.Vector3());
     root.position.x-=c.x; root.position.z-=c.z; root.position.y-=bb.min.y;   // centre X·Z, sit skids on y=0
     root.traverse(function(o){ if(o.isMesh){ o.castShadow=true; o.receiveShadow=true; } });
-    // identify the rotor = widest/flattest/highest mesh, pivot it about its centre so it can spin
-    wrap.updateMatrixWorld(true); let rm=null,best=-1;
+    // DON'T spin the model's own meshes (parts are grouped by material, so spinning one rotates the
+    // cabin too). Only HIDE a mesh if it's a GENUINE flat rotor disc, then drop in our own spinner.
+    wrap.updateMatrixWorld(true); bb=new THREE.Box3().setFromObject(root); sz=bb.getSize(new THREE.Vector3());
+    let rm=null,best=-1,rmBox=null,rmFlat=0;
     root.traverse(function(o){ if(o.isMesh){ const b=new THREE.Box3().setFromObject(o), s=b.getSize(new THREE.Vector3());
-      const flat=Math.max(s.x,s.z)/(s.y+0.05), sco=flat*Math.max(0.2,(b.min.y+b.max.y)/2); if(sco>best){best=sco; rm=o;} } });
-    if(rm){ const rc=new THREE.Box3().setFromObject(rm).getCenter(new THREE.Vector3());
-      const pivot=new THREE.Group(); rm.parent.add(pivot); pivot.position.copy(rm.parent.worldToLocal(rc.clone())); pivot.attach(rm); heliRotor=pivot; }
+      const flat=Math.max(s.x,s.z)/(s.y+0.03), sco=flat*Math.max(0.3,(b.min.y+b.max.y)/2); if(sco>best){best=sco; rm=o; rmBox=b; rmFlat=flat;} } });
+    let rotorY=bb.max.y-0.05, span=Math.max(sz.x,sz.z)*0.92;
+    if(rm && rmFlat>5){ rm.visible=false; rotorY=(rmBox.min.y+rmBox.max.y)/2; span=Math.max(rmBox.max.x-rmBox.min.x, rmBox.max.z-rmBox.min.z); }   // it really is a flat rotor → hide + replace
+    const rotor=new THREE.Group(); rotor.position.set(0,rotorY,0);
+    const dk=new THREE.MeshStandardMaterial({color:0x202227, roughness:0.5, metalness:0.4, envMapIntensity:0.5});
+    const hub=new THREE.Mesh(new THREE.CylinderGeometry(span*0.03,span*0.045,Math.max(0.12,span*0.05),10),dk); hub.castShadow=true; rotor.add(hub);
+    for(let b=0;b<2;b++){ const bl=new THREE.Mesh(new THREE.BoxGeometry(span*0.05,Math.max(0.04,span*0.012),span),dk); bl.rotation.y=b*Math.PI/2; bl.castShadow=true; rotor.add(bl); }
+    heliRotor=rotor; heliTailRotor=null; wrap.add(rotor);
     heli3d.add(wrap);
   }, undefined, function(){ console.warn('heli model load failed — procedural fallback'); try{ const p=buildHelicopter(heli3d)||{}; heliRotor=p.rotor||null; heliTailRotor=p.tailRotor||null; }catch(e){} });
 }
