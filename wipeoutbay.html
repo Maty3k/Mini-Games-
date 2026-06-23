@@ -7063,8 +7063,8 @@ function buildCZ_shops(g){
 
     // railing: top + bottom rails (rotated cylinders) + balusters
     const railTopX = inN*0.95;
-    add(new THREE.Mesh(cg(0.05,0.05,18,8).rotateX(Math.PI/2), railMat), railTopX, baseY+0.95, 0, u);
-    add(new THREE.Mesh(cg(0.04,0.04,18,8).rotateX(Math.PI/2), railMat), railTopX, baseY+0.45, 0, u);
+    add(new THREE.Mesh(new THREE.BoxGeometry(0.09,0.09,18), railMat), railTopX, baseY+0.95, 0, u);   // top rail — a clean thin box already long along Z (no shared-geometry rotation games)
+    add(new THREE.Mesh(new THREE.BoxGeometry(0.07,0.07,18), railMat), railTopX, baseY+0.45, 0, u);   // bottom rail
     for(let b=0;b<10;b++){
       add(new THREE.Mesh(balusterGeo, railMat), railTopX, baseY+0.5, -8.1+b*1.8, u);
     }
