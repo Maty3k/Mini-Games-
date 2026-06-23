@@ -5613,17 +5613,37 @@ function buildAIJetski(g){
   g.traverse(function(o){if(o.isMesh)o.castShadow=true;});
 }
 // ---- ambient water traffic: big vessels + jetskis cruising the bay on loops, bobbing on the swell ----
+// ---- ship interiors (placeholders — replaced by the interiors workflow) ----
+function buildYachtInterior(g){
+  const floorMat=new THREE.MeshStandardMaterial({color:0x8a6a45,roughness:0.7});
+  const fl=new THREE.Mesh(new THREE.BoxGeometry(5.8,0.1,24),floorMat); fl.position.set(0,0.85,-1); fl.receiveShadow=true; g.add(fl);
+  function box(w,h,d,c,x,y,z){ const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),new THREE.MeshStandardMaterial({color:c,roughness:0.7})); m.position.set(x,y,z); m.castShadow=true; g.add(m); return m; }
+  box(2.0,0.5,2.2,0xf0eee6,0,1.15,-10); box(2.4,0.7,0.9,0x3a4a6a,-1.5,1.25,2); box(2.6,0.9,0.7,0xcccccc,1.4,1.35,5);
+  return { deckY:0.9, bounds:[-2.7,2.7,-12.5,10.5], spawn:[0,-11.5], exit:[0,-12.2] };
+}
+function buildCruiseInterior(g){
+  const floorMat=new THREE.MeshStandardMaterial({color:0x9a8a6a,roughness:0.8});
+  const fl=new THREE.Mesh(new THREE.BoxGeometry(20,0.2,104),floorMat); fl.position.set(0,5.9,0); fl.receiveShadow=true; g.add(fl);
+  function box(w,h,d,c,x,y,z){ const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),new THREE.MeshStandardMaterial({color:c,roughness:0.7})); m.position.set(x,y,z); m.castShadow=true; g.add(m); return m; }
+  box(4,0.6,2.5,0xf0eee6,0,6.4,-40); box(2,0.5,2,0xcccccc,-6,6.3,0); box(6,1.0,1,0x886644,5,6.6,30);
+  return { deckY:6.0, bounds:[-9.5,9.5,-51,51], spawn:[0,-50], exit:[0,-51] };
+}
 const VESSELS3D=[];
 function buildWaterTraffic(){
-  function add(fn, cx,cz, rad, ang0, lin, bob, tilt, scale){ const grp=new THREE.Group(); grp.rotation.order='YXZ'; let parts=null;
-    try{ parts=fn(grp)||{}; }catch(e){ console.warn('vessel build failed:',e.message); return; }
+  function add(fn, cx,cz, rad, ang0, lin, bob, tilt, scale, ship, interiorFn, boardRange){ const grp=new THREE.Group(); grp.rotation.order='YXZ'; let parts=null;
+    try{ parts=fn(grp)||{}; }catch(e){ console.warn('vessel build failed:',e.message); return null; }
     if(scale&&scale!==1) grp.scale.setScalar(scale); scene.add(grp);
-    VESSELS3D.push({grp:grp, cx:cx,cz:cz, rad:rad, ang:ang0, lin:lin, bob:bob, tilt:tilt, rotor:(parts&&parts.rotor)||null}); }
+    const ent={grp:grp, cx:cx,cz:cz, rad:rad, ang:ang0, lin:lin, bob:bob, tilt:tilt, rotor:(parts&&parts.rotor)||null, ship:ship||null, boardRange:boardRange||0, anchored:false};
+    if(ship && interiorFn){ try{ const ig=new THREE.Group(); const info=interiorFn(ig)||{}; ig.visible=false; grp.add(ig);
+      ent.interior=ig; ent.iDeckY=(info.deckY!=null?info.deckY:1); ent.iBounds=info.bounds||[-3,3,-10,10];
+      ent.iSpawn=info.spawn||[0,ent.iBounds[2]+1.5]; ent.iExit=info.exit||ent.iSpawn;
+    }catch(e){ console.warn('interior build failed:',e.message); } }
+    VESSELS3D.push(ent); return ent; }
   // big vessels — wide slow loops in the open central/eastern lagoon (clear of islands, rock, lighthouse, city)
-  add(buildCruiseShip, 200,150, 720, 0.3, 4.6, 0.20, 0.12, 1.0);
+  add(buildCruiseShip, 200,150, 720, 0.3, 4.6, 0.20, 0.12, 1.0, 'cruise ship', buildCruiseInterior, 58);
   add(buildSuperyacht, 150,300, 560, 2.2, 4.0, 0.38, 0.16, 1.0);
-  add(buildYacht,      300,-100, 460, 4.1, 5.0, 0.55, 0.20, 1.0);
-  add(buildYacht,      -60,260, 520, 1.1, 4.4, 0.55, 0.20, 0.9);
+  add(buildYacht,      300,-100, 460, 4.1, 5.0, 0.55, 0.20, 1.0, 'yacht', buildYachtInterior, 19);
+  add(buildYacht,      -60,260, 520, 1.1, 4.4, 0.55, 0.20, 0.9, 'yacht', buildYachtInterior, 19);
   // ai jetskis buzzing around
   for(let k=0;k<5;k++){ const grp=new THREE.Group(); grp.rotation.order='YXZ';
     try{ buildAIJetski(grp); }catch(e){ continue; } scene.add(grp);
@@ -5632,13 +5652,15 @@ function buildWaterTraffic(){
 }
 function updateWaterTraffic(dt){
   for(const v of VESSELS3D){
-    v.ang += (v.lin/v.rad)*dt;
-    const x=v.cx+Math.cos(v.ang)*v.rad, z=v.cz+Math.sin(v.ang)*v.rad, sy=seaY(x,z,gameT);
-    v.grp.position.set(x, sy*v.bob, z);
-    v.grp.rotation.y=Math.atan2(-Math.sin(v.ang), Math.cos(v.ang));   // face along the loop tangent
-    const n=seaNormal(x,z,gameT);
-    v.grp.rotation.x += ((-n.z*v.tilt) - v.grp.rotation.x)*Math.min(1,dt*3);
-    v.grp.rotation.z += (( n.x*v.tilt) - v.grp.rotation.z)*Math.min(1,dt*3);
+    if(!v.anchored){
+      v.ang += (v.lin/v.rad)*dt;
+      const x=v.cx+Math.cos(v.ang)*v.rad, z=v.cz+Math.sin(v.ang)*v.rad, sy=seaY(x,z,gameT);
+      v.grp.position.set(x, sy*v.bob, z);
+      v.grp.rotation.y=Math.atan2(-Math.sin(v.ang), Math.cos(v.ang));   // face along the loop tangent
+      const n=seaNormal(x,z,gameT);
+      v.grp.rotation.x += ((-n.z*v.tilt) - v.grp.rotation.x)*Math.min(1,dt*3);
+      v.grp.rotation.z += (( n.x*v.tilt) - v.grp.rotation.z)*Math.min(1,dt*3);
+    }
     if(v.rotor) v.rotor.rotation.y += dt*8;
   }
 }
@@ -6368,6 +6390,25 @@ function mooredBoatBob(){
   const s1=seaY(BOAT.x,BOAT.z,gameT); boat3d.position.set(BOAT.x,s1,BOAT.z); boat3d.rotation.set(Math.sin(gameT*0.7)*0.03,BOAT.heading,Math.sin(gameT*0.5)*0.05);
   const s2=seaY(boatDeco.position.x,boatDeco.position.z,gameT); boatDeco.position.y=s2; boatDeco.rotation.set(0,DOCK.ang+Math.PI,Math.sin(gameT*0.6+1.3)*0.05);
 }
+// ---- walking around a boarded ship's interior (vessel anchored; avatar moves in vessel-local frame) ----
+let aboard=null, _boardTarget=null;
+function updateAboard(dt){
+  const A=aboard; if(!A) return; const g=A.entry.grp;
+  const fwd=(keys['w']||keys['arrowup'])?1:0, bwd=(keys['s']||keys['arrowdown'])?1:0;
+  const turn=((keys['a']||keys['arrowleft'])?1:0)-((keys['d']||keys['arrowright'])?1:0);
+  A.lh += turn*dt*2.6;
+  const tgt=(fwd?2.2*(keys['shift']?1.9:1):0)-(bwd?1.3:0);
+  A.sp += (tgt-A.sp)*Math.min(1,dt*9);
+  const nlx=A.lx+Math.sin(A.lh)*A.sp*dt, nlz=A.lz+Math.cos(A.lh)*A.sp*dt, b=A.bounds;
+  A.lx=Math.max(b[0]+0.4,Math.min(b[1]-0.4,nlx)); A.lz=Math.max(b[2]+0.4,Math.min(b[3]-0.4,nlz));
+  // map vessel-local (lx, deckY, lz) → world through the anchored vessel transform (heading + scale)
+  const s=g.scale.x||1, vh=g.rotation.y, cs=Math.cos(vh), sn=Math.sin(vh);
+  const wx=g.position.x+(A.lx*cs+A.lz*sn)*s, wz=g.position.z+(-A.lx*sn+A.lz*cs)*s, wy=g.position.y+A.deckY*s;
+  avatar.position.set(wx,wy,wz); avatar.rotation.y=vh+A.lh;
+  A.step += Math.abs(A.sp)*dt*2.4;
+  const sw=Math.sin(A.step)*0.5*Math.min(1,Math.abs(A.sp)/3), L=avatar.userData;
+  if(L.legL){ L.legL.rotation.x=sw; L.legR.rotation.x=-sw; L.armL.rotation.x=-sw; L.armR.rotation.x=sw; }
+}
 function buildPerson(g, col){
   // ===== Low-poly walking tourist. Faces +Z, feet at y=0, ~1.85m, centred on x/z. =====
   // Only THREE + col are used. col = {shirt, pants, skin, hair} (hex ints).
@@ -6584,14 +6625,17 @@ function updateCar(dt){
   CAR.y=landH(CAR.x,CAR.z);
   car3d.position.set(CAR.x,CAR.y,CAR.z); car3d.rotation.y=CAR.heading+carYaw;
 }
-const PROMPTS={dock:'Press  F  — dock & explore on foot', drive:'Press  F  — get in the car', ride:'Press  F  — ride the jetski', exit:'Press  F  — get out of the car', board:'Press  F  — board the boat', land:'Press  F  — tie up at the dock'};
+const PROMPTS={dock:'Press  F  — dock & explore on foot', drive:'Press  F  — get in the car', ride:'Press  F  — ride the jetski', exit:'Press  F  — get out of the car', board:'Press  F  — board the boat', land:'Press  F  — tie up at the dock', boardShip:'Press  F  — board the ship', leaveShip:'Press  F  — back to your boat'};
+function nearestShip(x,z){ let best=null,bd=1e9; for(const v of VESSELS3D){ if(!v.ship||!v.interior) continue; const d=Math.hypot(v.grp.position.x-x,v.grp.position.z-z); if(d<(v.boardRange||20) && d<bd){bd=d;best=v;} } return best; }
 function updateInteract(){
   let a=null;
   if(pmode==='ski'){ if(mode==='free' && B.speed<9 && dockReach(B.x,B.z)) a='dock'; }
   else if(pmode==='foot'){ const dC=carReady?Math.hypot(CAR.x-AV.x,CAR.z-AV.z):1e9, dS=Math.hypot(B.x-AV.x,B.z-AV.z), dB=Math.hypot(BOAT.x-AV.x,BOAT.z-AV.z);
     if(dB<12 && dB<=dC && dB<=dS) a='board'; else if(dC<5 && dC<=dS) a='drive'; else if(dS<6.5) a='ride'; }
   else if(pmode==='car'){ if(Math.abs(CAR.speed)<2.5) a='exit'; }
-  else if(pmode==='boat'){ if(Math.abs(BOAT.speed)<3 && dockReach(BOAT.x,BOAT.z)) a='land'; }
+  else if(pmode==='boat'){ const sh=Math.abs(BOAT.speed)<7?nearestShip(BOAT.x,BOAT.z):null;
+    if(sh){ a='boardShip'; _boardTarget=sh; } else if(Math.abs(BOAT.speed)<3 && dockReach(BOAT.x,BOAT.z)) a='land'; }
+  else if(pmode==='aboard'){ if(aboard && Math.hypot(aboard.lx-aboard.exit[0],aboard.lz-aboard.exit[1])<3.2) a='leaveShip'; }
   nearAction=a; promptEl.textContent=a?PROMPTS[a]:''; promptEl.style.opacity=a?'1':'0';
 }
 function doAction(a){ if(!a)return; SFX.select&&SFX.select();
@@ -6607,6 +6651,11 @@ function doAction(a){ if(!a)return; SFX.select&&SFX.select();
   else if(a==='land'){ pmode='foot'; BOAT.moored=true; BOAT.x=BOAT_MOOR.x; BOAT.z=BOAT_MOOR.z; BOAT.heading=BOAT_MOOR.heading; BOAT.speed=0;
     let al=(BOAT.x-DOCK.cx)*DOCK.dx+(BOAT.z-DOCK.cz)*DOCK.dz; al=Math.max(DOCK.start+3,Math.min(DOCK.endCd-3,al));
     AV.x=DOCK.cx+DOCK.dx*al; AV.z=DOCK.cz+DOCK.dz*al; AV.heading=DOCK.ang+Math.PI; AV.speed=0; AV.y=DOCK.deckTop; avatar.visible=true; toast('Tied up — back on the dock','#aef0ff'); }
+  else if(a==='boardShip'){ const v=_boardTarget; if(v&&v.interior){ BOAT.speed=0; v.anchored=true; v.grp.rotation.x=0; v.grp.rotation.z=0; v.interior.visible=true;
+    aboard={entry:v, deckY:v.iDeckY, bounds:v.iBounds.slice(), exit:v.iExit.slice(), lx:v.iSpawn[0], lz:v.iSpawn[1], lh:0, sp:0, step:0};
+    pmode='aboard'; avatar.visible=true; updateAboard(0.0001); toast('Aboard the '+v.ship+' — explore below','#aef0ff'); } }
+  else if(a==='leaveShip'){ if(aboard){ const v=aboard.entry; if(v.interior)v.interior.visible=false; v.anchored=false; aboard=null;
+    pmode='boat'; avatar.visible=false; toast('Back on your boat','#aef0ff'); } }
 }
 
 // ===== free orbit camera: drag the mouse to swing around, scroll to zoom, press C to recenter =====
@@ -6641,6 +6690,7 @@ function loop(now){
     if(pmode==='foot'){ updateFoot(dt); }
     else if(pmode==='car'){ updateCar(dt); }
     else if(pmode==='boat'){ updateBoat(dt); }
+    else if(pmode==='aboard'){ updateAboard(dt); }
     else {
     // input (jetski)
     const thr=(keys['w']||keys['arrowup']||touching)?1:0, brk=(keys['s']||keys['arrowdown'])?1:0;
@@ -6736,6 +6786,9 @@ function loop(now){
   } else if(running && pmode==='foot'){ const fw=Math.sin(AV.heading),fz=Math.cos(AV.heading);
     chasePos(AV.x,AV.y,AV.z, AV.heading, 6, 3.4, dt);
     camera.lookAt(AV.x+fw*2.5, AV.y+1.3, AV.z+fz*2.5); camera.fov=62; camera.updateProjectionMatrix();
+  } else if(running && pmode==='aboard' && aboard){ const ay=avatar.rotation.y, fw=Math.sin(ay),fz=Math.cos(ay), px=avatar.position.x,py=avatar.position.y,pz=avatar.position.z;
+    chasePos(px,py,pz, ay, 4.6, 2.8, dt, py+0.4);
+    camera.lookAt(px+fw*2.2, py+1.3, pz+fz*2.2); camera.fov=66; camera.updateProjectionMatrix();
   } else if(running && pmode==='car'){ const fw=Math.sin(CAR.heading),fz=Math.cos(CAR.heading), back=9+Math.abs(CAR.speed)*0.22;
     chasePos(CAR.x,CAR.y,CAR.z, CAR.heading, back, 4.0, dt);
     camera.lookAt(CAR.x+fw*9, CAR.y+1.3, CAR.z+fz*9);
@@ -6815,7 +6868,7 @@ window.__wb={B,WAVES,seaY,seaNormal,GATES,keys,get composer(){return composer;},
   start:start, get mode(){return mode;}, set mode(v){mode=v;}, CITY, landH, recenter,
   camera, THREE:window.THREE, renderRaw(){ composer.render(); },
   setRenderScale:setRenderScale, get renderScale(){return renderScale;}, get fps(){return fpsSmooth;},
-  get pmode(){return pmode;}, set pmode(v){pmode=v;}, AV, CAR, DOCK, doAction, updateInteract, get nearAction(){return nearAction;}, dockReach, avatar, car3d, cam, BOAT, boat3d, BOAT_MOOR};
+  get pmode(){return pmode;}, set pmode(v){pmode=v;}, AV, CAR, DOCK, doAction, updateInteract, get nearAction(){return nearAction;}, dockReach, avatar, car3d, cam, BOAT, boat3d, BOAT_MOOR, get aboard(){return aboard;}, get VESSELS(){return VESSELS3D;}, get boardTarget(){return _boardTarget;}, set boardTarget(v){_boardTarget=v;}};
 </script>
 </body>
 </html>
