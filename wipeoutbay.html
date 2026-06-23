@@ -332,9 +332,9 @@ function windowTex(lit){ const c=document.createElement('canvas'); c.width=64;c.
   const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; t.encoding=THREE.sRGBEncoding; return t; }
 function scaleBoxUV(geo,u,v){ const uv=geo.attributes.uv; for(let i=0;i<uv.count;i++) uv.setXY(i,uv.getX(i)*u,uv.getY(i)*v); uv.needsUpdate=true; }
 const GRID=48;   // city block spacing
-const pavementMat=new THREE.MeshStandardMaterial({color:0x8f9296, roughness:0.93, metalness:0, envMapIntensity:0.25});
-const roadMat=new THREE.MeshStandardMaterial({color:0x23262b, roughness:0.82, metalness:0, envMapIntensity:0.18});
-const roadLineMat=new THREE.MeshStandardMaterial({color:0xd8c25a, roughness:0.6, metalness:0});
+const pavementMat=new THREE.MeshStandardMaterial({color:0x8f9296, roughness:0.93, metalness:0, envMapIntensity:0.25, polygonOffset:true, polygonOffsetFactor:-1, polygonOffsetUnits:-1});
+const roadMat=new THREE.MeshStandardMaterial({color:0x23262b, roughness:0.82, metalness:0, envMapIntensity:0.18, polygonOffset:true, polygonOffsetFactor:-2, polygonOffsetUnits:-2});
+const roadLineMat=new THREE.MeshStandardMaterial({color:0xd8c25a, roughness:0.6, metalness:0, polygonOffset:true, polygonOffsetFactor:-4, polygonOffsetUnits:-4});
 const sidewalkMat=new THREE.MeshStandardMaterial({color:0xcdccc6, roughness:0.92, metalness:0, envMapIntensity:0.28});
 const kerbMat=new THREE.MeshStandardMaterial({color:0x70726f, roughness:0.85, metalness:0, envMapIntensity:0.3});
 const parkMat=new THREE.MeshStandardMaterial({color:0x4f7d3a, roughness:0.95, metalness:0, envMapIntensity:0.2});
@@ -5435,6 +5435,19 @@ function buildCruiseShip(g){
     }
   }
   var supTopY = topY + nDecks*deckH;   // top of superstructure stack
+  // ---- helicopter pad on the top deck, forward of the funnels (so the cutscene lands ON the ship) ----
+  (function(){
+    var hz = supCz + supLen*0.20, hy = supTopY + 0.12, R = 6.6;
+    add(new THREE.CylinderGeometry(R, R, 0.26, 30), soleMat, 0, hy, hz);                 // pad slab
+    var mk=new THREE.MeshStandardMaterial({color:0xf2f4f7, roughness:0.6, metalness:0, polygonOffset:true, polygonOffsetFactor:-3, polygonOffsetUnits:-3});
+    var ring=add(new THREE.RingGeometry(R-1.0, R-0.55, 36), mk, 0, hy+0.14, hz); ring.rotation.x=-Math.PI/2;   // white circle
+    add(new THREE.BoxGeometry(0.7, 0.05, 5.4), mk, -1.7, hy+0.15, hz);    // H left leg
+    add(new THREE.BoxGeometry(0.7, 0.05, 5.4), mk,  1.7, hy+0.15, hz);    // H right leg
+    add(new THREE.BoxGeometry(3.4, 0.05, 0.8), mk,  0.0, hy+0.15, hz);    // H crossbar
+    var pl=new THREE.MeshStandardMaterial({color:0xffd24a, emissive:0xffb020, emissiveIntensity:1.4, roughness:0.5});
+    for(var li=0; li<8; li++){ var a2=li/8*Math.PI*2; add(new THREE.SphereGeometry(0.22,8,6), pl, Math.cos(a2)*R, hy+0.22, hz+Math.sin(a2)*R); }
+    g.userData.helipad={x:0, y:hy+0.12, z:hz};
+  })();
 
   // raked GLASS-FRONTED BRIDGE on the top forward deck
   (function(){
@@ -6231,7 +6244,7 @@ function buildWaterTraffic(){
   function add(fn, cx,cz, rad, ang0, lin, bob, tilt, scale, ship, interiorFn, boardRange){ const grp=new THREE.Group(); grp.rotation.order='YXZ'; let parts=null;
     try{ parts=fn(grp)||{}; }catch(e){ console.warn('vessel build failed:',e.message); return null; }
     if(scale&&scale!==1) grp.scale.setScalar(scale); scene.add(grp);
-    const ent={grp:grp, cx:cx,cz:cz, rad:rad, ang:ang0, lin:lin, bob:bob, tilt:tilt, rotor:(parts&&parts.rotor)||null, ship:ship||null, boardRange:boardRange||0, anchored:false};
+    const ent={grp:grp, cx:cx,cz:cz, rad:rad, ang:ang0, lin:lin, bob:bob, tilt:tilt, rotor:(parts&&parts.rotor)||null, ship:ship||null, boardRange:boardRange||0, anchored:false, helipad:(grp.userData&&grp.userData.helipad)||null};
     if(ship && interiorFn){ try{ const ig=new THREE.Group(); const info=interiorFn(ig)||{}; ig.visible=false; grp.add(ig);
       ent.interior=ig; ent.iBounds=info.bounds||[-3,3,-10,10];
       ent.iSpawn=info.spawn||[0,ent.iBounds[2]+1.5]; ent.iExit=info.exit||ent.iSpawn;
@@ -7513,6 +7526,29 @@ function containerMatsTinted(hex){ if(_tintCache[hex]) return _tintCache[hex]; c
 const PORT_STACKERS=[]; let CONT_POOL=[];
 function poolGet(){ for(var i=0;i<CONT_POOL.length;i++){ if(!CONT_POOL[i].use){ CONT_POOL[i].use=true; CONT_POOL[i].m.visible=true; return CONT_POOL[i].m; } } return null; }
 function poolFree(m){ for(var i=0;i<CONT_POOL.length;i++){ if(CONT_POOL[i].m===m){ CONT_POOL[i].use=false; m.visible=false; if(portGroup&&m.parent!==portGroup)portGroup.add(m); return; } } }
+function portSignTex(){ const c=document.createElement('canvas'); c.width=512; c.height=128; const x=c.getContext('2d');
+  x.fillStyle='#13334e'; x.fillRect(0,0,512,128); x.fillStyle='#0e2336'; x.fillRect(6,6,500,116);
+  for(let i=-20;i<540;i+=30){ x.fillStyle=((((i+600)/30)|0)%2)?'#f2c021':'#1a1d22';
+    x.beginPath(); x.moveTo(i,6); x.lineTo(i+16,6); x.lineTo(i+3,20); x.lineTo(i-13,20); x.closePath(); x.fill();
+    x.beginPath(); x.moveTo(i,122); x.lineTo(i+16,122); x.lineTo(i+3,108); x.lineTo(i-13,108); x.closePath(); x.fill(); }
+  x.textAlign='center'; x.textBaseline='middle';
+  x.fillStyle='#eaf6ff'; x.font='bold 44px Arial'; x.fillText('WIPEOUT BAY', 256, 52);
+  x.fillStyle='#7fc4ff'; x.font='bold 24px Arial'; x.fillText('CONTAINER TERMINAL', 256, 88);
+  const t=new THREE.CanvasTexture(c); t.anisotropy=8; t.needsUpdate=true; return t; }
+function buildPortGate(grp){
+  const mz=(PORT.z0+PORT.z1)/2, gx=PORT.edgeX-2, half=10;
+  const steel=new THREE.MeshStandardMaterial({color:0x3a4048, roughness:0.65, metalness:0.5, envMapIntensity:0.5});
+  const dark=new THREE.MeshStandardMaterial({color:0x202329, roughness:0.7, metalness:0.4});
+  for(const s of [-1,1]){ const post=new THREE.Mesh(new THREE.BoxGeometry(1.7,13,1.7),steel); post.position.set(gx,PORT.deckY+6.5,mz+s*half); post.castShadow=true; grp.add(post);
+    const ft=new THREE.Mesh(new THREE.BoxGeometry(2.6,0.5,2.6),dark); ft.position.set(gx,PORT.deckY+0.25,mz+s*half); grp.add(ft); }
+  const beam=new THREE.Mesh(new THREE.BoxGeometry(1.2,1.3,half*2+2.4),steel); beam.position.set(gx,PORT.deckY+12.5,mz); beam.castShadow=true; grp.add(beam);
+  const sign=new THREE.Mesh(new THREE.BoxGeometry(0.5,4.6,half*2-1), new THREE.MeshStandardMaterial({map:portSignTex(), roughness:0.55, metalness:0.1, emissive:0x16314a, emissiveIntensity:0.3}));
+  sign.position.set(gx+0.95,PORT.deckY+9.4,mz); grp.add(sign);
+  const amb=new THREE.MeshStandardMaterial({color:0xffc23a, emissive:0xffa018, emissiveIntensity:1.8, roughness:0.5});
+  for(const s of [-1,1]){ const bk=new THREE.Mesh(new THREE.SphereGeometry(0.4,10,8),amb); bk.position.set(gx,PORT.deckY+13.3,mz+s*(half-0.5)); grp.add(bk); }
+  const thr=new THREE.Mesh(new THREE.BoxGeometry(3.0,0.06,half*2), new THREE.MeshStandardMaterial({color:0xd8c25a, roughness:0.7, polygonOffset:true, polygonOffsetFactor:-3, polygonOffsetUnits:-3}));
+  thr.position.set(gx,PORT.deckY+0.12,mz); grp.add(thr);
+}
 function buildPort(){
   const grp=new THREE.Group(); scene.add(grp); portGroup=grp;
   const concrete=new THREE.MeshStandardMaterial({color:0x9a9a92,roughness:0.95,metalness:0,envMapIntensity:0.22});
@@ -7534,6 +7570,7 @@ function buildPort(){
     }
   }
   containerInstanced(grp, place);
+  buildPortGate(grp);   // drive-in entrance + signage at the landward edge
   // tall light masts
   for(let z=PORT.z0+40; z<PORT.z1; z+=90){ for(const xx of [PORT.edgeX-12, midX+8]){
     const mast=new THREE.Mesh(new THREE.CylinderGeometry(0.5,0.8,24,8),concDark); mast.position.set(xx,PORT.deckY+12,z); mast.castShadow=true; grp.add(mast);
@@ -8679,9 +8716,9 @@ function loadHeliModel(){
     let rm=null,best=-1,rmBox=null,rmFlat=0;
     root.traverse(function(o){ if(o.isMesh){ const b=new THREE.Box3().setFromObject(o), s=b.getSize(new THREE.Vector3());
       const flat=Math.max(s.x,s.z)/(s.y+0.03), sco=flat*Math.max(0.3,(b.min.y+b.max.y)/2); if(sco>best){best=sco; rm=o; rmBox=b; rmFlat=flat;} } });
-    let rotorY=bb.max.y-0.05, span=Math.max(sz.x,sz.z)*0.92;
-    if(rm && rmFlat>5){ rm.visible=false; rotorY=(rmBox.min.y+rmBox.max.y)/2; span=Math.max(rmBox.max.x-rmBox.min.x, rmBox.max.z-rmBox.min.z); }   // it really is a flat rotor → hide + replace
-    const rotor=new THREE.Group(); rotor.position.set(0,rotorY,0);
+    let rotorX=(bb.min.x+bb.max.x)/2, rotorZ=(bb.min.z+bb.max.z)/2, rotorY=bb.max.y-0.05, span=Math.max(sz.x,sz.z)*0.92;
+    if(rm && rmFlat>5){ rm.visible=false; rotorY=(rmBox.min.y+rmBox.max.y)/2; rotorX=(rmBox.min.x+rmBox.max.x)/2; rotorZ=(rmBox.min.z+rmBox.max.z)/2; span=Math.max(rmBox.max.x-rmBox.min.x, rmBox.max.z-rmBox.min.z); }   // centre the rotor on the actual mast (model bbox is pulled off-centre by the tail boom)
+    const rotor=new THREE.Group(); rotor.position.set(rotorX, rotorY, rotorZ + (bb.max.z-bb.min.z)*0.16);   // bias the mast forward over the cabin (bbox centre is pulled aft by the tail boom)
     const dk=new THREE.MeshStandardMaterial({color:0x202227, roughness:0.5, metalness:0.4, envMapIntensity:0.5});
     const hub=new THREE.Mesh(new THREE.CylinderGeometry(span*0.03,span*0.045,Math.max(0.12,span*0.05),10),dk); hub.castShadow=true; rotor.add(hub);
     for(let b=0;b<2;b++){ const bl=new THREE.Mesh(new THREE.BoxGeometry(span*0.05,Math.max(0.04,span*0.012),span),dk); bl.rotation.y=b*Math.PI/2; bl.castShadow=true; rotor.add(bl); }
@@ -8714,17 +8751,22 @@ function startCutscene(target){ if(!target||!target.interior) return; hideHeliMe
   pmode='cutscene'; avatar.visible=false; if(promptEl){promptEl.style.opacity='0';} SFX.heliStart&&SFX.heliStart(); SFX.heliRev&&SFX.heliRev(true);
   showCine(target.ship==='cruise ship'?'FLYING TO THE CRUISE SHIP':'FLYING TO THE YACHT'); }
 function updateCutscene(dt){ const c=cutscene; if(!c) return; c.t+=dt; const u=Math.min(1,c.t/c.dur); const tv=c.target.grp.position;
-  const aboveY=tv.y+38; let hx,hy,hz;
-  if(u<0.85){ const k=u/0.85, ek=k*k*(3-2*k); hx=c.sx+(tv.x-c.sx)*ek; hz=c.sz+(tv.z-c.sz)*ek; hy=c.sy+(aboveY-c.sy)*Math.sin(Math.min(1,k*1.25)*1.5708); }
-  else { const k=(u-0.85)/0.15; hx=tv.x; hz=tv.z; hy=aboveY+(tv.y+9-aboveY)*k; }
-  HELI.x=hx;HELI.y=hy;HELI.z=hz; HELI.heading=Math.atan2(tv.x-c.sx, tv.z-c.sz); HELI.pitch=-0.1; HELI.roll=0;
+  // landing target: a real helipad on the ship's top deck if it has one, else just above the deck
+  let lx=tv.x, lz=tv.z, landY=tv.y+9;
+  const pad=c.target.helipad;
+  if(pad){ const ry=c.target.grp.rotation.y, s=c.target.grp.scale.x||1, cs=Math.cos(ry), sn=Math.sin(ry);
+    lx=tv.x+(pad.x*cs+pad.z*sn)*s; lz=tv.z+(-pad.x*sn+pad.z*cs)*s; landY=tv.y+pad.y*s+0.6; }
+  const aboveY=Math.max(tv.y+38, landY+22); let hx,hy,hz;
+  if(u<0.85){ const k=u/0.85, ek=k*k*(3-2*k); hx=c.sx+(lx-c.sx)*ek; hz=c.sz+(lz-c.sz)*ek; hy=c.sy+(aboveY-c.sy)*Math.sin(Math.min(1,k*1.25)*1.5708); }
+  else { const k=(u-0.85)/0.15; hx=lx; hz=lz; hy=aboveY+(landY-aboveY)*k; }
+  HELI.x=hx;HELI.y=hy;HELI.z=hz; HELI.heading=Math.atan2(lx-c.sx, lz-c.sz); HELI.pitch=-0.1; HELI.roll=0;
   heli3d.position.set(hx,hy,hz); heli3d.rotation.set(HELI.pitch,HELI.heading,HELI.roll);
   if(heliRotor)heliRotor.rotation.y+=dt*26; if(heliTailRotor)heliTailRotor.rotation.x+=dt*36;
   const fx=Math.sin(HELI.heading),fz=Math.cos(HELI.heading), rx=fz,rz=-fx;
   if(u<0.25){ const a=gameT*0.6; camera.position.set(hx+Math.cos(a)*15, plateauY+5+(hy-plateauY)*0.3, hz+Math.sin(a)*15); camera.lookAt(hx,hy+1,hz); }
   else if(u<0.6){ camera.position.set(hx-fx*5+rx*17, hy+4, hz-fz*5+rz*17); camera.lookAt(hx+fx*8,hy-1,hz+fz*8); }
-  else if(u<0.85){ camera.position.set(tv.x+58,tv.y+34,tv.z+60); camera.lookAt((hx+tv.x)/2,(hy+tv.y)/2,(hz+tv.z)/2); }
-  else { camera.position.set(tv.x+22,tv.y+20,tv.z+25); camera.lookAt(hx,hy+1,hz); }
+  else if(u<0.85){ camera.position.set(tv.x+58,Math.max(tv.y+34,landY+10),tv.z+60); camera.lookAt((hx+lx)/2,(hy+landY)/2,(hz+lz)/2); }
+  else { camera.position.set(lx+22,landY+13,lz+25); camera.lookAt(hx,hy,hz); }
   camera.fov=52; camera.updateProjectionMatrix();
   if(c.t>=c.dur || cutsceneSkip) endCutscene();
 }
@@ -8732,7 +8774,11 @@ function endCutscene(){ const tgt=cutscene.target; cutscene=null; cutsceneSkip=f
   tgt.anchored=true; tgt.grp.rotation.x=0; tgt.grp.rotation.z=0; if(tgt.interior)tgt.interior.visible=true;
   aboard={entry:tgt,deckY:tgt.iDeckY,bounds:tgt.iBounds.slice(),exit:tgt.iExit.slice(),lx:tgt.iSpawn[0],lz:tgt.iSpawn[1],lh:0,sp:0,step:0,via:'heli'};
   pmode='aboard'; avatar.visible=false;
-  HELI.x=tgt.grp.position.x; HELI.z=tgt.grp.position.z; HELI.y=tgt.grp.position.y+(tgt.iDeckY*(tgt.grp.scale.x||1))+1.2; HELI.heading=tgt.grp.rotation.y; HELI.fwd=0; HELI.vy=0;
+  const _s=tgt.grp.scale.x||1;
+  if(tgt.helipad){ const ry=tgt.grp.rotation.y, cs=Math.cos(ry), sn=Math.sin(ry), p=tgt.helipad;   // park the heli on the pad it landed on
+    HELI.x=tgt.grp.position.x+(p.x*cs+p.z*sn)*_s; HELI.z=tgt.grp.position.z+(-p.x*sn+p.z*cs)*_s; HELI.y=tgt.grp.position.y+p.y*_s+0.5; HELI.heading=ry; }
+  else { HELI.x=tgt.grp.position.x; HELI.z=tgt.grp.position.z; HELI.y=tgt.grp.position.y+(tgt.iDeckY*_s)+1.2; HELI.heading=tgt.grp.rotation.y; }
+  HELI.fwd=0; HELI.vy=0;
   heli3d.position.set(HELI.x,HELI.y,HELI.z); heli3d.rotation.set(0,HELI.heading,0);
   toast('Arrived — explore the '+tgt.ship+' (mouse to look)','#aef0ff'); }
 // ---- helipad menu ----
@@ -9009,6 +9055,7 @@ const cam={ yaw:0, pitch:0.0, dist:1.0, drag:false, px:0, py:0, lastDrag:-99 };
   dom.addEventListener('wheel', function(e){ cam.dist=THREE.MathUtils.clamp(cam.dist*(1+(e.deltaY>0?1:-1)*0.09),0.45,3.4); cam.lastDrag=gameT; }, {passive:true});
   window.addEventListener('pointerup', function(){ cam.drag=false; });
   window.addEventListener('pointermove', function(e){ if(!cam.drag) return; const dx=e.clientX-cam.px, dy=e.clientY-cam.py; cam.px=e.clientX; cam.py=e.clientY;
+    if(typeof freecam!=='undefined' && freecam){ FC.yaw-=dx*0.005; FC.pitch=THREE.MathUtils.clamp(FC.pitch-dy*0.005,-1.45,1.45); cam.lastDrag=gameT; return; }   // free-cam mouse-look
     cam.yaw-=dx*0.006; cam.pitch=THREE.MathUtils.clamp(cam.pitch+dy*0.005,-0.35,1.15); cam.lastDrag=gameT; });
   window.addEventListener('keydown', function(e){ if(e.key==='c'||e.key==='C'){ cam.yaw=0; cam.pitch=0; cam.dist=1; } });
 })();
@@ -9024,7 +9071,7 @@ let freecam=false; const FC={x:0,y:40,z:0,yaw:0,pitch:-0.25};
 function toggleFreecam(){ if(!running && !freecam) return; freecam=!freecam; const btn=document.getElementById('freecamBtn'); if(btn) btn.classList.toggle('on',freecam);
   if(freecam){ FC.x=camera.position.x; FC.y=camera.position.y; FC.z=camera.position.z;
     const d=camera.getWorldDirection(new THREE.Vector3()); FC.yaw=Math.atan2(d.x,d.z); FC.pitch=Math.asin(THREE.MathUtils.clamp(d.y,-1,1));
-    toast('Free cam · WASD fly · R/F up·down · arrows look · Shift boost · V to exit','#aef0ff'); }
+    toast('Free cam · WASD fly · R/F up·down · drag or arrows to look · Shift boost · V to exit','#aef0ff'); }
   else toast('Free cam off','#aef0ff'); }
 function updateFreecam(dt){ const fast=keys['shift']?3.4:1, sp=48*fast*dt, rot=1.5*dt;
   if(keys['arrowleft'])FC.yaw+=rot; if(keys['arrowright'])FC.yaw-=rot;
