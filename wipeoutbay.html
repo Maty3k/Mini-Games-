@@ -7279,10 +7279,30 @@ function buildHelipadAndHeli(parent){
   for(const dx of [-2,2]){ const b=new THREE.Mesh(new THREE.BoxGeometry(1.1,0.06,5),hMat); b.position.set(HELIPAD.x+dx,HELIPAD.y+0.32,HELIPAD.z); parent.add(b); }
   const cross=new THREE.Mesh(new THREE.BoxGeometry(3.1,0.06,1.1),hMat); cross.position.set(HELIPAD.x,HELIPAD.y+0.32,HELIPAD.z); parent.add(cross);
   for(let a=0;a<8;a++){ const an=a/8*6.283; const lp=new THREE.Mesh(new THREE.SphereGeometry(0.16,8,6), new THREE.MeshStandardMaterial({color:0xffffff,emissive:0xffe27a,emissiveIntensity:1.8})); lp.position.set(HELIPAD.x+Math.cos(an)*8.7,HELIPAD.y+0.45,HELIPAD.z+Math.sin(an)*8.7); parent.add(lp); }
-  scene.add(heli3d); let parts={}; try{ parts=buildHelicopter(heli3d)||{}; }catch(e){ console.warn('heli build failed:',e.message); }
-  heliRotor=parts.rotor||null; heliTailRotor=parts.tailRotor||null;
+  scene.add(heli3d);
   HELI.x=HELIPAD.x; HELI.z=HELIPAD.z; HELI.y=HELIPAD.y+0.32; HELI.heading=Math.atan2(DOCK.dx,DOCK.dz);
   heli3d.position.set(HELI.x,HELI.y,HELI.z); heli3d.rotation.set(0,HELI.heading,0);
+  loadHeliModel();
+}
+// load the downloaded helicopter GLB, normalise it, and spin its rotor
+function loadHeliModel(){
+  _gltf.load('assets/models/vehicles/helicopter.glb', function(gl){
+    const root=gl.scene, wrap=new THREE.Group(); wrap.add(root);
+    let bb=new THREE.Box3().setFromObject(root), sz=bb.getSize(new THREE.Vector3());
+    if(sz.x>sz.z) root.rotation.y=Math.PI/2;                 // longest horizontal axis → +Z (nose)
+    wrap.updateMatrixWorld(true); bb=new THREE.Box3().setFromObject(root); sz=bb.getSize(new THREE.Vector3());
+    root.scale.multiplyScalar(9/(sz.z||1));                  // ~9 m long
+    wrap.updateMatrixWorld(true); bb=new THREE.Box3().setFromObject(root); const c=bb.getCenter(new THREE.Vector3());
+    root.position.x-=c.x; root.position.z-=c.z; root.position.y-=bb.min.y;   // centre X·Z, sit skids on y=0
+    root.traverse(function(o){ if(o.isMesh){ o.castShadow=true; o.receiveShadow=true; } });
+    // identify the rotor = widest/flattest/highest mesh, pivot it about its centre so it can spin
+    wrap.updateMatrixWorld(true); let rm=null,best=-1;
+    root.traverse(function(o){ if(o.isMesh){ const b=new THREE.Box3().setFromObject(o), s=b.getSize(new THREE.Vector3());
+      const flat=Math.max(s.x,s.z)/(s.y+0.05), sco=flat*Math.max(0.2,(b.min.y+b.max.y)/2); if(sco>best){best=sco; rm=o;} } });
+    if(rm){ const rc=new THREE.Box3().setFromObject(rm).getCenter(new THREE.Vector3());
+      const pivot=new THREE.Group(); rm.parent.add(pivot); pivot.position.copy(rm.parent.worldToLocal(rc.clone())); pivot.attach(rm); heliRotor=pivot; }
+    heli3d.add(wrap);
+  }, undefined, function(){ console.warn('heli model load failed — procedural fallback'); try{ const p=buildHelicopter(heli3d)||{}; heliRotor=p.rotor||null; heliTailRotor=p.tailRotor||null; }catch(e){} });
 }
 function heliGround(x,z){ return Math.max(landH(x,z), seaY(x,z,gameT))+0.05; }
 function updateHeli(dt){
