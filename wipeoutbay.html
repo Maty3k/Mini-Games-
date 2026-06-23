@@ -227,6 +227,7 @@ const sandTex=loadTex('sand_diff.jpg',40), grassTex=loadTex('grass_diff.jpg',60)
 const landNor=texL.load('assets/textures/asphalt_nor.jpg'); landNor.wrapS=landNor.wrapT=THREE.RepeatWrapping;   // rock surface detail normal
 
 let WATER=null, seaU=null, started=false, treeProto=null, pierProto=null, built=false, pend=3;
+let cityGroup=null, terrainMesh=null, worldCulledState=false;   // for culling the outside world while aboard the cruise
 function assetReady(){ if(--pend===0 && !built){ built=true; buildWorld(); loadingEl.style.display='none'; } }
 new THREE.RGBELoader().load('assets/skies/sky_day.hdr', hdr=>{
   hdr.mapping=THREE.EquirectangularReflectionMapping; scene.background=hdr;
@@ -477,7 +478,7 @@ function buildAvenues(parent, treeSlots){
   }
 }
 function buildCity(){
-  const cx=CITY.x, cz=CITY.z, grp=new THREE.Group(); scene.add(grp);
+  const cx=CITY.x, cz=CITY.z, grp=new THREE.Group(); scene.add(grp); cityGroup=grp;
   computePlazas();
   buildStreets(grp);
   buildCauseway(grp);
@@ -8916,7 +8917,7 @@ function buildWorld(){
   const pos=tGeo.attributes.position;
   for(let i=0;i<pos.count;i++) pos.setY(i, landH(pos.getX(i),pos.getZ(i)));
   tGeo.computeVertexNormals();
-  const terrain=new THREE.Mesh(tGeo, makeTerrainMat()); terrain.receiveShadow=true; terrain.castShadow=true; scene.add(terrain);
+  const terrain=new THREE.Mesh(tGeo, makeTerrainMat()); terrain.receiveShadow=true; terrain.castShadow=true; scene.add(terrain); terrainMesh=terrain;
   buildTrees();
   buildCity();
 
@@ -10216,6 +10217,14 @@ function updateCruiseNPCs(dt){
     c.grp.position.set(c.lx,0,c.lz); c.grp.rotation.y=c.heading;
   }
 }
+// ---- hide the heavy outside world (city, port, terrain, ocean, other vessels) while you're inside the ship ----
+function cullOutsideWorld(on, cruiseEnt){
+  if(cityGroup) cityGroup.visible=!on;
+  if(terrainMesh) terrainMesh.visible=!on;
+  if(WATER) WATER.visible=!on;
+  if(typeof portGroup!=='undefined' && portGroup) portGroup.visible=!on;
+  if(typeof VESSELS3D!=='undefined') for(let i=0;i<VESSELS3D.length;i++){ if(VESSELS3D[i]!==cruiseEnt) VESSELS3D[i].grp.visible=!on; }
+}
 // ---- seated passengers on the pool loungers and theatre seats (static posed) ----
 function _seatPose(grp, lp, faceY, seatSurfaceY){
   grp.position.y = seatSurfaceY - 0.82;   // drop so the hips rest on the seat (hip pivot is 0.91 above feet)
@@ -10505,6 +10514,9 @@ function loop(now){
   updateTraffic(dt);
   updateNPCs(dt);
   if(pmode==='aboard' && aboard && aboard.entry && aboard.entry.ship==='cruise ship') updateCruiseNPCs(dt);
+  { const onShip = pmode==='aboard' && aboard && aboard.entry && aboard.entry.ship==='cruise ship';   // cull the outside world while inside — but keep it on the open pool deck (lz ~ -16..24), with a 4 m hysteresis band
+    const wc = onShip ? (worldCulledState ? !(aboard.lz>-18 && aboard.lz<26) : (aboard.lz<-22 || aboard.lz>30)) : false;
+    if(wc!==worldCulledState){ cullOutsideWorld(wc, onShip?aboard.entry:null); worldCulledState=wc; } }
   updateWaterTraffic(dt);
   updatePort(dt);
   if(pmode!=='boat') mooredBoatBob();
