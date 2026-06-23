@@ -6821,6 +6821,7 @@ function buildContainerShip(g){
 const PORT={ edgeX:CITY.x-308, faceX:CITY.x-462, z0:CITY.z-150, z1:CITY.z+150, deckY:15 };
 function onQuay(x,z){ return x<=PORT.edgeX+3 && x>=PORT.faceX-3 && z>=PORT.z0-3 && z<=PORT.z1+3; }
 const PORT_CRANES=[]; let portGroup=null;
+const PORT_TRUCKS=[]; let PORT_TRUCK_LOOP=null;
 const CCOLS=[0xb5462f,0x2f6fa0,0x3a7a4a,0x8a8f93,0xd98a2a,0xc9b042,0xcdc9bf,0x5a4030,0xb83a3a,0x356f86];
 function _ease(t){ return t*t*(3-2*t); }
 function _lv(a,b,t){ return a+(b-a)*t; }
@@ -6836,6 +6837,27 @@ function placePortShip(parent, x, z, yaw){
   const sg=new THREE.Group(); try{ buildContainerShip(sg); }catch(e){ console.warn('container ship failed:',e.message); return; }
   sg.position.set(x,0,z); sg.rotation.y=yaw||0; parent.add(sg);   // bow +Z (along the shore); waterline y=0
 }
+function buildTruck(g, col){
+  const cabMat=new THREE.MeshStandardMaterial({color:col,roughness:0.5,metalness:0.3,envMapIntensity:0.5});
+  const dark=new THREE.MeshStandardMaterial({color:0x202227,roughness:0.6,metalness:0.3});
+  const glass=new THREE.MeshStandardMaterial({color:0x14202a,emissive:0x16303e,emissiveIntensity:0.4,roughness:0.2,metalness:0.3});
+  function m(geo,mat,x,y,z){ const e=new THREE.Mesh(geo,mat); e.position.set(x,y,z); e.castShadow=true; g.add(e); return e; }
+  m(new THREE.BoxGeometry(2.5,2.6,3.2),cabMat,0,1.9,4.2);            // cab (faces +Z)
+  m(new THREE.BoxGeometry(2.3,1.1,0.12),glass,0,2.5,5.85);          // windscreen
+  m(new THREE.BoxGeometry(2.5,0.4,0.6),dark,0,0.9,6.1);            // bumper
+  m(new THREE.BoxGeometry(2.5,0.5,11),dark,0,0.95,-0.5);          // trailer bed
+  const cont=m(new THREE.BoxGeometry(2.44,2.55,12),new THREE.MeshStandardMaterial({color:CCOLS[(Math.random()*CCOLS.length)|0],roughness:0.72,metalness:0.1}),0,2.5,-1.0);
+  g.userData.cont=cont;
+  for(const wz of [4.6,1.5,-1.5,-4.5]) for(const wx of [-1.25,1.25]){ const w=new THREE.Mesh(new THREE.CylinderGeometry(0.62,0.62,0.45,10),dark); w.rotation.z=Math.PI/2; w.position.set(wx,0.6,wz); w.castShadow=true; g.add(w); }
+  return g;
+}
+function truckPos(s,L){
+  const w=L.X1-L.X0, h=L.Z1-L.Z0, P=2*(w+h); s=((s%P)+P)%P;
+  if(s<w) return {x:L.X0+s, z:L.Z0, h:Math.PI/2};
+  s-=w; if(s<h) return {x:L.X1, z:L.Z0+s, h:0};
+  s-=h; if(s<w) return {x:L.X1-s, z:L.Z1, h:-Math.PI/2};
+  s-=w; return {x:L.X0, z:L.Z1-s, h:Math.PI};
+}
 function buildPort(){
   const grp=new THREE.Group(); scene.add(grp); portGroup=grp;
   const concrete=new THREE.MeshStandardMaterial({color:0x9a9a92,roughness:0.95,metalness:0,envMapIntensity:0.22});
@@ -6849,8 +6871,8 @@ function buildPort(){
   for(const rr of [PORT.faceX+11, PORT.faceX+29]){ const rail=new THREE.Mesh(new THREE.BoxGeometry(1.0,0.4,lenZ),concDark); rail.position.set(rr,PORT.deckY+0.2,midZ); grp.add(rail); }
   // container yard (instanced colour boxes) on the landward portion
   const place=[], cw=2.44, cl=12, ch=2.59;
-  for(let gx=PORT.edgeX-6; gx>PORT.faceX+34; gx-=(cw+0.55)){
-    for(let gz=PORT.z0+12; gz<PORT.z1-cl; gz+=(cl+0.7)){
+  for(let gx=PORT.edgeX-8; gx>PORT.faceX+42; gx-=(cw+0.55)){
+    for(let gz=PORT.z0+16; gz<PORT.z1-cl-6; gz+=(cl+0.7)){
       if(Math.random()<0.2) continue;
       const tiers=1+(Math.random()*5|0);
       for(let t=0;t<tiers;t++) place.push({x:gx,y:PORT.deckY+ch/2+t*(ch+0.04),z:gz+cl/2,col:CCOLS[(Math.random()*CCOLS.length)|0]});
@@ -6875,6 +6897,12 @@ function buildPort(){
   // container ships: one at the berth being loaded, one anchored offshore
   placePortShip(grp, PORT.faceX-26, midZ, 0);
   placePortShip(grp, PORT.faceX-165, PORT.z1+70, 0.22);
+  // terminal trucks shuttling round the yard (loop runs under the cranes, past the stacks)
+  PORT_TRUCK_LOOP={ X0:PORT.faceX+18, X1:PORT.edgeX-3, Z0:PORT.z0+8, Z1:PORT.z1-8 };
+  const TCOLS=[0xd0d0cc,0x2f6fa0,0xc0392b,0xe0a020,0x3a7a4a,0x46506a], LP=PORT_TRUCK_LOOP, PER=2*((LP.X1-LP.X0)+(LP.Z1-LP.Z0));
+  for(let i=0;i<9;i++){ const tg=new THREE.Group(); tg.rotation.order='YXZ'; buildTruck(tg,TCOLS[i%TCOLS.length]); grp.add(tg);
+    if(tg.userData.cont) tg.userData.cont.visible=(i%3!==0);
+    PORT_TRUCKS.push({g:tg, s:i/9*PER, speed:7+Math.random()*5}); }
 }
 function updatePort(dt){
   for(let i=0;i<PORT_CRANES.length;i++){ const c=PORT_CRANES[i], p=c.parts; if(!p||!p.trolley) continue; c.t+=dt;
@@ -6890,6 +6918,7 @@ function updatePort(dt){
     p.trolley.position.x=tx; if(p.spreader) p.spreader.position.y=sy; if(c.box) c.box.visible=carry;
     if(p.cables && p.spreader){ const s=(-1.7-sy)/16.3; p.cables.scale.y=s; p.cables.position.y=(sy-0.9)/2+9.45*s; }
   }
+  if(PORT_TRUCK_LOOP){ for(let i=0;i<PORT_TRUCKS.length;i++){ const tk=PORT_TRUCKS[i]; tk.s+=tk.speed*dt; const q=truckPos(tk.s,PORT_TRUCK_LOOP); tk.g.position.set(q.x,PORT.deckY,q.z); tk.g.rotation.y=q.h; } }
 }
 
 function buildWorld(){
@@ -7917,7 +7946,7 @@ function loadHeliModel(){
   _gltf.load('assets/models/vehicles/helicopter.glb', function(gl){
     const root=gl.scene, wrap=new THREE.Group(); wrap.add(root);
     let bb=new THREE.Box3().setFromObject(root), sz=bb.getSize(new THREE.Vector3());
-    if(sz.x>sz.z) root.rotation.y=Math.PI/2;                 // longest horizontal axis → +Z (nose)
+    root.rotation.y = (sz.x>sz.z) ? -Math.PI/2 : Math.PI;    // longest horizontal axis → +Z, NOSE forward (was flying tail-first)
     wrap.updateMatrixWorld(true); bb=new THREE.Box3().setFromObject(root); sz=bb.getSize(new THREE.Vector3());
     root.scale.multiplyScalar(9/(sz.z||1));                  // ~9 m long
     wrap.updateMatrixWorld(true); bb=new THREE.Box3().setFromObject(root); const c=bb.getCenter(new THREE.Vector3());
