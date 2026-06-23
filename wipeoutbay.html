@@ -308,7 +308,8 @@ const GRID=48;   // city block spacing
 const pavementMat=new THREE.MeshStandardMaterial({color:0x8f9296, roughness:0.93, metalness:0, envMapIntensity:0.25});
 const roadMat=new THREE.MeshStandardMaterial({color:0x23262b, roughness:0.82, metalness:0, envMapIntensity:0.18});
 const roadLineMat=new THREE.MeshStandardMaterial({color:0xd8c25a, roughness:0.6, metalness:0});
-const sidewalkMat=new THREE.MeshStandardMaterial({color:0xb7b9bc, roughness:0.9, metalness:0, envMapIntensity:0.25});
+const sidewalkMat=new THREE.MeshStandardMaterial({color:0xcdccc6, roughness:0.92, metalness:0, envMapIntensity:0.28});
+const kerbMat=new THREE.MeshStandardMaterial({color:0x70726f, roughness:0.85, metalness:0, envMapIntensity:0.3});
 const parkMat=new THREE.MeshStandardMaterial({color:0x4f7d3a, roughness:0.95, metalness:0, envMapIntensity:0.2});
 const benchMat=new THREE.MeshStandardMaterial({color:0x6e4a2c, roughness:0.85});
 const lampPostMat=new THREE.MeshStandardMaterial({color:0x2c2f34, roughness:0.5, metalness:0.7, envMapIntensity:0.6});
@@ -365,7 +366,7 @@ function updateTraffic(dt){ const cx=CITY.x,cz=CITY.z, lane=3.0;
   for(const c of TRAFFIC){
     c.t += c.speed*dt/GRID;
     if(c.t>=1){ c.t-=1; c.si+=c.di; c.sj+=c.dj;                       // arrived at next node — choose a turn
-      const opts=[[c.di,c.dj],[c.dj,-c.di],[-c.dj,c.di]].filter(function(o){ const ni=c.si+o[0],nj=c.sj+o[1]; return ni>=NLO&&ni<=NHI&&nj>=NLO&&nj<=NHI; });
+      const opts=[[c.di,c.dj],[c.dj,-c.di],[-c.dj,c.di]].filter(function(o){ const ni=c.si+o[0],nj=c.sj+o[1]; if(ni<NLO||ni>NHI||nj<NLO||nj>NHI) return false; return !inPlaza(cx+(ni+0.5)*GRID, cz+(nj+0.5)*GRID); });
       const o=opts.length?opts[(Math.random()*opts.length)|0]:[-c.di,-c.dj]; c.di=o[0]; c.dj=o[1]; }
     const sx=cx+(c.si+0.5)*GRID, sz=cz+(c.sj+0.5)*GRID, tx=cx+(c.si+c.di+0.5)*GRID, tz=cz+(c.sj+c.dj+0.5)*GRID;
     const rx=c.dj, rz=-c.di;                                          // right of travel → lane offset
@@ -373,21 +374,80 @@ function updateTraffic(dt){ const cx=CITY.x,cz=CITY.z, lane=3.0;
     c.grp.position.set(c.x, plateauY, c.z); c.grp.rotation.y=c.heading;
   }
 }
+// ---- plazas (open paved squares the landmarks sit in, no roads through them) ----
+const LM_PLAZAS=[];   // {x,z (world), r}
+function computePlazas(){ LM_PLAZAS.length=0;
+  for(const L of LANDMARK_DEFS){ if(L.abs) continue;
+    L._px=Math.round(L.dx/GRID)*GRID; L._pz=Math.round(L.dz/GRID)*GRID;   // snap to a block centre so the plaza aligns to the grid
+    LM_PLAZAS.push({x:CITY.x+L._px, z:CITY.z+L._pz, r:(L.clear||20)+5}); }
+}
+function inPlaza(wx,wz){ for(const P of LM_PLAZAS){ if(Math.hypot(wx-P.x,wz-P.z)<P.r) return true; } return false; }
+// ---- diagonal boulevards (relative to CITY) that slash the square grid ----
+const AVENUES=[ {c:Math.cos(0.62), s:Math.sin(0.62), road:9, carve:16, len:300},
+                {c:Math.cos(2.42), s:Math.sin(2.42), road:8, carve:14, len:265} ];
+function avLat(rx,rz,a){ return Math.abs(-rx*a.s+rz*a.c); }
+function avAlong(rx,rz,a){ return rx*a.c+rz*a.s; }
+function inAvenueRoad(rx,rz){ for(const a of AVENUES){ if(avLat(rx,rz,a)<a.road && Math.abs(avAlong(rx,rz,a))<a.len) return true; } return false; }
+function inAvenueCarve(rx,rz){ for(const a of AVENUES){ if(avLat(rx,rz,a)<a.carve && Math.abs(avAlong(rx,rz,a))<a.len) return true; } return false; }
 function buildStreets(parent){
   const cx=CITY.x, cz=CITY.z, R=310, RW=12, GR=GRID;
   const pav=new THREE.Mesh(new THREE.CircleGeometry(R,56), pavementMat);
   pav.rotation.x=-Math.PI/2; pav.position.set(cx, plateauY+0.03, cz); pav.receiveShadow=true; parent.add(pav);
   const dashGeo=new THREE.BoxGeometry(0.4,0.02,3.4);
-  for(let i=-7;i<=6;i++){ const off=(i+0.5)*GR; if(Math.abs(off)>R-10) continue;
+  // subtract the plaza circles a grid line passes through → list of [a,b] spans to pave
+  function spans(off, half, vertical){
+    const cuts=[];
+    for(const P of LM_PLAZAS){ const pPerp=(vertical?P.x-cx:P.z-cz), pAlong=(vertical?P.z-cz:P.x-cx), dd=Math.abs(off-pPerp);
+      if(dd<P.r){ const h=Math.sqrt(P.r*P.r-dd*dd); cuts.push([pAlong-h,pAlong+h]); } }
+    cuts.sort(function(a,b){return a[0]-b[0];});
+    const segs=[]; let s=-half;
+    for(const c of cuts){ const b=Math.min(c[0],half); if(b>s+2) segs.push([s,b]); s=Math.max(s,c[1]); }
+    if(s<half-2) segs.push([s,half]); return segs;
+  }
+  function layRoad(off, vertical){ if(Math.abs(off)>R-10) return;
     const half=Math.sqrt(Math.max(1,(R-7)*(R-7)-off*off));
-    let r=new THREE.Mesh(new THREE.BoxGeometry(RW,0.14,half*2),roadMat); r.position.set(cx+off,plateauY+0.08,cz); r.receiveShadow=true; parent.add(r);
-    for(let s=-half+5;s<half-5;s+=7.5){ const d=new THREE.Mesh(dashGeo,roadLineMat); d.position.set(cx+off,plateauY+0.17,cz+s); parent.add(d); }
-    r=new THREE.Mesh(new THREE.BoxGeometry(half*2,0.14,RW),roadMat); r.position.set(cx,plateauY+0.08,cz+off); r.receiveShadow=true; parent.add(r);
-    for(let s=-half+5;s<half-5;s+=7.5){ const d=new THREE.Mesh(dashGeo,roadLineMat); d.rotation.y=Math.PI/2; d.position.set(cx+s,plateauY+0.17,cz+off); parent.add(d); }
+    for(const sp of spans(off,half,vertical)){ const len=sp[1]-sp[0], mid=(sp[0]+sp[1])/2;
+      const geo=vertical?new THREE.BoxGeometry(RW,0.14,len):new THREE.BoxGeometry(len,0.14,RW);
+      const r=new THREE.Mesh(geo,roadMat); r.position.set(cx+(vertical?off:mid),plateauY+0.08,cz+(vertical?mid:off)); r.receiveShadow=true; parent.add(r);
+      for(let s=sp[0]+5;s<sp[1]-5;s+=7.5){ const d=new THREE.Mesh(dashGeo,roadLineMat); if(!vertical)d.rotation.y=Math.PI/2;
+        d.position.set(cx+(vertical?off:s),plateauY+0.17,cz+(vertical?s:off)); parent.add(d); } }
+  }
+  for(let i=-7;i<=6;i++){ const off=(i+0.5)*GR; layRoad(off,true); layRoad(off,false); }
+  // ring road (roundabout) around each plaza so the grid roads that stop at the plaza reconnect
+  for(const P of LM_PLAZAS){
+    const ring=new THREE.Mesh(new THREE.RingGeometry(P.r-6,P.r+6,44), roadMat);
+    ring.rotation.x=-Math.PI/2; ring.position.set(P.x,plateauY+0.078,P.z); ring.receiveShadow=true; parent.add(ring);
+    const kerb=new THREE.Mesh(new THREE.RingGeometry(P.r-7.4,P.r-6,40), kerbMat);
+    kerb.rotation.x=-Math.PI/2; kerb.position.set(P.x,plateauY+0.1,P.z); parent.add(kerb);
+  }
+}
+// diagonal tree-lined boulevards laid over the grid (buildings are carved out of their corridor)
+function buildAvenues(parent, treeSlots){
+  const cx=CITY.x, cz=CITY.z;
+  for(const a of AVENUES){ const rotY=Math.atan2(a.c,a.s);
+    // cut the avenue where it passes through a plaza, so it opens into the square instead of overrunning the landmark
+    const cuts=[];
+    for(const P of LM_PLAZAS){ const px=P.x-cx, pz=P.z-cz, tc=px*a.c+pz*a.s, perp=Math.hypot(px-a.c*tc, pz-a.s*tc);
+      if(perp<P.r){ const h=Math.sqrt(P.r*P.r-perp*perp); cuts.push([tc-h,tc+h]); } }
+    cuts.sort(function(x,y){return x[0]-y[0];});
+    const segs=[]; let s=-a.len;
+    for(const c of cuts){ const b=Math.min(c[0],a.len); if(b>s+3) segs.push([s,b]); s=Math.max(s,c[1]); }
+    if(s<a.len-3) segs.push([s,a.len]);
+    for(const sp of segs){ const len=sp[1]-sp[0], mid=(sp[0]+sp[1])/2, mx=cx+a.c*mid, mz=cz+a.s*mid;
+      const road=new THREE.Mesh(new THREE.BoxGeometry(a.road*2,0.15,len),roadMat); road.position.set(mx,plateauY+0.1,mz); road.rotation.y=rotY; road.receiveShadow=true; parent.add(road);
+      for(const sg of [-1,1]){ const sw=new THREE.Mesh(new THREE.BoxGeometry(5,0.8,len),sidewalkMat);
+        sw.position.set(mx+(-a.s)*(a.road+2.5)*sg, plateauY+0.42-0.4, mz+a.c*(a.road+2.5)*sg); sw.rotation.y=rotY; sw.receiveShadow=true; parent.add(sw); } }
+    for(let t=-a.len+14;t<a.len-14;t+=11){ const tx=cx+a.c*t, tz=cz+a.s*t; if(inPlaza(tx,tz)) continue;
+      const d=new THREE.Mesh(new THREE.BoxGeometry(0.4,0.05,3),roadLineMat); d.rotation.y=rotY; d.position.set(tx,plateauY+0.19,tz); parent.add(d); }
+    for(let t=-a.len+18;t<a.len-18;t+=26){ const tx=cx+a.c*t, tz=cz+a.s*t; if(inPlaza(tx,tz)) continue;
+      for(const sg of [-1,1]){ if(Math.random()<0.7 && treeSlots) treeSlots.push({x:tx+(-a.s)*(a.road+4)*sg, z:tz+a.c*(a.road+4)*sg, s:0.6+Math.random()*0.25});
+        if(Math.random()<0.4){ const post=new THREE.Mesh(new THREE.CylinderGeometry(0.1,0.14,4,8),lampPostMat); post.position.set(tx+(-a.s)*(a.road+1.6)*sg,plateauY+2,tz+a.c*(a.road+1.6)*sg); post.castShadow=true; parent.add(post);
+          const lamp=new THREE.Mesh(new THREE.SphereGeometry(0.26,8,8),lampGlowMat); lamp.position.set(tx+(-a.s)*(a.road+1.6)*sg,plateauY+4,tz+a.c*(a.road+1.6)*sg); parent.add(lamp); } } }
   }
 }
 function buildCity(){
   const cx=CITY.x, cz=CITY.z, grp=new THREE.Group(); scene.add(grp);
+  computePlazas();
   buildStreets(grp);
   buildCauseway(grp);
   const csx=cx+DOCK.dx*312, csz=cz+DOCK.dz*312;                   // the car parks here, in the open by the dock
@@ -398,12 +458,16 @@ function buildCity(){
     const avLat=Math.abs((wx-cx)*DOCK.rx+(wz-cz)*DOCK.rz), avAlong=(wx-cx)*DOCK.dx+(wz-cz)*DOCK.dz;
     if(avLat<16 && avAlong>30) continue;                          // clear a harbour avenue from the dock into the city
     if(Math.hypot(wx-csx,wz-csz)<22) continue;                    // keep the car spot clear
-    if(LANDMARK_DEFS.some(function(L){return !L.abs && Math.hypot(wx-(cx+L.dx),wz-(cz+L.dz))<L.clear;})) continue;  // leave room for plateau landmarks
-    // raised sidewalk pad for this block — roads sink between pads, giving real curbs; buildings sit on it
-    const pad=new THREE.Mesh(new THREE.BoxGeometry(GRID-12,0.6,GRID-12),sidewalkMat);
-    pad.position.set(wx,plateauY+0.26-0.3,wz); pad.receiveShadow=true; grp.add(pad);
+    if(inPlaza(wx,wz)) continue;                                  // landmark plazas stay open
+    if(inAvenueCarve(wx-cx,wz-cz)) continue;                      // clear the diagonal boulevards
+    // raised sidewalk pad (light concrete) with a darker kerb lip at the road edge → clearly visible kerbs
+    const kerb=new THREE.Mesh(new THREE.BoxGeometry(GRID-11,0.66,GRID-11),kerbMat);
+    kerb.position.set(wx,plateauY+0.28-0.33,wz); kerb.receiveShadow=true; grp.add(kerb);
+    const pad=new THREE.Mesh(new THREE.BoxGeometry(GRID-12.4,0.72,GRID-12.4),sidewalkMat);
+    pad.position.set(wx,plateauY+0.34-0.36,wz); pad.receiveShadow=true; grp.add(pad);
     fillBlock(grp, wx, wz, cd, treeSlots);
   }
+  buildAvenues(grp, treeSlots);
   // street lamps + trees along the sidewalks at intersections
   for(let i=-5;i<=5;i++) for(let j=-5;j<=5;j++){
     const wx=cx+(i+0.5)*GRID, wz=cz+(j+0.5)*GRID; if(Math.hypot(wx-cx,wz-cz)>288) continue;
@@ -4260,7 +4324,7 @@ if(ud.bulbs && ud.bulbs.instanceColor){
 function buildLandmarks(parent){ const out=[]; const yaw=Math.atan2(-CITY.x,-CITY.z);
   LANDMARK_DEFS.forEach(function(L){ const g=new THREE.Group();
     try{ L.build(g); }catch(e){ console.warn('landmark '+L.name+' build failed:', e.message); return; }
-    const wx=L.abs?L.ax:(CITY.x+L.dx), wz=L.abs?L.az:(CITY.z+L.dz); g.position.set(wx, L.abs?(landH(wx,wz)-1.0):plateauY, wz);
+    const wx=L.abs?L.ax:(CITY.x+(L._px!=null?L._px:L.dx)), wz=L.abs?L.az:(CITY.z+(L._pz!=null?L._pz:L.dz)); g.position.set(wx, L.abs?(landH(wx,wz)-1.0):plateauY, wz);
     if(L.faceWater) g.rotation.y=yaw;
     parent.add(g);
     if(L.animate) out.push({g:g, fn:L.animate}); });
@@ -5769,7 +5833,7 @@ function buildNPCGraph(){
   const K=function(x,z){ return Math.round(x)+'_'+Math.round(z); };
   for(let i=-7;i<=6;i++)for(let j=-7;j<=6;j++){ const Xi=cx+(i+0.5)*GRID, Zj=cz+(j+0.5)*GRID;
     for(let sx=-1;sx<=1;sx+=2)for(let sz=-1;sz<=1;sz+=2){ const x=Xi+8.5*sx, z=Zj+8.5*sz;
-      if(Math.hypot(x-cx,z-cz)>290) continue; const k=K(x,z); if(key.has(k)) continue; key.set(k,NPC_NODES.length); NPC_NODES.push({x:x,z:z,adj:[]}); } }
+      if(Math.hypot(x-cx,z-cz)>290) continue; if(inPlaza(x,z)) continue; const k=K(x,z); if(key.has(k)) continue; key.set(k,NPC_NODES.length); NPC_NODES.push({x:x,z:z,adj:[]}); } }
   const offs=[31,-31,17,-17];
   for(const n of NPC_NODES){ for(const o of offs){
     let k=K(n.x+o,n.z); if(key.has(k)) n.adj.push(key.get(k));
