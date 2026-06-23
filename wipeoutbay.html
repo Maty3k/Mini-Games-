@@ -420,6 +420,10 @@ function buildStreets(parent){
     const kerb=new THREE.Mesh(new THREE.RingGeometry(P.r-7.4,P.r-6,40), kerbMat);
     kerb.rotation.x=-Math.PI/2; kerb.position.set(P.x,plateauY+0.1,P.z); parent.add(kerb);
   }
+  // city perimeter ring road — the outer grid roads end on the R-7 circle, so a ring there ties
+  // them all together instead of dead-ending at the shore
+  const pr=new THREE.Mesh(new THREE.RingGeometry(297,309,72), roadMat);
+  pr.rotation.x=-Math.PI/2; pr.position.set(cx,plateauY+0.078,cz); pr.receiveShadow=true; parent.add(pr);
 }
 // diagonal tree-lined boulevards laid over the grid (buildings are carved out of their corridor)
 function buildAvenues(parent, treeSlots){
@@ -459,7 +463,6 @@ function buildCity(){
     if(avLat<16 && avAlong>30) continue;                          // clear a harbour avenue from the dock into the city
     if(Math.hypot(wx-csx,wz-csz)<22) continue;                    // keep the car spot clear
     if(inPlaza(wx,wz)) continue;                                  // landmark plazas stay open
-    if(inAvenueCarve(wx-cx,wz-cz)) continue;                      // clear the diagonal boulevards
     // raised sidewalk pad (light concrete) with a darker kerb lip at the road edge → clearly visible kerbs
     const kerb=new THREE.Mesh(new THREE.BoxGeometry(GRID-11,0.66,GRID-11),kerbMat);
     kerb.position.set(wx,plateauY+0.28-0.33,wz); kerb.receiveShadow=true; grp.add(kerb);
@@ -467,7 +470,6 @@ function buildCity(){
     pad.position.set(wx,plateauY+0.34-0.36,wz); pad.receiveShadow=true; grp.add(pad);
     fillBlock(grp, wx, wz, cd, treeSlots);
   }
-  buildAvenues(grp, treeSlots);
   // street lamps + trees along the sidewalks at intersections
   for(let i=-5;i<=5;i++) for(let j=-5;j<=5;j++){
     const wx=cx+(i+0.5)*GRID, wz=cz+(j+0.5)*GRID; if(Math.hypot(wx-cx,wz-cz)>288) continue;
