@@ -6265,6 +6265,633 @@ function updateWaterTraffic(dt){
 }
 
 
+function buildGantryCrane(g){
+  // ---- materials ----
+  var teal   = new THREE.MeshStandardMaterial({color:0x1f8a8a, metalness:0.55, roughness:0.55});
+  var grey   = new THREE.MeshStandardMaterial({color:0x9aa3a8, metalness:0.6,  roughness:0.5});
+  var dark   = new THREE.MeshStandardMaterial({color:0x37404a, metalness:0.7,  roughness:0.45});
+  var white  = new THREE.MeshStandardMaterial({color:0xe8ecee, metalness:0.3,  roughness:0.6});
+  var yellow = new THREE.MeshStandardMaterial({color:0xf2c014, metalness:0.4,  roughness:0.5});
+  var black  = new THREE.MeshStandardMaterial({color:0x20242a, metalness:0.5,  roughness:0.6});
+  var cableM = new THREE.MeshStandardMaterial({color:0x14181c, metalness:0.4,  roughness:0.7});
+
+  function box(w,h,d,mat,x,y,z,rx,ry,rz){
+    var m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat);
+    m.position.set(x||0,y||0,z||0);
+    if(rx)m.rotation.x=rx; if(ry)m.rotation.y=ry; if(rz)m.rotation.z=rz;
+    m.castShadow=true; m.receiveShadow=true;
+    return m;
+  }
+  function cyl(rt,rb,h,mat,x,y,z,rx,ry,rz,seg){
+    var m=new THREE.Mesh(new THREE.CylinderGeometry(rt,rb,h,seg||8),mat);
+    m.position.set(x||0,y||0,z||0);
+    if(rx)m.rotation.x=rx; if(ry)m.rotation.y=ry; if(rz)m.rotation.z=rz;
+    m.castShadow=true; m.receiveShadow=true;
+    return m;
+  }
+
+  var LEGX=9, RAILZ=11, LEGTOP=50, BOOMY=53;
+
+  // ---- rails along Z (at x = ±9) ----
+  for(var rs=0; rs<2; rs++){
+    var rx = rs? LEGX : -LEGX;
+    g.add(box(2.2,0.5,2*RAILZ+8, dark, rx, 0.25, 0));
+    g.add(box(0.5,0.25,2*RAILZ+8, grey, rx, 0.6, 0)); // rail head
+  }
+
+  // ---- four main legs + A-frame portals on each Z side ----
+  // legs sit at x=±9, z=±11 (two portals across Z)
+  function leg(x,z){
+    // splayed tapered leg, slight inward lean modeled as vertical box stack
+    var grp=new THREE.Group();
+    grp.position.set(x,0,z);
+    // bogie
+    grp.add(box(3,1.4,3.2, dark, 0,0.9,0));
+    // main leg column
+    grp.add(box(1.6,LEGTOP,1.6, teal, 0, LEGTOP/2+1.4, 0));
+    // leg cap
+    grp.add(box(2.2,1.0,2.2, grey, 0, LEGTOP+1.4, 0));
+    g.add(grp);
+    return grp;
+  }
+  var legPos=[];
+  for(var zi=0; zi<2; zi++){
+    var lz = zi? RAILZ : -RAILZ;
+    for(var xi=0; xi<2; xi++){
+      var lx = xi? LEGX : -LEGX;
+      leg(lx,lz);
+      legPos.push([lx,lz]);
+    }
+  }
+
+  // ---- cross-bracing: X-braces between the two legs of each rail (along Z), per side ----
+  function xbrace(x){
+    var len=Math.sqrt((2*RAILZ)*(2*RAILZ)+(LEGTOP*0.7)*(LEGTOP*0.7));
+    var ang=Math.atan2(LEGTOP*0.7, 2*RAILZ);
+    var midY=LEGTOP*0.5+1.4;
+    var b1=box(0.5,0.5,len, grey, x, midY, 0);
+    b1.rotation.x = Math.PI/2 - ang;
+    g.add(b1);
+    var b2=box(0.5,0.5,len, grey, x, midY, 0);
+    b2.rotation.x = -(Math.PI/2 - ang);
+    g.add(b2);
+    // horizontal tie near top and mid
+    g.add(box(0.6,0.6,2*RAILZ, grey, x, LEGTOP-2, 0));
+    g.add(box(0.6,0.6,2*RAILZ, grey, x, midY, 0));
+  }
+  xbrace(LEGX); xbrace(-LEGX);
+
+  // ---- portal beams across X (connecting the two rails) at each Z portal ----
+  for(var pz=0; pz<2; pz++){
+    var zz = pz? RAILZ : -RAILZ;
+    g.add(box(2*LEGX,1.4,2.0, teal, 0, LEGTOP+1.2, zz));
+    // diagonal knee braces
+    var kl=box(0.6,0.6,Math.sqrt(LEGX*LEGX+8*8), grey, -LEGX/2, LEGTOP-3, zz, 0,0, Math.atan2(8,LEGX));
+    g.add(kl);
+    var kr=box(0.6,0.6,Math.sqrt(LEGX*LEGX+8*8), grey, LEGX/2, LEGTOP-3, zz, 0,0,-Math.atan2(8,LEGX));
+    g.add(kr);
+  }
+
+  // ---- A-frame apex (tower above legs) used to anchor the boom stay ----
+  var APEX_Y = LEGTOP+18, APEX_X=-3;
+  // two inclined towers rising from the two top corners on each side meeting at apex (per Z side)
+  function apexTower(z){
+    var grp=new THREE.Group();
+    // from front leg top (x=-9) up to apex
+    var dx1=APEX_X-(-LEGX), dy=APEX_Y-(LEGTOP+1.4);
+    var L1=Math.sqrt(dx1*dx1+dy*dy);
+    var t1=box(0.9,L1,0.9, teal, (-LEGX+APEX_X)/2, (LEGTOP+1.4+APEX_Y)/2, z, 0,0, -Math.atan2(dx1,dy));
+    grp.add(t1);
+    var dx2=APEX_X-(LEGX);
+    var L2=Math.sqrt(dx2*dx2+dy*dy);
+    var t2=box(0.9,L2,0.9, teal, (LEGX+APEX_X)/2, (LEGTOP+1.4+APEX_Y)/2, z, 0,0, -Math.atan2(dx2,dy));
+    grp.add(t2);
+    g.add(grp);
+  }
+  apexTower(RAILZ); apexTower(-RAILZ);
+  // apex cross tie
+  g.add(box(1.0,1.0,2*RAILZ+1, grey, APEX_X, APEX_Y, 0));
+  g.add(box(1.4,1.4,2*RAILZ+2, dark, APEX_X, APEX_Y+0.6, 0));
+
+  // ---- main BOOM (box girder) along X, at y=BOOMY ----
+  // waterside +X to 48, landside -X to -22 ; total length 70, center at x=13
+  var BOOM_MINX=-22, BOOM_MAXX=48, BOOM_LEN=BOOM_MAXX-BOOM_MINX, BOOM_CX=(BOOM_MINX+BOOM_MAXX)/2;
+  // twin girders along Z
+  for(var bg=0; bg<2; bg++){
+    var bz = bg? 4 : -4;
+    g.add(box(BOOM_LEN,2.2,1.4, teal, BOOM_CX, BOOMY, bz));
+  }
+  // top & bottom flange plates tying girders
+  g.add(box(BOOM_LEN,0.4,9, grey, BOOM_CX, BOOMY+1.1, 0));
+  g.add(box(BOOM_LEN,0.4,9, grey, BOOM_CX, BOOMY-1.1, 0));
+  // boom lattice diagonals (a few, along length on outer faces)
+  for(var d=0; d<14; d++){
+    var bx = BOOM_MINX+2 + d*(BOOM_LEN-4)/13;
+    var sgn=(d%2)?1:-1;
+    var db=box(0.4,0.4,5.5, grey, bx, BOOMY, 0, sgn*0.6,0,0);
+    g.add(db);
+  }
+  // rail rolled into boom underside for trolley (cosmetic)
+  g.add(box(BOOM_LEN,0.3,1.2, dark, BOOM_CX, BOOMY-1.3, 2.4));
+  g.add(box(BOOM_LEN,0.3,1.2, dark, BOOM_CX, BOOMY-1.3,-2.4));
+
+  // ---- diagonal stay / pendant from apex to outreach boom tip ----
+  function stay(tipX, mat){
+    var ax=APEX_X, ay=APEX_Y+0.6;
+    var dx=tipX-ax, dy=BOOMY+1.2-ay;
+    var L=Math.sqrt(dx*dx+dy*dy);
+    var s=cyl(0.22,0.22,L, mat, (ax+tipX)/2, (ay+BOOMY+1.2)/2, 0, 0,0, -Math.atan2(dx,dy),6);
+    g.add(s);
+  }
+  stay(46, dark);   // waterside outreach support
+  stay(-20, dark);  // landside backstay
+  // duplicate slightly offset in Z for a pair
+  (function(){
+    var ax=APEX_X, ay=APEX_Y+0.6, tipX=46;
+    for(var zz=-3; zz<=3; zz+=6){
+      var dx=tipX-ax, dy=BOOMY+1.2-ay, L=Math.sqrt(dx*dx+dy*dy);
+      var s=cyl(0.18,0.18,L, dark, (ax+tipX)/2, (ay+BOOMY+1.2)/2, zz, 0,0,-Math.atan2(dx,dy),6);
+      g.add(s);
+    }
+  })();
+
+  // ---- machinery house on landside top ----
+  var MH=new THREE.Group(); MH.position.set(-15, BOOMY+3.0, 0);
+  MH.add(box(12,5,11, dark, 0,0,0));
+  MH.add(box(12.4,0.6,11.4, grey, 0,2.8,0)); // roof cap
+  // windows
+  for(var w=-4; w<=4; w+=2){
+    MH.add(box(0.1,1.6,2.0, black, 6.05, 0.5, w));
+  }
+  g.add(MH);
+
+  // operator cab under landside boom (small)
+  var cab=new THREE.Group(); cab.position.set(-2, BOOMY-3.5, 5.5);
+  cab.add(box(3,2.6,3, white, 0,0,0));
+  cab.add(box(3.05,1.4,3.05, black, 0,0.2,0));
+  g.add(cab);
+
+  // ---- catwalk along boom (landside) ----
+  g.add(box(20,0.2,1.4, grey, -10, BOOMY-1.6, 3.2));
+  for(var rr=0; rr<6; rr++){
+    g.add(box(0.1,1.0,0.1, grey, -19+rr*4, BOOMY-1.0, 3.9));
+  }
+  g.add(box(20,0.1,0.1, grey, -10, BOOMY-0.5, 3.9));
+
+  // ladder on a leg
+  var lad=new THREE.Group(); lad.position.set(-LEGX-1.0, 0, -RAILZ);
+  for(var lr=0; lr<14; lr++){
+    lad.add(box(0.8,0.1,0.1, grey, 0, 3+lr*3.3, 0));
+  }
+  lad.add(box(0.1,LEGTOP,0.1, grey, -0.35, LEGTOP/2+2, 0));
+  lad.add(box(0.1,LEGTOP,0.1, grey, 0.35, LEGTOP/2+2, 0));
+  g.add(lad);
+
+  // nav / warning details
+  g.add(box(0.6,0.6,0.6, new THREE.MeshStandardMaterial({color:0xff3322, emissive:0x551100, metalness:0.3, roughness:0.6}), 48, BOOMY+2, 0));
+  g.add(box(1.0,3.0,1.0, yellow, APEX_X, APEX_Y+2.5, 0)); // mast on apex
+
+  // ============ TROLLEY ============
+  var trolley=new THREE.Group();
+  trolley.position.set(30, BOOMY-1.0, 0); // rides under the boom (~52)
+  trolley.add(box(3,2,3, yellow, 0,0,0));
+  trolley.add(box(3.4,0.5,3.4, dark, 0,1.1,0));
+  // wheels gripping boom rail
+  trolley.add(cyl(0.5,0.5,0.4, black, 0,1.0, 2.4, Math.PI/2,0,0,8));
+  trolley.add(cyl(0.5,0.5,0.4, black, 0,1.0,-2.4, Math.PI/2,0,0,8));
+  trolley.add(box(2.6,0.6,7, grey, 0,-1.0,0)); // hoist head plate (spans Z to spread cables)
+  g.add(trolley);
+
+  // ============ SPREADER ============ (child of trolley, hangs 18m below)
+  var spreader=new THREE.Group();
+  spreader.position.set(0,-18,0);
+  // flat rectangular frame: 13 long in Z, 2.6 wide in X, 0.8 tall
+  var SPL=13, SPW=2.6, SPH=0.8;
+  // perimeter beams
+  spreader.add(box(SPW,SPH,0.5, yellow, 0,0, SPL/2)); // +Z end
+  spreader.add(box(SPW,SPH,0.5, yellow, 0,0,-SPL/2)); // -Z end
+  spreader.add(box(0.5,SPH,SPL, yellow, SPW/2,0,0));  // +X side
+  spreader.add(box(0.5,SPH,SPL, yellow,-SPW/2,0,0));  // -X side
+  spreader.add(box(0.6,0.4,SPL*0.9, dark, 0,0.1,0));  // center spine
+  // twistlocks at 4 corners
+  var tl=[[SPW/2-0.3,SPL/2-0.3],[-(SPW/2-0.3),SPL/2-0.3],[SPW/2-0.3,-(SPL/2-0.3)],[-(SPW/2-0.3),-(SPL/2-0.3)]];
+  for(var t=0;t<4;t++){
+    spreader.add(box(0.5,0.6,0.5, black, tl[t][0],-SPH/2-0.2,tl[t][1]));
+  }
+  // head bar / sheave block on top
+  spreader.add(box(0.8,0.6,5, dark, 0,0.6,0));
+  trolley.add(spreader);
+
+  // ============ CABLES ============ (children of trolley, scalable in Y)
+  var cables=new THREE.Group();
+  // 4 cables from trolley underside (y≈-1.3) down to spreader corners (y≈-18)
+  // model each as unit-ish cylinder we can scale.y ; build at full length here
+  var topY=-1.3, botY=-17.6, clen=topY-botY; // 16.3
+  var corners=[[1.0,4.5],[-1.0,4.5],[1.0,-4.5],[-1.0,-4.5]];
+  for(var c=0;c<4;c++){
+    var cb=cyl(0.08,0.08,clen, cableM, corners[c][0],(topY+botY)/2,corners[c][1],0,0,0,5);
+    cables.add(cb);
+  }
+  trolley.add(cables);
+
+  return { trolley:trolley, spreader:spreader, cables:cables, boomMinX:BOOM_MINX+1.5, boomMaxX:BOOM_MAXX-1.5, hoistTopY:-2, hoistBotY:-40 };
+}
+function buildContainerShip(g){
+  // ---- shared materials (PBR, tasteful) ----
+  var matBoot = new THREE.MeshStandardMaterial({ color:0x7a1f1f, roughness:0.7, metalness:0.3 }); // red boot below waterline
+  var matTopside = new THREE.MeshStandardMaterial({ color:0x14181d, roughness:0.55, metalness:0.6 }); // black topside steel
+  var matDeck = new THREE.MeshStandardMaterial({ color:0x3a4148, roughness:0.85, metalness:0.4 });
+  var matWhite = new THREE.MeshStandardMaterial({ color:0xe9ecef, roughness:0.6, metalness:0.1 }); // accommodation
+  var matWindow = new THREE.MeshStandardMaterial({ color:0x10141a, roughness:0.2, metalness:0.5, emissive:0x0a1622, emissiveIntensity:0.4 });
+  var matFunnel = new THREE.MeshStandardMaterial({ color:0x2b2f33, roughness:0.55, metalness:0.55 });
+  var matBand = new THREE.MeshStandardMaterial({ color:0xc8432a, roughness:0.6, metalness:0.2 }); // funnel band
+  var matMast = new THREE.MeshStandardMaterial({ color:0xb0b4b8, roughness:0.5, metalness:0.7 });
+  var matCell = new THREE.MeshStandardMaterial({ color:0x55606a, roughness:0.7, metalness:0.6 }); // cell guides
+  var matHatch = new THREE.MeshStandardMaterial({ color:0x4a4036, roughness:0.85, metalness:0.3 });
+  var matCrane = new THREE.MeshStandardMaterial({ color:0xd6a52a, roughness:0.55, metalness:0.5 }); // crane steel (yellow)
+  var matCable = new THREE.MeshStandardMaterial({ color:0x20242a, roughness:0.5, metalness:0.6 }); // hoist ropes
+  var matSpreader = new THREE.MeshStandardMaterial({ color:0xc0392b, roughness:0.6, metalness:0.3 }); // spreader bar
+
+  function add(mesh, cast, rec){
+    mesh.castShadow = cast !== false;
+    mesh.receiveShadow = rec !== false;
+    g.add(mesh);
+    return mesh;
+  }
+  function box(w,h,d, mat){ return new THREE.Mesh(new THREE.BoxGeometry(w,h,d), mat); }
+
+  // ============================================================
+  // HULL
+  // ============================================================
+  // Main hull body (topside, above-ish steel) — length 260 (Z), beam 40 (X)
+  var HULL_LEN = 256, BEAM = 40;
+
+  // Below-waterline boot section (hull bottom), tapered look with a few boxes
+  var bootMain = add(box(BEAM-2, 11, HULL_LEN-20, matBoot));
+  bootMain.position.set(0, -5.5, 0);
+
+  // Topside (black) above waterline up to main deck (deck at y ~ 13)
+  var topside = add(box(BEAM, 13, HULL_LEN-16, matTopside));
+  topside.position.set(0, 6.5, 0);
+
+  // Slight tumblehome / chamfer strakes along the sides (thin black boxes)
+  for (var s=-1; s<=1; s+=2){
+    var strake = add(box(1.2, 13, HULL_LEN-16, matTopside));
+    strake.position.set(s*(BEAM/2+0.2), 5.5, 0);
+    strake.rotation.z = s*0.06;
+  }
+
+  // Main deck surface
+  var deck = add(box(BEAM-1.5, 1.2, HULL_LEN-16, matDeck));
+  deck.position.set(0, 13.2, 0);
+
+  // --- Bow: taper the front into a stem ---
+  // Forward wedge sections (decreasing beam toward +Z bow)
+  var bowZ = (HULL_LEN-16)/2;
+  var bowSteps = 5;
+  for (var b=0; b<bowSteps; b++){
+    var t = b/bowSteps;
+    var w = (BEAM) * (1 - t*0.85);
+    var segLen = 4.5;
+    var segBoot = add(box(Math.max(2, w-2), 11, segLen, matBoot));
+    segBoot.position.set(0, -5.5, bowZ + b*segLen + segLen/2);
+    var segTop = add(box(Math.max(2, w), 13, segLen, matTopside));
+    segTop.position.set(0, 6.5, bowZ + b*segLen + segLen/2);
+  }
+  // Bulbous bow (below waterline)
+  var bulb = add(new THREE.Mesh(new THREE.SphereGeometry(5, 16, 12), matBoot));
+  bulb.scale.set(1, 0.9, 1.8);
+  bulb.position.set(0, -5, bowZ + bowSteps*4.5 + 2);
+
+  // --- Transom (aft flat) ---
+  var transom = add(box(BEAM, 13, 2, matTopside));
+  transom.position.set(0, 6.5, -(HULL_LEN-16)/2 - 1);
+  var transomBoot = add(box(BEAM-2, 11, 2, matBoot));
+  transomBoot.position.set(0, -5.5, -(HULL_LEN-16)/2 - 1);
+
+  // Boot stripe (waterline highlight line)
+  var stripe = new THREE.Mesh(new THREE.BoxGeometry(BEAM+0.4, 0.8, HULL_LEN-16), new THREE.MeshStandardMaterial({ color:0xe8e8e8, roughness:0.6, metalness:0.2 }));
+  stripe.position.set(0, 0.4, 0);
+  add(stripe);
+
+  // ============================================================
+  // FORECASTLE + MAST (bow)
+  // ============================================================
+  var foreZ = bowZ + 2;
+  var foreDeck = add(box(BEAM-10, 4, 18, matTopside));
+  foreDeck.position.set(0, 15.5, foreZ);
+  // bulwark rail rim
+  var foreRail = add(box(BEAM-8, 1.2, 18, matDeck));
+  foreRail.position.set(0, 17.6, foreZ);
+  // foremast
+  var foremast = add(new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.8, 18, 10), matMast));
+  foremast.position.set(0, 26, foreZ-2);
+  var foreYard = add(box(10, 0.6, 0.6, matMast));
+  foreYard.position.set(0, 31, foreZ-2);
+  // anchor windlass blocks
+  for (var aw=-1; aw<=1; aw+=2){
+    var wl = add(box(3, 2, 3, matDeck));
+    wl.position.set(aw*7, 16.5, foreZ+6);
+  }
+
+  // ============================================================
+  // CARGO AREA — container bays with cell guides
+  // ============================================================
+  // Container module sizes (approx scaled): 40ft container ~ 12 long x 2.6 wide x 2.6 high
+  var CW = 2.55, CH = 2.7, CL = 12;
+  var deckTop = 13.8;
+
+  // Color palette for containers
+  var contColors = [0x9c3b2e, 0x2f5fa8, 0x2f8a4e, 0x808890, 0xd07c2a, 0xb0392f, 0x356a9c, 0x7a8088];
+  var contMats = [];
+  for (var c=0; c<contColors.length; c++){
+    contMats.push(new THREE.MeshStandardMaterial({ color:contColors[c], roughness:0.8, metalness:0.25 }));
+  }
+  var containerGeo = new THREE.BoxGeometry(CW, CH, CL);
+
+  // Layout: cargo region runs from just aft of forecastle to forward of bridge
+  // bridge sits around z=-90, so cargo from z=-72 to z = bowZ-12
+  var cargoFwd = bowZ - 12;       // forward edge
+  var cargoAft = -74;             // aft edge near bridge
+  var rowsX = 13;                 // containers across beam
+  var startX = -(rowsX-1)/2 * CW;
+  var baySpacingZ = CL + 1.2;     // gap between bays
+  var firstBayZ = cargoAft + CL/2;
+
+  var bayCount = Math.floor((cargoFwd - cargoAft) / baySpacingZ);
+
+  for (var bay=0; bay<bayCount; bay++){
+    var bz = firstBayZ + bay*baySpacingZ;
+    // taper stack height near the bow for a sheer look
+    var distFromBow = (cargoFwd - bz);
+    var maxStack = (distFromBow < 24) ? 4 : ((distFromBow < 48) ? 5 : 6);
+
+    // cell guide structure (vertical posts framing the bay)
+    for (var gx=0; gx<=rowsX; gx+=1){
+      if (gx%2!==0 && gx!==rowsX) continue; // every other to keep tris down
+      var px = startX - CW/2 + gx*CW;
+      var guide = add(box(0.35, maxStack*CH + 1, 0.35, matCell), true, true);
+      guide.position.set(px, deckTop + (maxStack*CH)/2, bz);
+    }
+    // hatch coaming base under the bay
+    var coam = add(box(rowsX*CW + 1, 1.4, CL + 0.6, matHatch));
+    coam.position.set(0, deckTop + 0.7, bz);
+
+    // stacks of containers
+    for (var col=0; col<rowsX; col++){
+      var cx = startX + col*CW;
+      // edge columns slightly shorter for a stepped silhouette
+      var colStack = maxStack;
+      if (col===0 || col===rowsX-1) colStack = Math.max(2, maxStack-2);
+      else if (col===1 || col===rowsX-2) colStack = Math.max(3, maxStack-1);
+      for (var lvl=0; lvl<colStack; lvl++){
+        // pseudo-random but deterministic colour pick
+        var ci = ((bay*7 + col*3 + lvl*5) % contMats.length);
+        var cont = add(new THREE.Mesh(containerGeo, contMats[ci]), true, true);
+        cont.position.set(cx, deckTop + 1.4 + CH/2 + lvl*CH, bz);
+      }
+    }
+  }
+
+  // Lashing bridge / catwalk along centreline of cargo
+  var catwalk = add(box(2.4, 0.4, cargoFwd - cargoAft, matMast));
+  catwalk.position.set(0, deckTop + 1.0, (cargoFwd + cargoAft)/2);
+
+  // ============================================================
+  // BRIDGE / ACCOMMODATION (aft, around z=-90)
+  // ============================================================
+  var bridgeZ = -90;
+  var bridgeW = 30, bridgeD = 18;
+  var deckCount = 7;
+  var deckH = 3.2;
+  var bridgeBaseY = 14.5;
+
+  // Stack the accommodation decks (each slightly stepped)
+  for (var d=0; d<deckCount; d++){
+    var dw = bridgeW - d*0.8;
+    var dd = bridgeD - d*0.6;
+    var dy = bridgeBaseY + d*deckH + deckH/2;
+    var lvlBlock = add(box(dw, deckH, dd, matWhite));
+    lvlBlock.position.set(0, dy, bridgeZ);
+    // window band (front + sides) — thin emissive strip
+    var winF = add(box(dw-2, 1.4, 0.3, matWindow), false, false);
+    winF.position.set(0, dy+0.2, bridgeZ + dd/2 + 0.05);
+    var winB = add(box(dw-2, 1.4, 0.3, matWindow), false, false);
+    winB.position.set(0, dy+0.2, bridgeZ - dd/2 - 0.05);
+    for (var ws=-1; ws<=1; ws+=2){
+      var winS = add(box(0.3, 1.4, dd-2, matWindow), false, false);
+      winS.position.set(ws*(dw/2+0.05), dy+0.2, bridgeZ);
+    }
+  }
+  // Bridge wings (top deck protrusions)
+  var topY = bridgeBaseY + deckCount*deckH;
+  for (var bw=-1; bw<=1; bw+=2){
+    var wing = add(box(6, deckH*0.9, 5, matWhite));
+    wing.position.set(bw*(bridgeW/2 + 2.5), topY - deckH/2, bridgeZ + 3);
+  }
+  // Monkey island / radar mast on top
+  var radarMast = add(new THREE.Mesh(new THREE.CylinderGeometry(0.4,0.5,8,8), matMast));
+  radarMast.position.set(0, topY + 4, bridgeZ);
+  var radar = add(box(5, 0.4, 0.6, matMast));
+  radar.position.set(0, topY + 7, bridgeZ);
+  radar.rotation.y = 0.5;
+
+  // ============================================================
+  // FUNNEL (behind bridge, with coloured band)
+  // ============================================================
+  var funnelZ = bridgeZ - 16;
+  var funnel = add(box(11, 22, 13, matFunnel));
+  funnel.position.set(0, 22, funnelZ);
+  // coloured bands
+  var band1 = add(box(11.4, 4, 13.4, matBand));
+  band1.position.set(0, 27, funnelZ);
+  var band2 = add(box(11.4, 1.6, 13.4, matWhite));
+  band2.position.set(0, 23, funnelZ);
+  // exhaust pipes on top
+  for (var ep=-1; ep<=1; ep+=2){
+    var pipe = add(new THREE.Mesh(new THREE.CylinderGeometry(1.0,1.1,4,10), matMast));
+    pipe.position.set(ep*2.5, 35, funnelZ);
+  }
+
+  // Engine casing block between funnel and bridge
+  var casing = add(box(14, 10, 8, matWhite));
+  casing.position.set(0, 19, bridgeZ - 9);
+
+  // Aft mooring deck detail
+  var aftDeck = add(box(BEAM-8, 2, 12, matDeck));
+  aftDeck.position.set(0, 15.5, -(HULL_LEN-16)/2 + 6);
+
+  // Lifeboat davits (small) on bridge sides
+  for (var lb=-1; lb<=1; lb+=2){
+    var boat = add(box(2, 1.5, 6, matBand));
+    boat.position.set(lb*(bridgeW/2 + 2), bridgeBaseY + 6, bridgeZ - 6);
+  }
+
+  // ============================================================
+  // DECK GANTRY CRANE (spans the beam in X, hoists in Y)
+  // Builds the required return contract: a trolley that travels along the
+  // boom (X), with the spreader + hoist cables hanging beneath it (Y).
+  // ============================================================
+  var craneZ = -50;                 // sits over an aft cargo bay
+  var craneBaseY = deckTop + 1.4;   // foot of the gantry legs (on the hatch tops)
+  var craneSpan = BEAM + 4;         // boom spans the full beam plus overhang
+  var legH = 24;                    // height of the portal legs
+  var boomY = craneBaseY + legH;    // height of the boom (trolley rail)
+  var boomMinX = -(craneSpan/2) + 3;
+  var boomMaxX =  (craneSpan/2) - 3;
+
+  // four portal legs (2 sides x 2 rows along Z)
+  for (var lz=-1; lz<=1; lz+=2){
+    for (var lx=-1; lx<=1; lx+=2){
+      var leg = add(box(1.4, legH, 1.4, matCrane));
+      leg.position.set(lx*(craneSpan/2 - 2), craneBaseY + legH/2, craneZ + lz*5);
+    }
+  }
+  // cross-ties linking the leg tops along Z (one per side)
+  for (var tx=-1; tx<=1; tx+=2){
+    var sill = add(box(1.2, 1.2, 12, matCrane));
+    sill.position.set(tx*(craneSpan/2 - 2), boomY - 1.0, craneZ);
+  }
+  // the boom girder the trolley rides on (spans X)
+  var boom = add(box(craneSpan, 1.8, 3.0, matCrane));
+  boom.position.set(0, boomY, craneZ);
+  // a parallel lower rail for the trolley
+  var boomRail = add(box(craneSpan, 0.5, 4.2, matMast));
+  boomRail.position.set(0, boomY - 1.2, craneZ);
+
+  // ---- trolley (real THREE.Group) — travels along the boom in X ----
+  var trolley = new THREE.Group();
+  trolley.position.set(0, boomY - 1.6, craneZ);   // starts at centre of the boom
+  g.add(trolley);
+  var tbody = box(4.5, 1.6, 4.5, matCrane);
+  tbody.position.set(0, 0, 0);
+  tbody.castShadow = true; tbody.receiveShadow = true;
+  trolley.add(tbody);
+
+  // hoist geometry: spreader hangs ropeLen below the trolley
+  var ropeLen = 14;
+  var hoistTopY = boomY - 1.6;              // world Y of the rope tops (trolley underside)
+  var hoistBotY = hoistTopY - ropeLen;      // world Y of the spreader (fully lowered)
+
+  // ---- cables (real THREE.Group, parented UNDER the trolley) ----
+  var cables = new THREE.Group();
+  cables.position.set(0, 0, 0);
+  trolley.add(cables);
+  for (var rx=-1; rx<=1; rx+=2){
+    for (var rz=-1; rz<=1; rz+=2){
+      var rope = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, ropeLen, 6), matCable);
+      rope.position.set(rx*1.8, -ropeLen/2, rz*1.4);
+      rope.castShadow = true; rope.receiveShadow = false;
+      cables.add(rope);
+    }
+  }
+
+  // ---- spreader (real THREE.Group, parented UNDER the trolley) ----
+  var spreader = new THREE.Group();
+  spreader.position.set(0, -ropeLen, 0);   // hangs at the bottom of the ropes
+  trolley.add(spreader);
+  var sbar = box(CW*2 + 2.0, 0.7, CL*0.5, matSpreader);
+  sbar.position.set(0, 0, 0);
+  sbar.castShadow = true; sbar.receiveShadow = true;
+  spreader.add(sbar);
+  // a slung container under the spreader, for show
+  var slung = new THREE.Mesh(containerGeo, contMats[1]);
+  slung.scale.set(1, 1, 0.5);
+  slung.position.set(0, -CH/2 - 0.6, 0);
+  slung.castShadow = true; slung.receiveShadow = true;
+  spreader.add(slung);
+
+  // crane machinery house at one boom end
+  var craneHouse = add(box(5, 3.5, 5, matWhite));
+  craneHouse.position.set(boomMaxX - 2, boomY + 2.0, craneZ);
+
+  // Return the crane animation contract.
+  return {
+    trolley: trolley,
+    spreader: spreader,
+    cables: cables,
+    boomMinX: boomMinX,
+    boomMaxX: boomMaxX,
+    hoistTopY: hoistTopY,
+    hoistBotY: hoistBotY
+  };
+}
+
+// ===================== CONTAINER PORT (the other-end -X waterfront) =====================
+const PORT={ edgeX:CITY.x-308, faceX:CITY.x-462, z0:CITY.z-150, z1:CITY.z+150, deckY:15 };
+function onQuay(x,z){ return x<=PORT.edgeX+3 && x>=PORT.faceX-3 && z>=PORT.z0-3 && z<=PORT.z1+3; }
+const PORT_CRANES=[]; let portGroup=null;
+const CCOLS=[0xb5462f,0x2f6fa0,0x3a7a4a,0x8a8f93,0xd98a2a,0xc9b042,0xcdc9bf,0x5a4030,0xb83a3a,0x356f86];
+function _ease(t){ return t*t*(3-2*t); }
+function _lv(a,b,t){ return a+(b-a)*t; }
+function containerInstanced(parent, place){
+  const geo=new THREE.BoxGeometry(2.44,2.59,12);                 // X width, Y height, Z length (along the shore)
+  const mat=new THREE.MeshStandardMaterial({roughness:0.72,metalness:0.1,envMapIntensity:0.4});
+  const inst=new THREE.InstancedMesh(geo,mat,place.length); inst.castShadow=inst.receiveShadow=true; inst.frustumCulled=false;
+  const m=new THREE.Matrix4(),q=new THREE.Quaternion(),up=new THREE.Vector3(0,1,0),one=new THREE.Vector3(1,1,1),col=new THREE.Color();
+  for(let i=0;i<place.length;i++){ const p=place[i]; q.setFromAxisAngle(up,p.ry||0); m.compose(new THREE.Vector3(p.x,p.y,p.z),q,one); inst.setMatrixAt(i,m); inst.setColorAt(i,col.setHex(p.col)); }
+  inst.instanceMatrix.needsUpdate=true; if(inst.instanceColor)inst.instanceColor.needsUpdate=true; parent.add(inst); return inst;
+}
+function placePortShip(parent, x, z, yaw){
+  const sg=new THREE.Group(); try{ buildContainerShip(sg); }catch(e){ console.warn('container ship failed:',e.message); return; }
+  sg.position.set(x,0,z); sg.rotation.y=yaw||0; parent.add(sg);   // bow +Z (along the shore); waterline y=0
+}
+function buildPort(){
+  const grp=new THREE.Group(); scene.add(grp); portGroup=grp;
+  const concrete=new THREE.MeshStandardMaterial({color:0x9a9a92,roughness:0.95,metalness:0,envMapIntensity:0.22});
+  const concDark=new THREE.MeshStandardMaterial({color:0x6b6b64,roughness:0.9});
+  const paint=new THREE.MeshStandardMaterial({color:0xc9b83a,roughness:0.7});
+  const midX=(PORT.edgeX+PORT.faceX)/2, depthX=Math.abs(PORT.edgeX-PORT.faceX), midZ=(PORT.z0+PORT.z1)/2, lenZ=PORT.z1-PORT.z0;
+  const deck=new THREE.Mesh(new THREE.BoxGeometry(depthX,42,lenZ),concrete); deck.position.set(midX,PORT.deckY-21,midZ); deck.receiveShadow=true; grp.add(deck);
+  const face=new THREE.Mesh(new THREE.BoxGeometry(2,20,lenZ),concDark); face.position.set(PORT.faceX,PORT.deckY-8,midZ); grp.add(face);
+  for(let z=PORT.z0+8; z<PORT.z1; z+=14){ const b=new THREE.Mesh(new THREE.CylinderGeometry(0.5,0.6,1.7,10),concDark); b.position.set(PORT.faceX+2,PORT.deckY+0.85,z); b.castShadow=true; grp.add(b); }
+  const stripe=new THREE.Mesh(new THREE.BoxGeometry(0.6,0.06,lenZ),paint); stripe.position.set(PORT.faceX+4,PORT.deckY+0.06,midZ); grp.add(stripe);
+  for(const rr of [PORT.faceX+11, PORT.faceX+29]){ const rail=new THREE.Mesh(new THREE.BoxGeometry(1.0,0.4,lenZ),concDark); rail.position.set(rr,PORT.deckY+0.2,midZ); grp.add(rail); }
+  // container yard (instanced colour boxes) on the landward portion
+  const place=[], cw=2.44, cl=12, ch=2.59;
+  for(let gx=PORT.edgeX-6; gx>PORT.faceX+34; gx-=(cw+0.55)){
+    for(let gz=PORT.z0+12; gz<PORT.z1-cl; gz+=(cl+0.7)){
+      if(Math.random()<0.2) continue;
+      const tiers=1+(Math.random()*5|0);
+      for(let t=0;t<tiers;t++) place.push({x:gx,y:PORT.deckY+ch/2+t*(ch+0.04),z:gz+cl/2,col:CCOLS[(Math.random()*CCOLS.length)|0]});
+    }
+  }
+  containerInstanced(grp, place);
+  // tall light masts
+  for(let z=PORT.z0+40; z<PORT.z1; z+=90){ for(const xx of [PORT.edgeX-12, midX+8]){
+    const mast=new THREE.Mesh(new THREE.CylinderGeometry(0.5,0.8,24,8),concDark); mast.position.set(xx,PORT.deckY+12,z); mast.castShadow=true; grp.add(mast);
+    const hd=new THREE.Mesh(new THREE.BoxGeometry(5,0.6,1.4),concDark); hd.position.set(xx,PORT.deckY+24,z); grp.add(hd);
+    for(let lx=-1.8;lx<=1.8;lx+=1.8){ const lamp=new THREE.Mesh(new THREE.SphereGeometry(0.3,8,6),new THREE.MeshStandardMaterial({color:0xffffff,emissive:0xfff0c0,emissiveIntensity:1.5})); lamp.position.set(xx+lx,PORT.deckY+23.6,z); grp.add(lamp); }
+  }}
+  // gantry cranes along the seaward edge
+  const craneX=PORT.faceX+20, czs=[PORT.z0+45, PORT.z0+115, PORT.z0+185, PORT.z0+255];
+  for(let ci=0; ci<czs.length; ci++){
+    const cg=new THREE.Group(); let parts; try{ parts=buildGantryCrane(cg)||{}; }catch(e){ console.warn('crane failed:',e.message); continue; }
+    cg.rotation.y=Math.PI; cg.position.set(craneX,PORT.deckY,czs[ci]); grp.add(cg);     // boom reaches over the water
+    const cbox=new THREE.Mesh(new THREE.BoxGeometry(2.44,2.59,12), new THREE.MeshStandardMaterial({color:CCOLS[ci%CCOLS.length],roughness:0.72,metalness:0.1}));
+    cbox.position.set(0,-1.8,0); cbox.castShadow=true; cbox.visible=false; if(parts.spreader) parts.spreader.add(cbox);
+    PORT_CRANES.push({parts:parts, box:cbox, t:ci*3.4});
+  }
+  // container ships: one at the berth being loaded, one anchored offshore
+  placePortShip(grp, PORT.faceX-26, midZ, 0);
+  placePortShip(grp, PORT.faceX-165, PORT.z1+70, 0.22);
+}
+function updatePort(dt){
+  for(let i=0;i<PORT_CRANES.length;i++){ const c=PORT_CRANES[i], p=c.parts; if(!p||!p.trolley) continue; c.t+=dt;
+    const T=15, ph=(c.t%T)/T;
+    const bMax=(p.boomMaxX!=null?p.boomMaxX:44), bMin=(p.boomMinX!=null?p.boomMinX:-18);
+    const water=bMax-2, land=bMin+6, up=-5, down=-42; let tx,sy,carry=false;
+    if(ph<0.18){ tx=water; sy=_lv(up,down,_ease(ph/0.18)); }
+    else if(ph<0.28){ tx=water; sy=_lv(down,up,_ease((ph-0.18)/0.10)); carry=true; }
+    else if(ph<0.50){ tx=_lv(water,land,_ease((ph-0.28)/0.22)); sy=up; carry=true; }
+    else if(ph<0.62){ tx=land; sy=_lv(up,down,_ease((ph-0.50)/0.12)); carry=true; }
+    else if(ph<0.70){ tx=land; sy=_lv(down,up,_ease((ph-0.62)/0.08)); }
+    else { tx=_lv(land,water,_ease((ph-0.70)/0.30)); sy=up; }
+    p.trolley.position.x=tx; if(p.spreader) p.spreader.position.y=sy; if(c.box) c.box.visible=carry;
+    if(p.cables && p.spreader){ const s=(-1.7-sy)/16.3; p.cables.scale.y=s; p.cables.position.y=(sy-0.9)/2+9.45*s; }
+  }
+}
+
 function buildWorld(){
   // ---- terrain (islands + seabed) ----
   const TR=1900, TG=440;
@@ -6283,6 +6910,7 @@ function buildWorld(){
   buildJetski();
   buildWaterTraffic();
   buildHelipadAndHeli(scene);
+  buildPort();
   // pre-render the minimap base (bay silhouette)
   drawMapBase();
   // idle camera until START
@@ -6542,7 +7170,7 @@ const DOCK=(function(){ const d=new THREE.Vector2(-CITY.x,-CITY.z).normalize();
   return {cx:CITY.x,cz:CITY.z,dx:d.x,dz:d.y,rx:d.y,rz:-d.x,ang:Math.atan2(d.x,d.y),start:360,len:104,width:15,deckTop:3.35,endCd:464}; })();
 function onDock(x,z){ const ax=x-DOCK.cx,az=z-DOCK.cz, al=ax*DOCK.dx+az*DOCK.dz, lt=Math.abs(ax*DOCK.rx+az*DOCK.rz); return al>DOCK.start-3 && al<DOCK.endCd+3 && lt<DOCK.width/2; }
 function dockReach(x,z){ const ax=x-DOCK.cx,az=z-DOCK.cz, al=ax*DOCK.dx+az*DOCK.dz, lt=Math.abs(ax*DOCK.rx+az*DOCK.rz); return al>DOCK.start-8 && al<DOCK.endCd+8 && lt<DOCK.width/2+9; }
-function avatarGround(x,z){ return onDock(x,z)?DOCK.deckTop:landH(x,z); }
+function avatarGround(x,z){ return onQuay(x,z)?PORT.deckY:onDock(x,z)?DOCK.deckTop:landH(x,z); }
 // ===== DRIVABLE BOAT (board it from the dock) =====
 // TEMP model — replaced by the boat-design workflow output.
 function buildBoat(g, col){
@@ -7566,7 +8194,7 @@ function updateFoot(dt){
   const tgt=(fwd?2.0*(keys['shift']?2.6:1):0)-(bwd?1.3:0);   // walk ~7 km/h, jog (Shift) ~19 km/h
   AV.speed += (tgt-AV.speed)*Math.min(1,dt*9);
   const nx=AV.x+Math.sin(AV.heading)*AV.speed*dt, nz=AV.z+Math.cos(AV.heading)*AV.speed*dt;
-  if(onDock(nx,nz)||landH(nx,nz)>0.4){ AV.x=nx; AV.z=nz; } else AV.speed=0;   // don't walk into deep water
+  if(onDock(nx,nz)||onQuay(nx,nz)||landH(nx,nz)>0.4){ AV.x=nx; AV.z=nz; } else AV.speed=0;   // don't walk into deep water
   AV.y=avatarGround(AV.x,AV.z);
   AV.step += Math.abs(AV.speed)*dt*2.4;
   const sw=Math.sin(AV.step)*0.5*Math.min(1,Math.abs(AV.speed)/4), L=avatar.userData;
@@ -7790,6 +8418,7 @@ function loop(now){
   updateTraffic(dt);
   updateNPCs(dt);
   updateWaterTraffic(dt);
+  updatePort(dt);
   if(pmode!=='boat') mooredBoatBob();
   composer.render();
 }
