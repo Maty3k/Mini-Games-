@@ -6251,11 +6251,14 @@ function updateWaterTraffic(dt){
     if(!v.anchored){
       v.ang += (v.lin/v.rad)*dt;
       const x=v.cx+Math.cos(v.ang)*v.rad, z=v.cz+Math.sin(v.ang)*v.rad, sy=seaY(x,z,gameT);
-      v.grp.position.set(x, sy*v.bob, z);
+      v.grp.position.set(x, sy, z);                                     // waterline sits ON the water (was sy*bob → floated/sank)
       v.grp.rotation.y=Math.atan2(-Math.sin(v.ang), Math.cos(v.ang));   // face along the loop tangent
       const n=seaNormal(x,z,gameT);
       v.grp.rotation.x += ((-n.z*v.tilt) - v.grp.rotation.x)*Math.min(1,dt*3);
       v.grp.rotation.z += (( n.x*v.tilt) - v.grp.rotation.z)*Math.min(1,dt*3);
+    } else {
+      // anchored (boarded / arrived by cutscene): X·Z·heading frozen, but keep the hull on the moving water
+      v.grp.position.y += (seaY(v.grp.position.x, v.grp.position.z, gameT) - v.grp.position.y) * Math.min(1, dt*1.5);
     }
     if(v.rotor) v.rotor.rotation.y += dt*8;
   }
@@ -7701,7 +7704,15 @@ function loop(now){
   }
 
   // weather visuals
-  const FX=pmode==='foot'?AV.x:(pmode==='car'?CAR.x:B.x), FZ=pmode==='foot'?AV.z:(pmode==='car'?CAR.z:B.z);
+  // the water plane + sun + weather follow whatever the player is in/on, so you never leave the sea behind
+  let FX, FZ;
+  if(pmode==='foot'){ FX=AV.x; FZ=AV.z; }
+  else if(pmode==='car'){ FX=CAR.x; FZ=CAR.z; }
+  else if(pmode==='boat'){ FX=BOAT.x; FZ=BOAT.z; }
+  else if(pmode==='heli'){ FX=HELI.x; FZ=HELI.z; }
+  else if(pmode==='cutscene'){ FX=HELI.x; FZ=HELI.z; }
+  else if(pmode==='aboard' && aboard){ FX=aboard.entry.grp.position.x; FZ=aboard.entry.grp.position.z; }
+  else { FX=B.x; FZ=B.z; }
   rain.visible=storm>0.5; if(rain.visible){ rain.position.set(FX,0,FZ);
     for(let i=0;i<RN;i++){ rPos[i*3+1]-=(170+120*storm)*dt; rPos[i*3]+=20*dt;
       if(rPos[i*3+1]<0){ rPos[i*3+1]=240+Math.random()*30; rPos[i*3]=(Math.random()-0.5)*500; rPos[i*3+2]=(Math.random()-0.5)*500; } }
