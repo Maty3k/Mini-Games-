@@ -227,7 +227,7 @@ const sandTex=loadTex('sand_diff.jpg',40), grassTex=loadTex('grass_diff.jpg',60)
 const landNor=texL.load('assets/textures/asphalt_nor.jpg'); landNor.wrapS=landNor.wrapT=THREE.RepeatWrapping;   // rock surface detail normal
 
 let WATER=null, seaU=null, started=false, treeProto=null, pierProto=null, built=false, pend=3;
-let cityGroup=null, terrainMesh=null, worldCulledState=false;   // for culling the outside world while aboard the cruise
+let cityGroup=null, terrainMesh=null, worldCulledState=false, cruiseExtHidden=false;   // for culling the outside world + the ship's own exterior while aboard the cruise
 function assetReady(){ if(--pend===0 && !built){ built=true; buildWorld(); loadingEl.style.display='none'; } }
 new THREE.RGBELoader().load('assets/skies/sky_day.hdr', hdr=>{
   hdr.mapping=THREE.EquirectangularReflectionMapping; scene.background=hdr;
@@ -10226,6 +10226,11 @@ function cullOutsideWorld(on, cruiseEnt){
   if(typeof portGroup!=='undefined' && portGroup) portGroup.visible=!on;
   if(typeof VESSELS3D!=='undefined') for(let i=0;i<VESSELS3D.length;i++){ if(VESSELS3D[i]!==cruiseEnt) VESSELS3D[i].grp.visible=!on; }
 }
+// ---- hide the cruise's OWN solid exterior (hull + superstructure) while inside, so its tiers don't crush the interior ----
+function setCruiseExterior(ent, hidden){
+  if(!ent || !ent.grp) return; const ig=ent.interior;
+  for(let i=0;i<ent.grp.children.length;i++){ const ch=ent.grp.children[i]; if(ch!==ig) ch.visible=!hidden; }
+}
 // ---- seated passengers on the pool loungers and theatre seats (static posed) ----
 function _seatPose(grp, lp, faceY, seatSurfaceY){
   grp.position.y = seatSurfaceY - 0.82;   // drop so the hips rest on the seat (hip pivot is 0.91 above feet)
@@ -10534,9 +10539,12 @@ function loop(now){
   updateTraffic(dt);
   updateNPCs(dt);
   if(pmode==='aboard' && aboard && aboard.entry && aboard.entry.ship==='cruise ship') updateCruiseNPCs(dt);
-  { const onShip = pmode==='aboard' && aboard && aboard.entry && aboard.entry.ship==='cruise ship';   // cull the outside world while inside — but keep it on the open pool deck (lz ~ -16..24), with a 4 m hysteresis band
+  { const _ce = (typeof VESSELS3D!=='undefined') ? VESSELS3D.filter(function(v){return v.ship==='cruise ship';})[0] : null;
+    const onShip = pmode==='aboard' && aboard && aboard.entry===_ce;
+    if(onShip!==cruiseExtHidden){ if(_ce) setCruiseExterior(_ce, onShip); cruiseExtHidden=onShip; }   // hide the ship's solid exterior while aboard (its superstructure tiers overlap the interior)
+    // cull the outside world while inside — but keep it on the open pool deck (lz ~ -16..24), with a 4 m hysteresis band
     const wc = onShip ? (worldCulledState ? !(aboard.lz>-18 && aboard.lz<26) : (aboard.lz<-22 || aboard.lz>30)) : false;
-    if(wc!==worldCulledState){ cullOutsideWorld(wc, onShip?aboard.entry:null); worldCulledState=wc; } }
+    if(wc!==worldCulledState){ cullOutsideWorld(wc, onShip?_ce:null); worldCulledState=wc; } }
   updateWaterTraffic(dt);
   updatePort(dt);
   if(pmode!=='boat') mooredBoatBob();
