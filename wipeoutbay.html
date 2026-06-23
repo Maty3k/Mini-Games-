@@ -58,6 +58,20 @@
     letter-spacing:1px; opacity:0; transition:opacity .25s; text-shadow:0 3px 16px rgba(0,0,0,.6); }
   #prompt{ bottom:104px; left:50%; transform:translateX(-50%); font-size:15px; font-weight:700; letter-spacing:.4px; color:#eaf6ff;
     background:rgba(8,18,28,.62); border:1px solid rgba(255,255,255,.28); border-radius:30px; padding:11px 22px; opacity:0; transition:opacity .18s; }
+  /* helicopter menu */
+  #helimenu{ left:50%; top:50%; transform:translate(-50%,-50%); display:none; flex-direction:column; gap:10px; pointer-events:auto;
+    background:rgba(8,18,28,.82); border:1px solid rgba(120,200,255,.4); border-radius:18px; padding:22px 26px; min-width:300px; box-shadow:0 18px 60px rgba(0,0,0,.6); }
+  #helimenu .hm-title{ font-size:13px; font-weight:800; letter-spacing:2.5px; color:#8fd0ff; text-align:center; margin-bottom:6px; }
+  #helimenu .hm-btn{ font:inherit; font-size:16px; font-weight:700; color:#eaf6ff; text-align:left; cursor:pointer;
+    background:rgba(30,60,90,.5); border:1px solid rgba(255,255,255,.18); border-radius:12px; padding:13px 18px; transition:all .12s; }
+  #helimenu .hm-btn:hover{ background:rgba(60,120,180,.7); border-color:rgba(150,220,255,.7); transform:translateX(3px); }
+  #helimenu .hm-btn.cancel{ font-size:14px; color:#9fb3c2; text-align:center; background:transparent; border-color:rgba(255,255,255,.12); }
+  /* cinematic letterbox */
+  #cine{ position:fixed; inset:0; pointer-events:none; opacity:0; transition:opacity .4s; z-index:60; }
+  #cine .bar{ position:absolute; left:0; right:0; height:11vh; background:#000; }
+  #cine .bar.top{ top:0; } #cine .bar.bot{ bottom:0; }
+  #cine .skip{ position:absolute; bottom:13vh; right:28px; color:rgba(255,255,255,.7); font-size:12px; font-weight:700; letter-spacing:1.5px; }
+  #cine .cap{ position:absolute; bottom:13vh; left:28px; color:rgba(255,255,255,.85); font-size:15px; font-weight:700; letter-spacing:1px; }
   /* start / end overlay */
   #panel{ position:fixed; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:18px;
     background:radial-gradient(120% 90% at 50% 30%,rgba(8,20,32,.35),rgba(4,10,16,.82)); pointer-events:auto; color:#fff; text-align:center; }
@@ -100,6 +114,14 @@
   <div class="ui" id="mapwrap"><canvas id="map" width="172" height="172"></canvas></div>
   <div class="ui" id="toast"></div>
   <div class="ui" id="prompt"></div>
+  <div class="ui" id="helimenu">
+    <div class="hm-title">◢ HELIPAD ◣</div>
+    <button class="hm-btn" data-hm="pilot">🚁&nbsp;&nbsp;Pilot the helicopter</button>
+    <button class="hm-btn" data-hm="yacht">🛥&nbsp;&nbsp;Fly to the yacht</button>
+    <button class="hm-btn" data-hm="cruise">🚢&nbsp;&nbsp;Fly to the cruise ship</button>
+    <button class="hm-btn cancel" data-hm="cancel">✕ Cancel</button>
+  </div>
+  <div id="cine"><div class="bar top"></div><div class="bar bot"></div><div class="cap" id="cineCap"></div><div class="skip">PRESS&nbsp;&nbsp;SPACE&nbsp;&nbsp;TO&nbsp;SKIP</div></div>
 
   <div id="panel">
     <h1><span>WIPEOUT BAY</span></h1>
@@ -6257,6 +6279,7 @@ function buildWorld(){
   buildCourse();
   buildJetski();
   buildWaterTraffic();
+  buildHelipadAndHeli(scene);
   // pre-render the minimap base (bay silhouette)
   drawMapBase();
   // idle camera until START
@@ -6453,6 +6476,8 @@ const keys={};
 addEventListener('keydown',e=>{ const k=e.key.toLowerCase();
   if(['arrowup','arrowdown','arrowleft','arrowright',' '].includes(k))e.preventDefault();
   keys[k]=true; if(k==='enter'&&!running&&started) start();
+  if(typeof cutscene!=='undefined' && cutscene && (k===' '||k==='enter'||k==='escape')) cutsceneSkip=true;
+  if(typeof heliMenuOpen!=='undefined' && heliMenuOpen && k==='escape') hideHeliMenu();
   if(k==='r'&&running&&mode==='free'&&pmode==='ski') recenter();
   if(k==='f'&&running&&nearAction) doAction(nearAction); });
 addEventListener('keyup',e=>{ keys[e.key.toLowerCase()]=false; });
@@ -6983,6 +7008,332 @@ function updateAboard(dt){
   const sw=Math.sin(A.step)*0.5*Math.min(1,Math.abs(A.sp)/3), L=avatar.userData;
   if(L.legL){ L.legL.rotation.x=sw; L.legR.rotation.x=-sw; L.armL.rotation.x=-sw; L.armR.rotation.x=sw; }
 }
+// ============================================================
+//  HELICOPTER — city helipad, flyable heli, cinematic fly-to-ship cutscenes
+// ============================================================
+// placeholder model (replaced by the helicopter workflow)
+function buildHelicopter(g){
+  // ---- shared materials (Three.js r128, global THREE) ----
+  var matWhite = new THREE.MeshStandardMaterial({ color:0xf4f6f8, metalness:0.35, roughness:0.22 });
+  var matNavy  = new THREE.MeshStandardMaterial({ color:0x12203f, metalness:0.45, roughness:0.18 });
+  var matGlass = new THREE.MeshStandardMaterial({ color:0x0a1018, metalness:0.25, roughness:0.08, emissive:0x0a1c2e, emissiveIntensity:0.55 });
+  var matMatte = new THREE.MeshStandardMaterial({ color:0x141414, metalness:0.20, roughness:0.85 });
+  var matChrome= new THREE.MeshStandardMaterial({ color:0xc9ced6, metalness:1.0,  roughness:0.18 });
+  var matSteel = new THREE.MeshStandardMaterial({ color:0x6e7682, metalness:0.9,  roughness:0.35 });
+
+  function add(mesh, parent){
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    (parent || g).add(mesh);
+    return mesh;
+  }
+
+  // ====================================================================
+  // FUSELAGE — smooth teardrop cabin. Built from a lathed profile so it
+  // is rounded at the front (cockpit) and tapers toward the tail.
+  // Long axis is +Z (nose forward). Lathe spins about Y, so we build it
+  // lying along Y then rotate -90deg about X to lie along Z.
+  // ====================================================================
+  var fusePts = [];
+  // profile: x = radius, y = position along body (0 = tail end .. 1 = nose)
+  var prof = [
+    [0.00, 0.00],
+    [0.30, 0.18],
+    [0.62, 0.55],
+    [0.88, 1.10],
+    [1.05, 1.85],
+    [1.14, 2.70],
+    [1.16, 3.45],
+    [1.10, 4.15],
+    [0.95, 4.75],
+    [0.70, 5.20],
+    [0.40, 5.48],
+    [0.12, 5.62],
+    [0.00, 5.66]
+  ];
+  for (var i=0;i<prof.length;i++) fusePts.push(new THREE.Vector2(prof[i][0], prof[i][1]));
+  var fuseGeo = new THREE.LatheGeometry(fusePts, 22);
+  var fuselage = new THREE.Mesh(fuseGeo, matWhite);
+  fuselage.rotation.x = -Math.PI/2;       // long axis -> +Z, nose at +Z
+  fuselage.position.z = -2.55;            // centre body on Z (length ~5.66)
+  fuselage.position.y = 1.95;            // lift cabin above skids
+  fuselage.scale.set(1.0, 1.0, 0.92);   // slim it slightly in width
+  add(fuselage);
+
+  // Navy belly accent — a flattened sphere underside stripe
+  var bellyGeo = new THREE.SphereGeometry(1.18, 20, 12, 0, Math.PI*2, Math.PI*0.52, Math.PI*0.48);
+  var belly = new THREE.Mesh(bellyGeo, matNavy);
+  belly.position.set(0, 1.55, 0.4);
+  belly.scale.set(0.95, 1.05, 2.3);
+  add(belly);
+
+  // Navy roof spine accent (a slim raised cylinder — no capsule used)
+  var spine = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 3.6, 12), matNavy);
+  spine.rotation.x = Math.PI/2;
+  spine.position.set(0, 3.0, 0.2);
+  spine.scale.set(1.6, 1.0, 1.0);
+  add(spine);
+
+  // ====================================================================
+  // COCKPIT GLASS — rounded glass front wrapping the nose.
+  // ====================================================================
+  var glassGeo = new THREE.SphereGeometry(1.02, 22, 16, 0, Math.PI*2, 0, Math.PI*0.62);
+  var glass = new THREE.Mesh(glassGeo, matGlass);
+  glass.rotation.x = -Math.PI/2 - 0.18;
+  glass.position.set(0, 2.05, 2.35);
+  glass.scale.set(1.06, 1.55, 1.25);
+  add(glass);
+
+  // Lower chin windscreen panel
+  var chinGeo = new THREE.SphereGeometry(0.78, 18, 12, 0, Math.PI*2, Math.PI*0.46, Math.PI*0.34);
+  var chin = new THREE.Mesh(chinGeo, matGlass);
+  chin.position.set(0, 1.5, 2.5);
+  chin.scale.set(1.05, 1.2, 1.4);
+  add(chin);
+
+  // Side cabin windows (navy-framed dark glass) — two per side
+  function sideWindow(x, z){
+    var w = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.7, 0.95), matGlass);
+    w.position.set(x, 2.25, z);
+    add(w);
+  }
+  sideWindow( 1.12, 0.9); sideWindow( 1.12,-0.25);
+  sideWindow(-1.12, 0.9); sideWindow(-1.12,-0.25);
+
+  // ====================================================================
+  // TAIL BOOM — slim tapering boom from rear of cabin to the fin.
+  // ====================================================================
+  var boomGeo = new THREE.CylinderGeometry(0.42, 0.18, 4.6, 14);
+  var boom = new THREE.Mesh(boomGeo, matWhite);
+  boom.rotation.x = Math.PI/2;
+  boom.position.set(0, 2.5, -4.0);
+  add(boom);
+
+  // Navy boom stripe (thin overlay near the tail)
+  var boomStripe = new THREE.Mesh(new THREE.CylinderGeometry(0.21, 0.185, 1.4, 14), matNavy);
+  boomStripe.rotation.x = Math.PI/2;
+  boomStripe.position.set(0, 2.5, -5.6);
+  add(boomStripe);
+
+  // ====================================================================
+  // TAIL ASSEMBLY — fin, stabiliser, gearbox and tail rotor are all
+  // anchored to this group so the whole empennage can be repositioned in
+  // one place if the boom length is ever tweaked.
+  // ====================================================================
+  var tail = new THREE.Group();
+  g.add(tail);
+
+  // VERTICAL FIN. The extruded shape lies in local X (chord) & Y (height);
+  // the extrude depth (0.14) runs in local Z, making the fin naturally
+  // thin in Z and tall in Y — exactly what we want. No rotation needed.
+  var finShape = new THREE.Shape();
+  finShape.moveTo(0, 0);
+  finShape.lineTo(0.05, 1.55);
+  finShape.lineTo(0.9, 1.85);
+  finShape.lineTo(1.15, 1.25);
+  finShape.lineTo(0.7, 0.0);
+  finShape.lineTo(0, 0);
+  // depth 0.10 keeps the fin thin in Z; centre that depth on z=0 so the fin
+  // straddles the boom centreline and its rear face stays ahead of the
+  // navLight/stabiliser elements behind it.
+  var finGeo = new THREE.ExtrudeGeometry(finShape, { depth:0.10, bevelEnabled:false, steps:1 });
+  finGeo.translate(-0.07, 0, -0.05); // centre chord on X and depth on Z
+  var fin = new THREE.Mesh(finGeo, matNavy);
+  fin.position.set(0, 2.55, -6.35);  // fin spans z ~ -6.30 .. -6.40
+  add(fin, tail);
+
+  // Horizontal stabiliser (sits just ahead of the fin's leading edge)
+  var stab = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.08, 0.6), matWhite);
+  stab.position.set(0, 2.55, -6.05);
+  add(stab, tail);
+
+  // Tail-rotor gearbox housing (steel) on the +X side of the fin
+  var gearbox = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.3, 12), matSteel);
+  gearbox.rotation.z = Math.PI/2;
+  gearbox.position.set(0.46, 3.7, -6.45);
+  add(gearbox, tail);
+
+  // ====================================================================
+  // TAIL ROTOR — group spins about its local X. It is mounted on a short
+  // outrigger to the +X side of the fin so the 0.62-long blades, sweeping
+  // in the local Y-Z plane, clear the fin (chord ~ -6.30..-6.40 at x<0.5)
+  // and the slim boom without intersecting either.
+  // ====================================================================
+  var tailRotor = new THREE.Group();
+  var trHub = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.16, 10), matChrome);
+  trHub.rotation.z = Math.PI/2;        // hub axis along X
+  add(trHub, tailRotor);
+  for (var t=0;t<3;t++){
+    var bl = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.62, 0.12), matMatte);
+    bl.position.y = 0.34;
+    var pivot = new THREE.Group();
+    pivot.rotation.x = (t/3) * Math.PI*2;  // distribute in Y-Z plane (spins about X)
+    pivot.add(bl);
+    tailRotor.add(pivot);
+  }
+  // x=0.72: blade disc lives well clear of the fin (whose chord at this
+  // height tapers inboard of x~0.5) and of the boom centreline.
+  tailRotor.position.set(0.72, 3.7, -6.45);
+  tail.add(tailRotor);
+
+  // ====================================================================
+  // MAIN ROTOR MAST + LOW-PROFILE HUB + 5 BLADES.
+  // Returned `rotor` group spins about its local Y.
+  // ====================================================================
+  var mast = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.2, 0.7, 12), matSteel);
+  mast.position.set(0, 3.65, 0.2);
+  add(mast);
+
+  var rotor = new THREE.Group();
+  rotor.position.set(0, 4.0, 0.2);
+
+  // low-profile hub
+  var hub = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.42, 0.26, 16), matChrome);
+  add(hub, rotor);
+  var hubCap = new THREE.Mesh(new THREE.SphereGeometry(0.3, 14, 8, 0, Math.PI*2, 0, Math.PI*0.5), matSteel);
+  hubCap.position.y = 0.13;
+  add(hubCap, rotor);
+
+  // 5 blades + pitch links. Blade box spans x 0.15..5.55 (centre 2.85,
+  // width 5.4) — rooted just outside the hub with a tiny coning tilt.
+  for (var b=0;b<5;b++){
+    var ang = (b/5) * Math.PI*2;
+    var blade = new THREE.Mesh(new THREE.BoxGeometry(5.4, 0.07, 0.34), matMatte);
+    blade.position.set(2.85, 0.04, 0);
+    var bp = new THREE.Group();
+    bp.rotation.y = ang;
+    bp.rotation.z = 0.03;             // subtle blade coning
+    bp.add(blade);
+    // chrome pitch link / cuff at the root
+    var cuff = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.5, 8), matChrome);
+    cuff.rotation.z = Math.PI/2;
+    cuff.position.set(0.36, 0.04, 0);
+    bp.add(cuff);
+    rotor.add(bp);
+  }
+  g.add(rotor);
+
+  // ====================================================================
+  // LANDING SKIDS — tubular, resting at y=0.
+  // ====================================================================
+  function skid(side){
+    var grp = new THREE.Group();
+    // long tube
+    var tube = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.075, 4.0, 10), matSteel);
+    tube.rotation.x = Math.PI/2;
+    tube.position.set(0, 0.075, 0.1);
+    add(tube, grp);
+    // upturned front toe
+    var toe = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.06, 0.6, 10), matSteel);
+    toe.rotation.x = Math.PI/2 - 0.5;
+    toe.position.set(0, 0.18, 2.2);
+    add(toe, grp);
+    // two cross struts up to the belly
+    for (var s=0;s<2;s++){
+      var strut = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 1.55, 8), matSteel);
+      strut.position.set(0, 0.85, s===0 ? 0.95 : -0.85);
+      strut.rotation.x = (s===0) ? 0.12 : -0.12;
+      strut.rotation.z = (side>0) ? -0.32 : 0.32;
+      add(strut, grp);
+    }
+    grp.position.x = side * 1.0;
+    g.add(grp);
+  }
+  skid(1); skid(-1);
+
+  // ====================================================================
+  // NAVIGATION LIGHTS — emissive beads (red port / green starboard /
+  // white tail) + chrome landing-light fittings.
+  // ====================================================================
+  function navLight(x, y, z, col){
+    var m = new THREE.MeshStandardMaterial({ color:col, emissive:col, emissiveIntensity:1.4, roughness:0.4, metalness:0.0 });
+    var bead = new THREE.Mesh(new THREE.SphereGeometry(0.08, 8, 6), m);
+    bead.position.set(x, y, z);
+    add(bead);
+  }
+  navLight(-1.16, 2.2, 1.4, 0xff2222); // port (left) red
+  navLight( 1.16, 2.2, 1.4, 0x22ff44); // starboard (right) green
+  navLight( 0,    2.55,-6.55, 0xffffff); // tail white (just behind the fin tip)
+  navLight( 0,    3.0,  0.2, 0xff3030); // anti-collision beacon on roof
+
+  // chrome landing light fitting under the nose
+  var landLight = new THREE.Mesh(new THREE.SphereGeometry(0.12, 12, 8, 0, Math.PI*2, 0, Math.PI*0.5), matChrome);
+  landLight.rotation.x = Math.PI;
+  landLight.position.set(0, 1.35, 2.55);
+  add(landLight);
+
+  return { rotor: rotor, tailRotor: tailRotor };
+}
+const HELIPAD={ x:CITY.x+DOCK.dx*312+DOCK.rx*42, z:CITY.z+DOCK.dz*312+DOCK.rz*42, y:plateauY };
+const HELI={ x:0,z:0,y:0,heading:0,fwd:0,vy:0,pitch:0,roll:0 };
+const heli3d=new THREE.Group(); heli3d.rotation.order='YXZ';
+let heliRotor=null, heliTailRotor=null;
+function buildHelipadAndHeli(parent){
+  const pad=new THREE.Mesh(new THREE.CylinderGeometry(9,9.3,0.4,40), new THREE.MeshStandardMaterial({color:0x2c3035,roughness:0.85})); pad.position.set(HELIPAD.x,HELIPAD.y+0.1,HELIPAD.z); pad.receiveShadow=true; parent.add(pad);
+  const ring=new THREE.Mesh(new THREE.RingGeometry(7.3,8.2,40), new THREE.MeshStandardMaterial({color:0xf2c84a,roughness:0.6,side:THREE.DoubleSide})); ring.rotation.x=-Math.PI/2; ring.position.set(HELIPAD.x,HELIPAD.y+0.31,HELIPAD.z); parent.add(ring);
+  const hMat=new THREE.MeshStandardMaterial({color:0xf4f4f4,roughness:0.6});
+  for(const dx of [-2,2]){ const b=new THREE.Mesh(new THREE.BoxGeometry(1.1,0.06,5),hMat); b.position.set(HELIPAD.x+dx,HELIPAD.y+0.32,HELIPAD.z); parent.add(b); }
+  const cross=new THREE.Mesh(new THREE.BoxGeometry(3.1,0.06,1.1),hMat); cross.position.set(HELIPAD.x,HELIPAD.y+0.32,HELIPAD.z); parent.add(cross);
+  for(let a=0;a<8;a++){ const an=a/8*6.283; const lp=new THREE.Mesh(new THREE.SphereGeometry(0.16,8,6), new THREE.MeshStandardMaterial({color:0xffffff,emissive:0xffe27a,emissiveIntensity:1.8})); lp.position.set(HELIPAD.x+Math.cos(an)*8.7,HELIPAD.y+0.45,HELIPAD.z+Math.sin(an)*8.7); parent.add(lp); }
+  scene.add(heli3d); let parts={}; try{ parts=buildHelicopter(heli3d)||{}; }catch(e){ console.warn('heli build failed:',e.message); }
+  heliRotor=parts.rotor||null; heliTailRotor=parts.tailRotor||null;
+  HELI.x=HELIPAD.x; HELI.z=HELIPAD.z; HELI.y=HELIPAD.y+0.32; HELI.heading=Math.atan2(DOCK.dx,DOCK.dz);
+  heli3d.position.set(HELI.x,HELI.y,HELI.z); heli3d.rotation.set(0,HELI.heading,0);
+}
+function heliGround(x,z){ return Math.max(landH(x,z), seaY(x,z,gameT))+0.05; }
+function updateHeli(dt){
+  const up=keys[' ']?1:0, dn=keys['shift']?1:0;
+  const fwd=(keys['w']||keys['arrowup'])?1:0, bwd=(keys['s']||keys['arrowdown'])?1:0;
+  const yaw=((keys['a']||keys['arrowleft'])?1:0)-((keys['d']||keys['arrowright'])?1:0);
+  HELI.heading += yaw*dt*1.3;
+  HELI.vy += (((up-dn)*9) - HELI.vy)*Math.min(1,dt*2.5); HELI.y += HELI.vy*dt;
+  HELI.fwd += ((fwd-bwd)*34 - HELI.fwd)*Math.min(1,dt*1.4);
+  HELI.x += Math.sin(HELI.heading)*HELI.fwd*dt; HELI.z += Math.cos(HELI.heading)*HELI.fwd*dt;
+  const gnd=heliGround(HELI.x,HELI.z); if(HELI.y<gnd){ HELI.y=gnd; if(HELI.vy<0)HELI.vy=0; } if(HELI.y>340)HELI.y=340;
+  HELI.pitch += ((-HELI.fwd*0.006) - HELI.pitch)*Math.min(1,dt*3);
+  HELI.roll  += ((-yaw*0.22) - HELI.roll)*Math.min(1,dt*3);
+  heli3d.position.set(HELI.x,HELI.y,HELI.z); heli3d.rotation.set(HELI.pitch,HELI.heading,HELI.roll);
+  if(heliRotor)heliRotor.rotation.y+=dt*26; if(heliTailRotor)heliTailRotor.rotation.x+=dt*36;
+}
+// ---- fly-to-ship cutscene ----
+let cutscene=null, cutsceneSkip=false;
+function showCine(cap){ const c=document.getElementById('cine'); if(c){ c.style.opacity='1'; const cc=document.getElementById('cineCap'); if(cc)cc.textContent=cap||''; } }
+function hideCine(){ const c=document.getElementById('cine'); if(c) c.style.opacity='0'; }
+function startCutscene(target){ if(!target||!target.interior) return; hideHeliMenu();
+  cutscene={ t:0, dur:9.5, target:target, sx:HELI.x, sy:HELI.y, sz:HELI.z }; cutsceneSkip=false;
+  pmode='cutscene'; avatar.visible=false; if(promptEl){promptEl.style.opacity='0';}
+  showCine(target.ship==='cruise ship'?'FLYING TO THE CRUISE SHIP':'FLYING TO THE YACHT'); }
+function updateCutscene(dt){ const c=cutscene; if(!c) return; c.t+=dt; const u=Math.min(1,c.t/c.dur); const tv=c.target.grp.position;
+  const aboveY=tv.y+38; let hx,hy,hz;
+  if(u<0.85){ const k=u/0.85, ek=k*k*(3-2*k); hx=c.sx+(tv.x-c.sx)*ek; hz=c.sz+(tv.z-c.sz)*ek; hy=c.sy+(aboveY-c.sy)*Math.sin(Math.min(1,k*1.25)*1.5708); }
+  else { const k=(u-0.85)/0.15; hx=tv.x; hz=tv.z; hy=aboveY+(tv.y+9-aboveY)*k; }
+  HELI.x=hx;HELI.y=hy;HELI.z=hz; HELI.heading=Math.atan2(tv.x-c.sx, tv.z-c.sz); HELI.pitch=-0.1; HELI.roll=0;
+  heli3d.position.set(hx,hy,hz); heli3d.rotation.set(HELI.pitch,HELI.heading,HELI.roll);
+  if(heliRotor)heliRotor.rotation.y+=dt*26; if(heliTailRotor)heliTailRotor.rotation.x+=dt*36;
+  const fx=Math.sin(HELI.heading),fz=Math.cos(HELI.heading), rx=fz,rz=-fx;
+  if(u<0.25){ const a=gameT*0.6; camera.position.set(hx+Math.cos(a)*15, plateauY+5+(hy-plateauY)*0.3, hz+Math.sin(a)*15); camera.lookAt(hx,hy+1,hz); }
+  else if(u<0.6){ camera.position.set(hx-fx*5+rx*17, hy+4, hz-fz*5+rz*17); camera.lookAt(hx+fx*8,hy-1,hz+fz*8); }
+  else if(u<0.85){ camera.position.set(tv.x+58,tv.y+34,tv.z+60); camera.lookAt((hx+tv.x)/2,(hy+tv.y)/2,(hz+tv.z)/2); }
+  else { camera.position.set(tv.x+22,tv.y+20,tv.z+25); camera.lookAt(hx,hy+1,hz); }
+  camera.fov=52; camera.updateProjectionMatrix();
+  if(c.t>=c.dur || cutsceneSkip) endCutscene();
+}
+function endCutscene(){ const tgt=cutscene.target; cutscene=null; cutsceneSkip=false; hideCine();
+  tgt.anchored=true; tgt.grp.rotation.x=0; tgt.grp.rotation.z=0; if(tgt.interior)tgt.interior.visible=true;
+  aboard={entry:tgt,deckY:tgt.iDeckY,bounds:tgt.iBounds.slice(),exit:tgt.iExit.slice(),lx:tgt.iSpawn[0],lz:tgt.iSpawn[1],lh:0,sp:0,step:0,via:'heli'};
+  pmode='aboard'; avatar.visible=false;
+  HELI.x=tgt.grp.position.x; HELI.z=tgt.grp.position.z; HELI.y=tgt.grp.position.y+(tgt.iDeckY*(tgt.grp.scale.x||1))+1.2; HELI.heading=tgt.grp.rotation.y; HELI.fwd=0; HELI.vy=0;
+  heli3d.position.set(HELI.x,HELI.y,HELI.z); heli3d.rotation.set(0,HELI.heading,0);
+  toast('Arrived — explore the '+tgt.ship+' (mouse to look)','#aef0ff'); }
+// ---- helipad menu ----
+let heliMenuOpen=false;
+function showHeliMenu(){ heliMenuOpen=true; const m=document.getElementById('helimenu'); if(m)m.style.display='flex'; if(promptEl)promptEl.style.opacity='0'; }
+function hideHeliMenu(){ heliMenuOpen=false; const m=document.getElementById('helimenu'); if(m)m.style.display='none'; }
+function startPilot(){ hideHeliMenu(); pmode='heli'; avatar.visible=false; HELI.fwd=0; HELI.vy=0;
+  toast('Piloting — Space ▲  Shift ▼  W/S move  A/D turn  F to land & exit','#aef0ff'); }
+function heliMenuAction(act){ if(act==='cancel'){ hideHeliMenu(); return; } if(act==='pilot'){ startPilot(); return; }
+  const want=(act==='cruise')?'cruise ship':'yacht'; const tgt=VESSELS3D.filter(function(v){return v.ship===want && v.interior;})[0]; if(tgt) startCutscene(tgt); else hideHeliMenu(); }
+(function(){ const m=document.getElementById('helimenu'); if(m) m.addEventListener('click', function(e){ const b=e.target.closest?e.target.closest('[data-hm]'):null; if(b) heliMenuAction(b.getAttribute('data-hm')); }); })();
 function buildPerson(g, col){
   // ===== Low-poly walking tourist. Faces +Z, feet at y=0, ~1.85m, centred on x/z. =====
   // Only THREE + col are used. col = {shirt, pants, skin, hair} (hex ints).
@@ -7176,6 +7527,7 @@ function placeCar(){
 }
 _gltf.load('assets/cars/sedan-sports.glb', function(g){ carProto=g.scene; placeCar(); }, undefined, function(){ console.warn('car load failed'); placeCar(); });
 function updateFoot(dt){
+  if(heliMenuOpen){ avatar.position.set(AV.x,AV.y,AV.z); avatar.rotation.y=AV.heading; return; }   // frozen while the helipad menu is open
   const fwd=(keys['w']||keys['arrowup'])?1:0, bwd=(keys['s']||keys['arrowdown'])?1:0;
   const turn=((keys['a']||keys['arrowleft'])?1:0)-((keys['d']||keys['arrowright'])?1:0);
   AV.heading += turn*dt*2.6;
@@ -7199,17 +7551,21 @@ function updateCar(dt){
   CAR.y=landH(CAR.x,CAR.z);
   car3d.position.set(CAR.x,CAR.y,CAR.z); car3d.rotation.y=CAR.heading+carYaw;
 }
-const PROMPTS={dock:'Press  F  — dock & explore on foot', drive:'Press  F  — get in the car', ride:'Press  F  — ride the jetski', exit:'Press  F  — get out of the car', board:'Press  F  — board the boat', land:'Press  F  — tie up at the dock', boardShip:'Press  F  — board the ship', leaveShip:'Press  F  — back to your boat'};
+const PROMPTS={dock:'Press  F  — dock & explore on foot', drive:'Press  F  — get in the car', ride:'Press  F  — ride the jetski', exit:'Press  F  — get out of the car', board:'Press  F  — board the boat', land:'Press  F  — tie up at the dock', boardShip:'Press  F  — board the ship', leaveShip:'Press  F  — disembark', heli:'Press  F  — helicopter', heliExit:'Press  F  — get out of the helicopter'};
 function nearestShip(x,z){ let best=null,bd=1e9; for(const v of VESSELS3D){ if(!v.ship||!v.interior) continue; const d=Math.hypot(v.grp.position.x-x,v.grp.position.z-z); if(d<(v.boardRange||20) && d<bd){bd=d;best=v;} } return best; }
 function updateInteract(){
   let a=null;
+  if(heliMenuOpen){ nearAction=null; promptEl.style.opacity='0'; return; }
   if(pmode==='ski'){ if(mode==='free' && B.speed<9 && dockReach(B.x,B.z)) a='dock'; }
-  else if(pmode==='foot'){ const dC=carReady?Math.hypot(CAR.x-AV.x,CAR.z-AV.z):1e9, dS=Math.hypot(B.x-AV.x,B.z-AV.z), dB=Math.hypot(BOAT.x-AV.x,BOAT.z-AV.z);
-    if(dB<12 && dB<=dC && dB<=dS) a='board'; else if(dC<5 && dC<=dS) a='drive'; else if(dS<6.5) a='ride'; }
-  else if(pmode==='car'){ if(Math.abs(CAR.speed)<2.5) a='exit'; }
+  else if(pmode==='foot'){ const dC=carReady?Math.hypot(CAR.x-AV.x,CAR.z-AV.z):1e9, dS=Math.hypot(B.x-AV.x,B.z-AV.z), dB=Math.hypot(BOAT.x-AV.x,BOAT.z-AV.z), dH=Math.hypot(heli3d.position.x-AV.x,heli3d.position.z-AV.z);
+    if(dH<11 && dH<=dB && dH<=dC && dH<=dS) a='heli';
+    else if(dB<12 && dB<=dC && dB<=dS) a='board'; else if(dC<5 && dC<=dS) a='drive'; else if(dS<6.5) a='ride'; }
+  else if(pmode==='car'){ const dH=Math.hypot(heli3d.position.x-CAR.x,heli3d.position.z-CAR.z);
+    if(dH<13 && Math.abs(CAR.speed)<3) a='heli'; else if(Math.abs(CAR.speed)<2.5) a='exit'; }
   else if(pmode==='boat'){ const sh=Math.abs(BOAT.speed)<7?nearestShip(BOAT.x,BOAT.z):null;
     if(sh){ a='boardShip'; _boardTarget=sh; } else if(Math.abs(BOAT.speed)<3 && dockReach(BOAT.x,BOAT.z)) a='land'; }
   else if(pmode==='aboard'){ if(aboard && Math.hypot(aboard.lx-aboard.exit[0],aboard.lz-aboard.exit[1])<3.2) a='leaveShip'; }
+  else if(pmode==='heli'){ if(HELI.y < heliGround(HELI.x,HELI.z)+4 && Math.abs(HELI.fwd)<5) a='heliExit'; }
   nearAction=a; promptEl.textContent=a?PROMPTS[a]:''; promptEl.style.opacity=a?'1':'0';
 }
 function doAction(a){ if(!a)return; SFX.select&&SFX.select();
@@ -7226,10 +7582,13 @@ function doAction(a){ if(!a)return; SFX.select&&SFX.select();
     let al=(BOAT.x-DOCK.cx)*DOCK.dx+(BOAT.z-DOCK.cz)*DOCK.dz; al=Math.max(DOCK.start+3,Math.min(DOCK.endCd-3,al));
     AV.x=DOCK.cx+DOCK.dx*al; AV.z=DOCK.cz+DOCK.dz*al; AV.heading=DOCK.ang+Math.PI; AV.speed=0; AV.y=DOCK.deckTop; avatar.visible=true; toast('Tied up — back on the dock','#aef0ff'); }
   else if(a==='boardShip'){ const v=_boardTarget; if(v&&v.interior){ BOAT.speed=0; v.anchored=true; v.grp.rotation.x=0; v.grp.rotation.z=0; v.interior.visible=true;
-    aboard={entry:v, deckY:v.iDeckY, bounds:v.iBounds.slice(), exit:v.iExit.slice(), lx:v.iSpawn[0], lz:v.iSpawn[1], lh:0, sp:0, step:0};
+    aboard={entry:v, deckY:v.iDeckY, bounds:v.iBounds.slice(), exit:v.iExit.slice(), lx:v.iSpawn[0], lz:v.iSpawn[1], lh:0, sp:0, step:0, via:'boat'};
     pmode='aboard'; avatar.visible=false; updateAboard(0.0001); toast('Aboard the '+v.ship+' — explore (mouse to look)','#aef0ff'); } }
-  else if(a==='leaveShip'){ if(aboard){ const v=aboard.entry; if(v.interior)v.interior.visible=false; v.anchored=false; aboard=null;
-    pmode='boat'; avatar.visible=false; toast('Back on your boat','#aef0ff'); } }
+  else if(a==='leaveShip'){ if(aboard){ const v=aboard.entry, via=aboard.via; if(v.interior)v.interior.visible=false; v.anchored=false; aboard=null;
+    if(via==='heli'){ pmode='heli'; avatar.visible=false; HELI.x=v.grp.position.x; HELI.z=v.grp.position.z; HELI.y=v.grp.position.y+30; HELI.fwd=0; HELI.vy=0; heli3d.position.set(HELI.x,HELI.y,HELI.z); toast('Back in the helicopter — fly home  (F to land & exit)','#aef0ff'); }
+    else { pmode='boat'; avatar.visible=false; toast('Back on your boat','#aef0ff'); } } }
+  else if(a==='heli'){ showHeliMenu(); }
+  else if(a==='heliExit'){ pmode='foot'; AV.x=HELI.x+Math.cos(HELI.heading)*3; AV.z=HELI.z-Math.sin(HELI.heading)*3; AV.heading=HELI.heading+Math.PI; AV.speed=0; AV.y=avatarGround(AV.x,AV.z); avatar.visible=true; toast('On foot','#aef0ff'); }
 }
 
 // ===== free orbit camera: drag the mouse to swing around, scroll to zoom, press C to recenter =====
@@ -7265,6 +7624,8 @@ function loop(now){
     else if(pmode==='car'){ updateCar(dt); }
     else if(pmode==='boat'){ updateBoat(dt); }
     else if(pmode==='aboard'){ updateAboard(dt); }
+    else if(pmode==='heli'){ updateHeli(dt); }
+    else if(pmode==='cutscene'){ updateCutscene(dt); }
     else {
     // input (jetski)
     const thr=(keys['w']||keys['arrowup']||touching)?1:0, brk=(keys['s']||keys['arrowdown'])?1:0;
@@ -7364,6 +7725,10 @@ function loop(now){
     camera.position.set(p.x, p.y+1.6, p.z);                                    // first-person — explore the cabin
     camera.lookAt(p.x+Math.sin(yaw)*4*cp, p.y+1.6-Math.sin(pit)*4, p.z+Math.cos(yaw)*4*cp);
     camera.fov=74; camera.updateProjectionMatrix();
+  } else if(running && pmode==='heli'){ const fw=Math.sin(HELI.heading),fz=Math.cos(HELI.heading), back=12+Math.abs(HELI.fwd)*0.18;
+    chasePos(HELI.x,HELI.y,HELI.z, HELI.heading, back, 4.6, dt);
+    camera.lookAt(HELI.x+fw*9, HELI.y+0.5, HELI.z+fz*9); fovSm+=((62+Math.abs(HELI.fwd)*0.4)-fovSm)*Math.min(1,dt*3); camera.fov=fovSm; camera.updateProjectionMatrix();
+  } else if(running && pmode==='cutscene'){ /* camera already set by updateCutscene */
   } else if(running && pmode==='car'){ const fw=Math.sin(CAR.heading),fz=Math.cos(CAR.heading), back=9+Math.abs(CAR.speed)*0.22;
     chasePos(CAR.x,CAR.y,CAR.z, CAR.heading, back, 4.0, dt);
     camera.lookAt(CAR.x+fw*9, CAR.y+1.3, CAR.z+fz*9);
@@ -7443,7 +7808,7 @@ window.__wb={B,WAVES,seaY,seaNormal,GATES,keys,get composer(){return composer;},
   start:start, get mode(){return mode;}, set mode(v){mode=v;}, CITY, landH, recenter,
   camera, THREE:window.THREE, renderRaw(){ composer.render(); },
   setRenderScale:setRenderScale, get renderScale(){return renderScale;}, get fps(){return fpsSmooth;},
-  get pmode(){return pmode;}, set pmode(v){pmode=v;}, AV, CAR, DOCK, doAction, updateInteract, get nearAction(){return nearAction;}, dockReach, avatar, car3d, cam, BOAT, boat3d, BOAT_MOOR, get aboard(){return aboard;}, get VESSELS(){return VESSELS3D;}, get boardTarget(){return _boardTarget;}, set boardTarget(v){_boardTarget=v;}};
+  get pmode(){return pmode;}, set pmode(v){pmode=v;}, AV, CAR, DOCK, doAction, updateInteract, get nearAction(){return nearAction;}, dockReach, avatar, car3d, cam, BOAT, boat3d, BOAT_MOOR, get aboard(){return aboard;}, get VESSELS(){return VESSELS3D;}, get boardTarget(){return _boardTarget;}, set boardTarget(v){_boardTarget=v;}, HELI, heli3d, HELIPAD, showHeliMenu, heliMenuAction, startCutscene, startPilot, get cutscene(){return cutscene;}};
 </script>
 </body>
 </html>
