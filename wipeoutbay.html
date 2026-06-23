@@ -6892,17 +6892,17 @@ function buildPort(){
     cg.rotation.y=Math.PI; cg.position.set(craneX,PORT.deckY,czs[ci]); grp.add(cg);     // boom reaches over the water
     const cbox=new THREE.Mesh(new THREE.BoxGeometry(2.44,2.59,12), new THREE.MeshStandardMaterial({color:CCOLS[ci%CCOLS.length],roughness:0.72,metalness:0.1}));
     cbox.position.set(0,-1.8,0); cbox.castShadow=true; cbox.visible=false; if(parts.spreader) parts.spreader.add(cbox);
-    PORT_CRANES.push({parts:parts, box:cbox, t:ci*3.4});
+    const _bMin=(parts.boomMinX!=null?parts.boomMinX:-18);
+    PORT_CRANES.push({parts:parts, box:cbox, t:ci*3.4, spotX:craneX-(_bMin+6), spotZ:czs[ci], occupant:null, prevPh:0});
   }
   // container ships: one at the berth being loaded, one anchored offshore
   placePortShip(grp, PORT.faceX-26, midZ, 0);
   placePortShip(grp, PORT.faceX-165, PORT.z1+70, 0.22);
-  // terminal trucks shuttling round the yard (loop runs under the cranes, past the stacks)
-  PORT_TRUCK_LOOP={ X0:PORT.faceX+18, X1:PORT.edgeX-3, Z0:PORT.z0+8, Z1:PORT.z1-8 };
-  const TCOLS=[0xd0d0cc,0x2f6fa0,0xc0392b,0xe0a020,0x3a7a4a,0x46506a], LP=PORT_TRUCK_LOOP, PER=2*((LP.X1-LP.X0)+(LP.Z1-LP.Z0));
-  for(let i=0;i<9;i++){ const tg=new THREE.Group(); tg.rotation.order='YXZ'; buildTruck(tg,TCOLS[i%TCOLS.length]); grp.add(tg);
-    if(tg.userData.cont) tg.userData.cont.visible=(i%3!==0);
-    PORT_TRUCKS.push({g:tg, s:i/9*PER, speed:7+Math.random()*5}); }
+  // terminal trucks that rendezvous with the cranes (drive under -> wait -> get a box -> haul it to the yard)
+  const TCOLS=[0xd0d0cc,0x2f6fa0,0xc0392b,0xe0a020,0x3a7a4a,0x46506a];
+  for(let i=0;i<6;i++){ const tg=new THREE.Group(); tg.rotation.order='YXZ'; buildTruck(tg,TCOLS[i%TCOLS.length]); if(tg.userData.cont)tg.userData.cont.visible=false; grp.add(tg);
+    const sx=PORT.faceX+36, sz=PORT.z0+25+i*42, cr=PORT_CRANES.length?i%PORT_CRANES.length:0;
+    PORT_TRUCKS.push({g:tg, cont:tg.userData.cont, crane:cr, state:'toCrane', x:sx, z:sz, heading:Math.PI, speed:0, tx:sx, tz:sz, wait:0, loaded:false}); }
 }
 function updatePort(dt){
   for(let i=0;i<PORT_CRANES.length;i++){ const c=PORT_CRANES[i], p=c.parts; if(!p||!p.trolley) continue; c.t+=dt;
@@ -6917,8 +6917,35 @@ function updatePort(dt){
     else { tx=_lv(land,water,_ease((ph-0.70)/0.30)); sy=up; }
     p.trolley.position.x=tx; if(p.spreader) p.spreader.position.y=sy; if(c.box) c.box.visible=carry;
     if(p.cables && p.spreader){ const s=(-1.7-sy)/16.3; p.cables.scale.y=s; p.cables.position.y=(sy-0.9)/2+9.45*s; }
+    // landside drop: when the spreader finishes lowering at the yard, hand the box to a truck waiting under it
+    if(ph>=0.62 && c.prevPh<0.62 && c.occupant && c.occupant.state==='waiting' && !c.occupant.loaded){
+      c.occupant.loaded=true; if(c.occupant.cont) c.occupant.cont.visible=true;
+    }
+    c.prevPh=ph;
   }
-  if(PORT_TRUCK_LOOP){ for(let i=0;i<PORT_TRUCKS.length;i++){ const tk=PORT_TRUCKS[i]; tk.s+=tk.speed*dt; const q=truckPos(tk.s,PORT_TRUCK_LOOP); tk.g.position.set(q.x,PORT.deckY,q.z); tk.g.rotation.y=q.h; } }
+  for(let i=0;i<PORT_TRUCKS.length;i++){ const tk=PORT_TRUCKS[i];
+    if(tk.state==='toCrane'){ const C=PORT_CRANES[tk.crane];
+      if(!C){ tk.state='toYard'; tk.tx=PORT.faceX+40; tk.tz=PORT.z0+60; }
+      else { const free=(!C.occupant||C.occupant===tk); tk.tx=C.spotX; tk.tz=C.spotZ+(free?0:18);
+        driveTruck(tk,dt);
+        if(free && Math.hypot(tk.x-C.spotX,tk.z-C.spotZ)<7) C.occupant=tk;
+        if(C.occupant===tk && Math.hypot(tk.x-C.spotX,tk.z-C.spotZ)<2.6){ tk.state='waiting'; tk.speed=0; } }
+    }
+    else if(tk.state==='waiting'){ tk.speed=0;
+      if(tk.loaded){ if(PORT_CRANES[tk.crane]) PORT_CRANES[tk.crane].occupant=null;
+        tk.state='toYard'; tk.tx=PORT.faceX+40; tk.tz=PORT.z0+25+Math.random()*(PORT.z1-PORT.z0-50); } }
+    else if(tk.state==='toYard'){ const d=driveTruck(tk,dt); if(d<3){ tk.state='dump'; tk.wait=1.4; tk.speed=0; } }
+    else if(tk.state==='dump'){ tk.wait-=dt; if(tk.wait<=0){ tk.loaded=false; if(tk.cont)tk.cont.visible=false; tk.crane=PORT_CRANES.length?(tk.crane+1)%PORT_CRANES.length:0; tk.state='toCrane'; } }
+    tk.g.position.set(tk.x, PORT.deckY, tk.z); tk.g.rotation.y=tk.heading;
+  }
+}
+function driveTruck(tk,dt){
+  const dx=tk.tx-tk.x, dz=tk.tz-tk.z, d=Math.hypot(dx,dz)||0.0001;
+  const want=Math.atan2(dx,dz); let dh=((want-tk.heading+Math.PI*3)%(Math.PI*2))-Math.PI;
+  tk.heading += Math.max(-2.6*dt, Math.min(2.6*dt, dh));
+  const tgt=(d>5)?10:Math.max(0,(d-1))*2.2; tk.speed += (tgt-tk.speed)*Math.min(1,dt*3);
+  tk.x += Math.sin(tk.heading)*tk.speed*dt; tk.z += Math.cos(tk.heading)*tk.speed*dt;
+  return d;
 }
 
 function buildWorld(){
