@@ -7463,6 +7463,7 @@ function buildCruiseInterior(g){
   zone(typeof buildCZ_slides !=='undefined'?buildCZ_slides :null,  +2);
   zone(typeof buildCZ_shops  !=='undefined'?buildCZ_shops  :null, +33);
   zone(typeof buildCZ_atrium !=='undefined'?buildCZ_atrium :null, +54);
+  buildCruiseNPCs(g, 22);   // passengers wandering the promenade
   g.position.y = FY;
   // spawn mid-ship by the pool looking toward the shops/atrium; disembark gangway is the bow atrium
   return { deckY:6.0, bounds:[-12,12,-64,64], spawn:[0,19], exit:[0,62] };
@@ -10192,6 +10193,28 @@ function updateNPCs(dt){
     if(L){ L.legL.rotation.x=sw; L.legR.rotation.x=-sw; L.armL.rotation.x=-sw; L.armR.rotation.x=sw; }
     c.grp.position.set(x, plateauY+0.28, z); c.grp.rotation.y=c.heading; }
 }
+// ---- cruise promenade passengers (children of the cruise interior; only updated while aboard) ----
+const CRUISE_NPCS=[];
+function _czTarget(){ let tx,tz,n=0; do{ tx=(Math.random()*2-1)*5.2; tz=(Math.random()*2-1)*54; n++; }while(n<8 && Math.abs(tx)<4.6 && tz>-6 && tz<10); return [tx,tz]; }   // wander box; reject the pool footprint so they don't linger on the water
+function buildCruiseNPCs(g, n){
+  for(let i=0;i<n;i++){ const grp=new THREE.Group(); grp.rotation.order='YXZ';
+    const p=buildPerson(grp,{shirt:pick(NPC_SHIRT),pants:pick(NPC_PANTS),skin:pick(NPC_SKIN),hair:pick(NPC_HAIR)});
+    const s0=_czTarget(); grp.position.set(s0[0],0,s0[1]); g.add(grp); const t0=_czTarget();
+    CRUISE_NPCS.push({grp:grp, lp:p, lx:s0[0], lz:s0[1], tx:t0[0], tz:t0[1], heading:Math.random()*6.28, speed:0.85+Math.random()*0.8, step:Math.random()*6, pause:Math.random()*2.5}); }
+}
+function updateCruiseNPCs(dt){
+  for(let i=0;i<CRUISE_NPCS.length;i++){ const c=CRUISE_NPCS[i], L=c.lp;
+    if(c.pause>0){ c.pause-=dt; if(L){ L.legL.rotation.x*=0.86; L.legR.rotation.x*=0.86; L.armL.rotation.x*=0.86; L.armR.rotation.x*=0.86; } continue; }
+    const dx=c.tx-c.lx, dz=c.tz-c.lz, d=Math.hypot(dx,dz);
+    if(d<1.1){ const t=_czTarget(); c.tx=t[0]; c.tz=t[1]; if(Math.random()<0.35) c.pause=1+Math.random()*3.5; continue; }
+    const want=Math.atan2(dx,dz); let dh=((want-c.heading+Math.PI*3)%(Math.PI*2))-Math.PI; c.heading+=THREE.MathUtils.clamp(dh,-4*dt,4*dt);
+    const sp=Math.min(c.speed, d*1.4); c.lx+=Math.sin(c.heading)*sp*dt; c.lz+=Math.cos(c.heading)*sp*dt;
+    if(c.lx<-10.6)c.lx=-10.6; else if(c.lx>10.6)c.lx=10.6; if(c.lz<-62)c.lz=-62; else if(c.lz>62)c.lz=62;
+    c.step+=sp*dt*2.6; const sw=Math.sin(c.step)*0.5;
+    if(L){ L.legL.rotation.x=sw; L.legR.rotation.x=-sw; L.armL.rotation.x=-sw; L.armR.rotation.x=sw; }
+    c.grp.position.set(c.lx,0,c.lz); c.grp.rotation.y=c.heading;
+  }
+}
 function buildBoxCar(){
   const body=new THREE.Mesh(new THREE.BoxGeometry(2,0.7,4.4),new THREE.MeshStandardMaterial({color:0xcf3a2e,roughness:0.35,metalness:0.3,envMapIntensity:0.8})); body.position.y=0.75; car3d.add(body);
   const cab=new THREE.Mesh(new THREE.BoxGeometry(1.8,0.6,2.2),new THREE.MeshStandardMaterial({color:0x12161c,roughness:0.1,metalness:0.5,envMapIntensity:1})); cab.position.set(0,1.25,-0.1); car3d.add(cab);
@@ -10463,6 +10486,7 @@ function loop(now){
   for(let i=0;i<LM_ANIMS.length;i++){ try{ LM_ANIMS[i].fn(LM_ANIMS[i].g, gameT, dt); }catch(e){} }
   updateTraffic(dt);
   updateNPCs(dt);
+  if(pmode==='aboard' && aboard && aboard.entry && aboard.entry.ship==='cruise ship') updateCruiseNPCs(dt);
   updateWaterTraffic(dt);
   updatePort(dt);
   if(pmode!=='boat') mooredBoatBob();
