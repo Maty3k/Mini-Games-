@@ -6500,6 +6500,7 @@ function resetRun(){ const g=GATES[0]||{x:0,z:60,fx:0,fz:1};
   nextGate=0; lap=1; storm=0.2; score=0; gatesPassed=0; timeLeft=45; shake=0; fovSm=62; prevSurf=B.y;
   prevAhead=g.fx?((B.x-g.x)*g.fx+(B.z-g.z)*g.fz):-1;
   pmode='ski'; avatar.visible=false; AV.speed=0; CAR.speed=0; nearAction=null; if(promptEl) promptEl.style.opacity='0';
+  if(typeof SFX!=='undefined'&&SFX.heliStop)SFX.heliStop(); if(typeof hideHeliMenu==='function')hideHeliMenu(); if(typeof hideCine==='function')hideCine();
   running=false; gameOver=false; updateHUD(); }
 function recenter(){ B.x=0;B.z=0;B.heading=0;B.speed=0;B.vy=0;B.airborne=false;B.y=seaY(0,0,gameT);prevSurf=B.y; toast('RE-CENTRED','#aef0ff'); }
 function start(m){ if(running) return; mode=m||mode; applyModeUI(); resetRun(); running=true; gameOver=false;
@@ -7294,6 +7295,7 @@ function updateHeli(dt){
   HELI.roll  += ((-yaw*0.22) - HELI.roll)*Math.min(1,dt*3);
   heli3d.position.set(HELI.x,HELI.y,HELI.z); heli3d.rotation.set(HELI.pitch,HELI.heading,HELI.roll);
   if(heliRotor)heliRotor.rotation.y+=dt*26; if(heliTailRotor)heliTailRotor.rotation.x+=dt*36;
+  HELI._rev=(HELI._rev||0)+dt; if(HELI._rev>0.25){ HELI._rev=0; SFX.heliRev&&SFX.heliRev(Math.abs(HELI.fwd)>14 || HELI.vy>2.5); }
 }
 // ---- fly-to-ship cutscene ----
 let cutscene=null, cutsceneSkip=false;
@@ -7301,7 +7303,7 @@ function showCine(cap){ const c=document.getElementById('cine'); if(c){ c.style.
 function hideCine(){ const c=document.getElementById('cine'); if(c) c.style.opacity='0'; }
 function startCutscene(target){ if(!target||!target.interior) return; hideHeliMenu();
   cutscene={ t:0, dur:9.5, target:target, sx:HELI.x, sy:HELI.y, sz:HELI.z }; cutsceneSkip=false;
-  pmode='cutscene'; avatar.visible=false; if(promptEl){promptEl.style.opacity='0';}
+  pmode='cutscene'; avatar.visible=false; if(promptEl){promptEl.style.opacity='0';} SFX.heliStart&&SFX.heliStart(); SFX.heliRev&&SFX.heliRev(true);
   showCine(target.ship==='cruise ship'?'FLYING TO THE CRUISE SHIP':'FLYING TO THE YACHT'); }
 function updateCutscene(dt){ const c=cutscene; if(!c) return; c.t+=dt; const u=Math.min(1,c.t/c.dur); const tv=c.target.grp.position;
   const aboveY=tv.y+38; let hx,hy,hz;
@@ -7318,7 +7320,7 @@ function updateCutscene(dt){ const c=cutscene; if(!c) return; c.t+=dt; const u=M
   camera.fov=52; camera.updateProjectionMatrix();
   if(c.t>=c.dur || cutsceneSkip) endCutscene();
 }
-function endCutscene(){ const tgt=cutscene.target; cutscene=null; cutsceneSkip=false; hideCine();
+function endCutscene(){ const tgt=cutscene.target; cutscene=null; cutsceneSkip=false; hideCine(); SFX.heliStop&&SFX.heliStop();
   tgt.anchored=true; tgt.grp.rotation.x=0; tgt.grp.rotation.z=0; if(tgt.interior)tgt.interior.visible=true;
   aboard={entry:tgt,deckY:tgt.iDeckY,bounds:tgt.iBounds.slice(),exit:tgt.iExit.slice(),lx:tgt.iSpawn[0],lz:tgt.iSpawn[1],lh:0,sp:0,step:0,via:'heli'};
   pmode='aboard'; avatar.visible=false;
@@ -7329,7 +7331,7 @@ function endCutscene(){ const tgt=cutscene.target; cutscene=null; cutsceneSkip=f
 let heliMenuOpen=false;
 function showHeliMenu(){ heliMenuOpen=true; const m=document.getElementById('helimenu'); if(m)m.style.display='flex'; if(promptEl)promptEl.style.opacity='0'; }
 function hideHeliMenu(){ heliMenuOpen=false; const m=document.getElementById('helimenu'); if(m)m.style.display='none'; }
-function startPilot(){ hideHeliMenu(); pmode='heli'; avatar.visible=false; HELI.fwd=0; HELI.vy=0;
+function startPilot(){ hideHeliMenu(); pmode='heli'; avatar.visible=false; HELI.fwd=0; HELI.vy=0; SFX.heliStart&&SFX.heliStart();
   toast('Piloting — Space ▲  Shift ▼  W/S move  A/D turn  F to land & exit','#aef0ff'); }
 function heliMenuAction(act){ if(act==='cancel'){ hideHeliMenu(); return; } if(act==='pilot'){ startPilot(); return; }
   const want=(act==='cruise')?'cruise ship':'yacht'; const tgt=VESSELS3D.filter(function(v){return v.ship===want && v.interior;})[0]; if(tgt) startCutscene(tgt); else hideHeliMenu(); }
@@ -7585,10 +7587,10 @@ function doAction(a){ if(!a)return; SFX.select&&SFX.select();
     aboard={entry:v, deckY:v.iDeckY, bounds:v.iBounds.slice(), exit:v.iExit.slice(), lx:v.iSpawn[0], lz:v.iSpawn[1], lh:0, sp:0, step:0, via:'boat'};
     pmode='aboard'; avatar.visible=false; updateAboard(0.0001); toast('Aboard the '+v.ship+' — explore (mouse to look)','#aef0ff'); } }
   else if(a==='leaveShip'){ if(aboard){ const v=aboard.entry, via=aboard.via; if(v.interior)v.interior.visible=false; v.anchored=false; aboard=null;
-    if(via==='heli'){ pmode='heli'; avatar.visible=false; HELI.x=v.grp.position.x; HELI.z=v.grp.position.z; HELI.y=v.grp.position.y+30; HELI.fwd=0; HELI.vy=0; heli3d.position.set(HELI.x,HELI.y,HELI.z); toast('Back in the helicopter — fly home  (F to land & exit)','#aef0ff'); }
+    if(via==='heli'){ pmode='heli'; avatar.visible=false; HELI.x=v.grp.position.x; HELI.z=v.grp.position.z; HELI.y=v.grp.position.y+30; HELI.fwd=0; HELI.vy=0; heli3d.position.set(HELI.x,HELI.y,HELI.z); SFX.heliStart&&SFX.heliStart(); toast('Back in the helicopter — fly home  (F to land & exit)','#aef0ff'); }
     else { pmode='boat'; avatar.visible=false; toast('Back on your boat','#aef0ff'); } } }
   else if(a==='heli'){ showHeliMenu(); }
-  else if(a==='heliExit'){ pmode='foot'; AV.x=HELI.x+Math.cos(HELI.heading)*3; AV.z=HELI.z-Math.sin(HELI.heading)*3; AV.heading=HELI.heading+Math.PI; AV.speed=0; AV.y=avatarGround(AV.x,AV.z); avatar.visible=true; toast('On foot','#aef0ff'); }
+  else if(a==='heliExit'){ pmode='foot'; SFX.heliStop&&SFX.heliStop(); AV.x=HELI.x+Math.cos(HELI.heading)*3; AV.z=HELI.z-Math.sin(HELI.heading)*3; AV.heading=HELI.heading+Math.PI; AV.speed=0; AV.y=avatarGround(AV.x,AV.z); avatar.visible=true; toast('On foot','#aef0ff'); }
 }
 
 // ===== free orbit camera: drag the mouse to swing around, scroll to zoom, press C to recenter =====
