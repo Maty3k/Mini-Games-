@@ -12017,9 +12017,13 @@ function buildVillage(){
   const cot=[[-26,-22,0.5],[-26,-8,0.4],[-26,6,0.3],[-24,20,0.2], [26,-20,-0.5],[27,-6,-0.4],[26,8,-0.3],[25,22,-0.2],
              [-12,-28,Math.PI],[6,-30,Math.PI],[-8,30,0],[10,32,0]];
   for(let i=0;i<cot.length;i++) place(F.cot, cot[i][0],cot[i][1], cot[i][2], i%4);
+  // smoke curling from every cottage chimney (+ the tavern)
+  function smokeAt(cx,cz,rotY,lcx,lcz,hy){ const co=Math.cos(rotY),si=Math.sin(rotY); addChimneySmoke(VILLAGE.x+cx+lcx*co+lcz*si, villageY+hy, VILLAGE.z+cz-lcx*si+lcz*co); }
+  for(let i=0;i<cot.length;i++) smokeAt(cot[i][0],cot[i][1],cot[i][2], 1.7,0, 6.6);
   // ---- church + tavern ----
   place(F.ch, -40,18, 0.3);
   place(F.tav, 38,-14, -1.4);
+  smokeAt(38,-14,-1.4, 2.6,-1.6, 7.8);
   // hedges + lamps + paths
   if(F.hedge){ place(function(s){ F.hedge(s,18); }, -18,24,0); place(function(s){ F.hedge(s,18); }, 18,24,0); }
   for(const lp of [[-9,-9],[9,-9],[-9,9],[9,9],[0,18],[0,-18],[-20,0],[20,0]]) place(F.lamp, lp[0],lp[1],0);
@@ -12047,6 +12051,39 @@ function updateVillage(dt){
   for(let i=0;i<VILLAGE_SHOPKEEPERS.length;i++){ const s=VILLAGE_SHOPKEEPERS[i].lp, ph=VILLAGE_SHOPKEEPERS[i].ph; if(!s) continue;
     const sw=Math.sin(gameT*1.4+ph)*0.16; s.armL.rotation.x=-0.32+sw; s.armR.rotation.x=-0.32-sw; }   // busy hands at the counter
 }
+// ---- animated chimney smoke (sprite puffs) ----
+let _smokeTex=null;
+function smokeTex(){ if(_smokeTex) return _smokeTex; const c=document.createElement('canvas'); c.width=c.height=64; const x=c.getContext('2d'); const g=x.createRadialGradient(32,32,1,32,32,31); g.addColorStop(0,'rgba(226,226,228,0.95)'); g.addColorStop(0.45,'rgba(206,206,209,0.5)'); g.addColorStop(1,'rgba(196,196,199,0)'); x.fillStyle=g; x.beginPath(); x.arc(32,32,31,0,7); x.fill(); _smokeTex=new THREE.CanvasTexture(c); return _smokeTex; }
+const SMOKE=[];
+function addChimneySmoke(wx,wy,wz){ const puffs=[]; for(let i=0;i<6;i++){ const s=new THREE.Sprite(new THREE.SpriteMaterial({map:smokeTex(),color:0xcdccc8,transparent:true,opacity:0,depthWrite:false})); s.position.set(wx,wy,wz); s.visible=false; scene.add(s); puffs.push({s:s,t:i/6}); } SMOKE.push({x:wx,y:wy,z:wz,puffs:puffs,near:false}); }
+function updateSmoke(dt){ if(camera.position.x===undefined) return;
+  for(let i=0;i<SMOKE.length;i++){ const col=SMOKE[i], near=Math.hypot(camera.position.x-col.x,camera.position.z-col.z)<640;
+    if(near!==col.near){ for(let j=0;j<col.puffs.length;j++) col.puffs[j].s.visible=near; col.near=near; }
+    if(!near) continue;
+    for(let j=0;j<col.puffs.length;j++){ const p=col.puffs[j]; p.t+=dt*0.16; if(p.t>1)p.t-=1; const t=p.t;
+      p.s.position.set(col.x + t*2.0 + Math.sin(t*5+i)*0.4, col.y + t*8.0, col.z + t*1.0);
+      const sc=1.0+t*3.4; p.s.scale.set(sc,sc,1); p.s.material.opacity=Math.sin(t*Math.PI)*0.52; } }
+}
+// ---- a wooden trestle BRIDGE connecting the farm and the village (walkable) ----
+let BRIDGE=null;
+function buildBridge(){
+  const dx0=VILLAGE.x-FARM.x, dz0=VILLAGE.z-FARM.z, D=Math.hypot(dx0,dz0), dx=dx0/D, dz=dz0/D;
+  const aFV=Math.atan2(dz0,dx0), aVF=Math.atan2(-dz0,-dx0);
+  const x0=FARM.x+dx*(farmEdge(aFV)-3), z0=FARM.z+dz*(farmEdge(aFV)-3);
+  const x1=VILLAGE.x-dx*(villageEdge(aVF)-3), z1=VILLAGE.z-dz*(villageEdge(aVF)-3);
+  const len=Math.hypot(x1-x0,z1-z0); BRIDGE={x0:x0,z0:z0,x1:x1,z1:z1,len:len,dx:(x1-x0)/len,dz:(z1-z0)/len,nx:-(z1-z0)/len,nz:(x1-x0)/len,y0:14,y1:12,arch:3.2};
+  function hAt(t){ return BRIDGE.y0+(BRIDGE.y1-BRIDGE.y0)*t + BRIDGE.arch*Math.sin(t*Math.PI); }
+  const plankMat=new THREE.MeshStandardMaterial({color:0x9a7748,roughness:0.92}), postMat=new THREE.MeshStandardMaterial({color:0x6e5230,roughness:0.95});
+  const N=Math.max(10,Math.round(len/6)), ang=Math.atan2(BRIDGE.dx,BRIDGE.dz), seg=len/N, grp=new THREE.Group(); scene.add(grp);
+  for(let i=0;i<N;i++){ const t0=i/N,t1=(i+1)/N,tm=(t0+t1)/2, px=x0+(x1-x0)*tm, pz=z0+(z1-z0)*tm, py=hAt(tm), tilt=Math.atan2(hAt(t1)-hAt(t0),seg);
+    const deck=new THREE.Mesh(new THREE.BoxGeometry(4.2,0.3,seg+0.3),plankMat); deck.position.set(px,py,pz); deck.rotation.order='YXZ'; deck.rotation.y=ang; deck.rotation.x=-tilt; deck.castShadow=deck.receiveShadow=true; grp.add(deck);
+    if(i%2===0) for(const sgn of [-1,1]){ const plen=py+5, post=new THREE.Mesh(new THREE.CylinderGeometry(0.24,0.24,plen,8),postMat); post.position.set(px+BRIDGE.nx*1.9*sgn, py-plen/2, pz+BRIDGE.nz*1.9*sgn); post.castShadow=true; grp.add(post); }
+    for(const sgn of [-1,1]){ const rx=px+BRIDGE.nx*2.0*sgn, rz=pz+BRIDGE.nz*2.0*sgn;
+      const rp=new THREE.Mesh(new THREE.BoxGeometry(0.12,1.0,0.12),postMat); rp.position.set(rx,py+0.5,rz); grp.add(rp);
+      const rl=new THREE.Mesh(new THREE.BoxGeometry(0.1,0.12,seg+0.3),plankMat); rl.position.set(rx,py+0.98,rz); rl.rotation.order='YXZ'; rl.rotation.y=ang; rl.rotation.x=-tilt; grp.add(rl); } }
+}
+function onBridge(x,z){ if(!BRIDGE) return false; const ax=x-BRIDGE.x0, az=z-BRIDGE.z0, along=ax*BRIDGE.dx+az*BRIDGE.dz; if(along<-1||along>BRIDGE.len+1) return false; return Math.abs(ax*BRIDGE.nx+az*BRIDGE.nz)<2.0; }
+function bridgeHeight(x,z){ if(!BRIDGE) return 0; const ax=x-BRIDGE.x0, az=z-BRIDGE.z0, t=Math.max(0,Math.min(1,(ax*BRIDGE.dx+az*BRIDGE.dz)/BRIDGE.len)); return BRIDGE.y0+(BRIDGE.y1-BRIDGE.y0)*t + BRIDGE.arch*Math.sin(t*Math.PI)+0.18; }
 function buildWorld(){
   // ---- terrain (islands + seabed) ----
   const TR=1900, TG=440;
@@ -12068,6 +12105,7 @@ function buildWorld(){
   buildPort();
   buildFarm();
   if(typeof buildVillage==='function') buildVillage();
+  buildBridge();
   // pre-render the minimap base (bay silhouette)
   drawMapBase();
   // idle camera until START
@@ -12329,7 +12367,7 @@ const DOCK=(function(){ const d=new THREE.Vector2(-CITY.x,-CITY.z).normalize();
   return {cx:CITY.x,cz:CITY.z,dx:d.x,dz:d.y,rx:d.y,rz:-d.x,ang:Math.atan2(d.x,d.y),start:360,len:104,width:15,deckTop:3.35,endCd:464}; })();
 function onDock(x,z){ const ax=x-DOCK.cx,az=z-DOCK.cz, al=ax*DOCK.dx+az*DOCK.dz, lt=Math.abs(ax*DOCK.rx+az*DOCK.rz); return al>DOCK.start-3 && al<DOCK.endCd+3 && lt<DOCK.width/2; }
 function dockReach(x,z){ const ax=x-DOCK.cx,az=z-DOCK.cz, al=ax*DOCK.dx+az*DOCK.dz, lt=Math.abs(ax*DOCK.rx+az*DOCK.rz); return al>DOCK.start-8 && al<DOCK.endCd+8 && lt<DOCK.width/2+9; }
-function avatarGround(x,z){ return onQuay(x,z)?PORT.deckY:onDock(x,z)?DOCK.deckTop:landH(x,z); }
+function avatarGround(x,z){ return onBridge(x,z)?bridgeHeight(x,z):onQuay(x,z)?PORT.deckY:onDock(x,z)?DOCK.deckTop:landH(x,z); }
 // ===== DRIVABLE BOAT (board it from the dock) =====
 // TEMP model — replaced by the boat-design workflow output.
 function buildBoat(g, col){
@@ -13458,7 +13496,7 @@ function updateFoot(dt){
   const tgt=(fwd?3.4*(keys['shift']?1.95:1):0)-(bwd?2.0:0);   // walk ~12 km/h, run (Shift) ~24 km/h
   AV.speed += (tgt-AV.speed)*Math.min(1,dt*9);
   const nx=AV.x+Math.sin(AV.heading)*AV.speed*dt, nz=AV.z+Math.cos(AV.heading)*AV.speed*dt;
-  if(onDock(nx,nz)||onQuay(nx,nz)||landH(nx,nz)>0.4){ AV.x=nx; AV.z=nz; } else AV.speed=0;   // don't walk into deep water
+  if(onDock(nx,nz)||onQuay(nx,nz)||onBridge(nx,nz)||landH(nx,nz)>0.4){ AV.x=nx; AV.z=nz; } else AV.speed=0;   // don't walk into deep water (but do cross the bridge)
   AV.y=avatarGround(AV.x,AV.z);
   AV.step += Math.abs(AV.speed)*dt*2.4;
   const sw=Math.sin(AV.step)*0.5*Math.min(1,Math.abs(AV.speed)/4), L=avatar.userData;
@@ -13735,6 +13773,7 @@ function loop(now){
   for(let i=0;i<FARM_SAILS.length;i++) FARM_SAILS[i].rotation.z += dt*0.7;   // farm windmill
   updateFarm(dt);   // farm animals idle + farmer wanders
   if(typeof updateVillage==='function') updateVillage(dt);   // villagers wander
+  updateSmoke(dt);   // chimney smoke
   if(pmode!=='boat') mooredBoatBob();
   composer.render();
 }
