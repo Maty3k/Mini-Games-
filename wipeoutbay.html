@@ -7433,8 +7433,8 @@ function buildCruiseInterior(g){
   const FY=6.0;                       // lift so internal y=0 is the walkable deck
   function M(c,o){o=o||{};return new THREE.MeshStandardMaterial({color:c,roughness:o.r==null?0.85:o.r,metalness:o.m==null?0:o.m,emissive:o.e==null?0x000000:o.e,emissiveIntensity:o.ei==null?1:o.ei,transparent:!!o.t,opacity:o.o==null?1:o.o,side:o.s==null?THREE.FrontSide:o.s});}
   const FLOOR=M(0x7a2233,{r:0.95}), RUN=M(0x9c5a2c,{r:0.8}), WALL=M(0xeae2d2,{r:0.85}),
-        CEIL=M(0x2a2620,{r:0.7,e:0x14110a,ei:0.2}), GLASSR=M(0xcfe8f2,{r:0.05,t:true,o:0.16,s:THREE.DoubleSide,e:0x7fb0c8,ei:0.18}),
-        COVE=M(0xfff2cf,{e:0xffe7b0,ei:0.95,r:0.5}), TRIM=M(0xc9a14a,{r:0.3,m:0.85});
+        CEIL=M(0x2a2620,{r:0.7,e:0x14110a,ei:0.2}), GLASSR=M(0xcfe8f2,{r:0.05,t:true,o:0.16,s:THREE.DoubleSide,e:0x7fb0c8,ei:0.06}),
+        COVE=M(0xfff2cf,{e:0xffe7b0,ei:0.45,r:0.5}), TRIM=M(0xc9a14a,{r:0.3,m:0.85});
   const HW=12, ZN=-64, ZP=64, LEN=ZP-ZN, WALLH=17;
   function box(w,h,d,m,x,y,z){ const e=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),m); e.position.set(x,y,z); e.receiveShadow=true; g.add(e); return e; }
   // ---- floor + central carpet runner ----
@@ -7448,13 +7448,13 @@ function buildCruiseInterior(g){
   box(HW*2,WALLH,0.5,WALL,0,WALLH/2,ZP);
   // ---- ceilings: enclosed low over the THEATRE (stern), tall glass roof over the rest ----
   const TZ=-40;                                   // theatre/promenade divide
-  box(HW*2,0.3,(TZ-ZN),CEIL,0,8.0,(ZN+TZ)/2);     // theatre ceiling (low, dark)
+  box(HW*2,0.3,(TZ-ZN),CEIL,0,8.0,(ZN+TZ)/2).castShadow=true;     // theatre ceiling (low, dark) — blocks the sun
   box(HW*2,8.6,0.4,WALL,0,8.0+4.3,TZ);            // transition wall up to the tall roof
-  box(HW*2,0.3,(ZP-TZ),GLASSR,0,15.0,(TZ+ZP)/2);  // glass promenade roof (tall)
+  box(HW*2,0.3,(ZP-TZ),GLASSR,0,15.0,(TZ+ZP)/2).castShadow=true;  // glass promenade roof — casts a shadow so the sun doesn't flood the interior (the hidden exterior used to do this)
   // skylight mullions on the glass roof
   for(let z=TZ+6; z<ZP; z+=8){ box(HW*2,0.18,0.3,TRIM,0,14.9,z); }
   // ---- a few soft fill lights so the enclosed deck reads (kept sparse for perf) ----
-  [[0,11,-50,0xffe6c0,0.5],[0,12,2,0xfff2d6,0.65],[0,11,34,0xffe9cc,0.5],[0,11,54,0xfff0d8,0.6]].forEach(function(p){
+  [[0,11,-50,0xffe6c0,0.38],[0,12,2,0xfff2d6,0.42],[0,11,34,0xffe9cc,0.38],[0,11,54,0xfff0d8,0.4]].forEach(function(p){
     const L=new THREE.PointLight(p[3],p[4],70); L.position.set(p[0],p[1],p[2]); g.add(L); });
   // ---- place the amenity zones down the promenade ----
   function zone(fn,cz){ if(typeof fn!=='function') return; const zg=new THREE.Group(); zg.position.set(0,0,cz); g.add(zg); try{ fn(zg); }catch(e){ console.warn('cruise zone failed:',e&&e.message); } }
@@ -9648,9 +9648,10 @@ function updateAboard(dt){
   const fwd=(keys['w']||keys['arrowup'])?1:0, bwd=(keys['s']||keys['arrowdown'])?1:0;
   const turn=((keys['a']||keys['arrowleft'])?1:0)-((keys['d']||keys['arrowright'])?1:0);
   A.lh += turn*dt*2.6;
-  const tgt=(fwd?2.2*(keys['shift']?1.9:1):0)-(bwd?1.3:0);
+  const tgt=(fwd?3.3*(keys['shift']?2.2:1):0)-(bwd?1.9:0);   // faster — ~12 km/h walk, ~26 km/h with Shift
   A.sp += (tgt-A.sp)*Math.min(1,dt*9);
-  const nlx=A.lx+Math.sin(A.lh)*A.sp*dt, nlz=A.lz+Math.cos(A.lh)*A.sp*dt, b=A.bounds;
+  const mh=A.lh+cam.yaw;   // move where the first-person camera is actually looking, so W stays forward even after mouse-look
+  const nlx=A.lx+Math.sin(mh)*A.sp*dt, nlz=A.lz+Math.cos(mh)*A.sp*dt, b=A.bounds;
   A.lx=Math.max(b[0]+0.4,Math.min(b[1]-0.4,nlx)); A.lz=Math.max(b[2]+0.4,Math.min(b[3]-0.4,nlz));
   // map vessel-local (lx, deckY, lz) → world through the anchored vessel transform (heading + scale)
   const s=g.scale.x||1, vh=g.rotation.y, cs=Math.cos(vh), sn=Math.sin(vh);
@@ -10005,7 +10006,7 @@ function updateCutscene(dt){ const c=cutscene; if(!c) return; c.t+=dt; const u=M
 }
 function endCutscene(){ const tgt=cutscene.target; cutscene=null; cutsceneSkip=false; hideCine(); SFX.heliStop&&SFX.heliStop();
   tgt.anchored=true; tgt.grp.rotation.x=0; tgt.grp.rotation.z=0; if(tgt.interior)tgt.interior.visible=true;
-  aboard={entry:tgt,deckY:tgt.iDeckY,bounds:tgt.iBounds.slice(),exit:tgt.iExit.slice(),lx:tgt.iSpawn[0],lz:tgt.iSpawn[1],lh:0,sp:0,step:0,via:'heli'};
+  aboard={entry:tgt,deckY:tgt.iDeckY,bounds:tgt.iBounds.slice(),exit:tgt.iExit.slice(),lx:tgt.iSpawn[0],lz:tgt.iSpawn[1],lh:0,sp:0,step:0,via:'heli'}; cam.yaw=0; cam.pitch=0;   // face down the promenade on arrival
   pmode='aboard'; avatar.visible=false;
   const _s=tgt.grp.scale.x||1;
   if(tgt.helipad){ const ry=tgt.grp.rotation.y, cs=Math.cos(ry), sn=Math.sin(ry), p=tgt.helipad;   // park the heli on the pad it landed on
@@ -10342,7 +10343,7 @@ function doAction(a){ if(!a)return; SFX.select&&SFX.select();
     let al=(BOAT.x-DOCK.cx)*DOCK.dx+(BOAT.z-DOCK.cz)*DOCK.dz; al=Math.max(DOCK.start+3,Math.min(DOCK.endCd-3,al));
     AV.x=DOCK.cx+DOCK.dx*al; AV.z=DOCK.cz+DOCK.dz*al; AV.heading=DOCK.ang+Math.PI; AV.speed=0; AV.y=DOCK.deckTop; avatar.visible=true; toast('Tied up — back on the dock','#aef0ff'); }
   else if(a==='boardShip'){ const v=_boardTarget; if(v&&v.interior){ BOAT.speed=0; v.anchored=true; v.grp.rotation.x=0; v.grp.rotation.z=0; v.interior.visible=true;
-    aboard={entry:v, deckY:v.iDeckY, bounds:v.iBounds.slice(), exit:v.iExit.slice(), lx:v.iSpawn[0], lz:v.iSpawn[1], lh:0, sp:0, step:0, via:'boat'};
+    aboard={entry:v, deckY:v.iDeckY, bounds:v.iBounds.slice(), exit:v.iExit.slice(), lx:v.iSpawn[0], lz:v.iSpawn[1], lh:0, sp:0, step:0, via:'boat'}; cam.yaw=0; cam.pitch=0;
     pmode='aboard'; avatar.visible=false; updateAboard(0.0001); toast('Aboard the '+v.ship+' — explore (mouse to look)','#aef0ff'); } }
   else if(a==='leaveShip'){ if(aboard){ const v=aboard.entry, via=aboard.via; if(v.interior)v.interior.visible=false; v.anchored=false; aboard=null;
     if(via==='heli'){ pmode='heli'; avatar.visible=false; HELI.x=v.grp.position.x; HELI.z=v.grp.position.z; HELI.y=v.grp.position.y+30; HELI.fwd=0; HELI.vy=0; heli3d.position.set(HELI.x,HELI.y,HELI.z); SFX.heliStart&&SFX.heliStart(); toast('Back in the helicopter — fly home  (F to land & exit)','#aef0ff'); }
@@ -10541,7 +10542,9 @@ function loop(now){
   if(pmode==='aboard' && aboard && aboard.entry && aboard.entry.ship==='cruise ship') updateCruiseNPCs(dt);
   { const _ce = (typeof VESSELS3D!=='undefined') ? VESSELS3D.filter(function(v){return v.ship==='cruise ship';})[0] : null;
     const onShip = pmode==='aboard' && aboard && aboard.entry===_ce;
-    if(onShip!==cruiseExtHidden){ if(_ce) setCruiseExterior(_ce, onShip); cruiseExtHidden=onShip; }   // hide the ship's solid exterior while aboard (its superstructure tiers overlap the interior)
+    if(onShip!==cruiseExtHidden){ if(_ce) setCruiseExterior(_ce, onShip); cruiseExtHidden=onShip;
+      sun.intensity = onShip ? 0.85 : 2.6;   // the hidden exterior used to shade the deck; dim the sun while inside so it doesn't blow out the bright interior walls
+      sun.castShadow = !onShip; }
     // cull the outside world while inside — but keep it on the open pool deck (lz ~ -16..24), with a 4 m hysteresis band
     const wc = onShip ? (worldCulledState ? !(aboard.lz>-18 && aboard.lz<26) : (aboard.lz<-22 || aboard.lz>30)) : false;
     if(wc!==worldCulledState){ cullOutsideWorld(wc, onShip?_ce:null); worldCulledState=wc; } }
