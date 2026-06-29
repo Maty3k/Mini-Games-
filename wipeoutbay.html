@@ -10832,23 +10832,7 @@ function buildHorse(g){
   var tail=add(new THREE.CylinderGeometry(0.10,0.05,1.0,8), mane, 0,1.05,-0.84); tail.rotation.x=0.55;
 }
 // ===== farm island layout =====
-const FARM_SAILS=[], FARM_ANIMALS=[]; let FARM_TRACTOR=null;
-// varied tree builder for the farm island — type: 'oak' | 'pine' | 'bushy' | 'fruit'; sc = size scale
-function buildFarmTree(g, type, sc){
-  sc=sc||1; const greens=[0x3f7a32,0x4f8f3a,0x356b2c,0x5fa043,0x47853a];
-  const trunkMat=new THREE.MeshStandardMaterial({color:(0x5a3c20+((Math.random()*0x10)|0)*0x1000),roughness:0.95});
-  function leaf(){ return new THREE.MeshStandardMaterial({color:greens[(Math.random()*greens.length)|0],roughness:0.9}); }
-  function trunk(r,h){ const m=new THREE.Mesh(new THREE.CylinderGeometry(r*0.7,r,h,7),trunkMat); m.position.y=h/2; m.castShadow=true; m.receiveShadow=true; g.add(m); return h; }
-  function blob(geo,m,x,y,z,sy){ const b=new THREE.Mesh(geo,m); b.position.set(x,y,z); if(sy)b.scale.y=sy; b.castShadow=true; g.add(b); return b; }
-  if(type==='pine'){ const th=trunk(0.26*sc,3.0*sc), dk=new THREE.MeshStandardMaterial({color:0x2f5f2a,roughness:0.9});
-    for(let i=0;i<4;i++) blob(new THREE.ConeGeometry((1.8-i*0.34)*sc,(1.6-i*0.12)*sc,9),dk, 0, th-0.6*sc+i*1.05*sc, 0); }
-  else if(type==='bushy'){ const th=trunk(0.22*sc,1.5*sc), m=leaf();
-    for(let i=0;i<5;i++) blob(new THREE.SphereGeometry((1.0+Math.random()*0.5)*sc,8,7), (i?leaf():m), (Math.random()-0.5)*1.5*sc, th+0.5*sc+Math.random()*0.9*sc, (Math.random()-0.5)*1.5*sc); }
-  else if(type==='fruit'){ const th=trunk(0.2*sc,1.7*sc), m=leaf(); blob(new THREE.SphereGeometry(1.7*sc,9,8),m, 0, th+1.2*sc, 0, 0.85);
-    const fm=new THREE.MeshStandardMaterial({color:0xd23b2e,roughness:0.6}); for(let i=0;i<8;i++){ const a=Math.random()*6.28; blob(new THREE.SphereGeometry(0.15*sc,6,5),fm, Math.cos(a)*1.4*sc, th+0.8*sc+Math.random()*1.0*sc, Math.sin(a)*1.4*sc); } }
-  else { const th=trunk(0.32*sc,3.4*sc), m=leaf(); blob(new THREE.SphereGeometry(2.4*sc,10,9),m, 0, th+1.4*sc, 0, 0.92);   // round oak
-    for(let i=0;i<3;i++){ const a=i/3*6.28; blob(new THREE.SphereGeometry((1.3+Math.random()*0.5)*sc,8,7),leaf(), Math.cos(a)*1.8*sc, th+1.0*sc+Math.random()*1.1*sc, Math.sin(a)*1.8*sc); } }
-}
+const FARM_SAILS=[], FARM_ANIMALS=[]; let FARM_TRACTOR=null, FARM_DOCK=null;
 // idle-animate the farm animals (bob/sway/graze) + the wandering farmer — only when the camera is near the farm (LOD)
 function updateFarm(dt){
   if(camera.position.x===undefined) return;
@@ -10937,8 +10921,8 @@ function buildFarm(){
   // horse paddock
   pen(74,34,28,30);
   for(let i=0;i<2;i++) pa(buildHorse, 68+i*10, 30+i*8, 1.5+i, 'horse');
-  // free-range chickens near the farmhouse
-  for(let i=0;i<7;i++) pa(buildChicken, -54+(i%4)*4, 22+((i/4|0)*5)+ (Math.random()*3), Math.random()*6.28, 'chicken');
+  // free-range chickens in a coop spot near the barn (not in front of the farmhouse)
+  for(let i=0;i<7;i++) pa(buildChicken, 16+(i%4)*3, 28+((i/4|0)*4)+ (Math.random()*2), Math.random()*6.28, 'chicken');
   // hay bales near the barn
   for(let i=0;i<5;i++) place(buildHaybale, 46+(i%3)*2.2, 30+((i/3|0)*2.4), Math.random()*6.28);
   // ---- the FARMER DRIVES THE TRACTOR around the open pasture ----
@@ -10968,38 +10952,43 @@ function buildFarm(){
   path(0,8, -64,-26, 3.2); // pasture -> fields
   path(0,8, 6,-58, 3);     // pasture -> pond
 
-  // ---- many trees of varied type & size: a coastal belt (outside the tractor loop) + a small orchard ----
-  const TT=['oak','pine','bushy','round','oak','pine','fruit','bushy','oak'];
-  const dockA=Math.atan2(-FARM.z,-FARM.x);   // keep the dock approach clear
+  // ---- trees: the SAME downloaded model as the other islands (instanced), in varied sizes ----
+  const ftSlots=[];                                          // {x,z,s,rot} in farm-local coords
+  function tslot(x,z,s){ ftSlots.push({x:x,z:z,s:s,rot:Math.random()*6.28}); }
+  const dockA=Math.atan2(-FARM.z,-FARM.x);                   // keep the dock approach clear of trees
+  // coastal belt just outside the tractor loop
   let nt=0,tries=0;
-  while(nt<36 && tries<300){ tries++; const a=Math.random()*Math.PI*2, fe=farmEdge(a), inner=120;
-    if(fe-12<=inner) continue;                                                   // no room outside the tractor loop in this direction
-    if(Math.abs(((a-dockA+Math.PI*3)%(Math.PI*2))-Math.PI)<0.3) continue;        // skip the dock approach
-    const r=inner+Math.random()*(fe-12-inner), x=Math.cos(a)*r, z=Math.sin(a)*r, ty=TT[(Math.random()*TT.length)|0];
-    place(function(s){ buildFarmTree(s, ty, 0.7+Math.random()*1.1); }, x, z, Math.random()*6.28); nt++; }
-  // a tidy orchard of fruit trees north of the farmhouse
-  for(let r=0;r<2;r++) for(let c=0;c<3;c++) place(function(s){ buildFarmTree(s,'fruit',0.85+Math.random()*0.3); }, -32+c*9, 56+r*8, Math.random()*6.28);
-  // ---- denser GROVES + shade trees INSIDE the yard (inside the tractor loop, clear of the buildings/pens) ----
-  const OBST=[[-46,40,12],[34,46,14],[60,44,10],[48,54,8],[84,4,9],[2,8,24],[28,-26,18],[50,-30,14],[74,34,20],[-64,-26,28],[6,-58,16]];
+  while(nt<40 && tries<320){ tries++; const a=Math.random()*Math.PI*2, fe=farmEdge(a), inner=120;
+    if(fe-12<=inner) continue;
+    if(Math.abs(((a-dockA+Math.PI*3)%(Math.PI*2))-Math.PI)<0.32) continue;
+    const r=inner+Math.random()*(fe-12-inner); tslot(Math.cos(a)*r, Math.sin(a)*r, 0.6+Math.random()*0.8); nt++; }
+  // a small orchard north of the farmhouse
+  for(let r=0;r<2;r++) for(let c=0;c<3;c++) tslot(-32+c*9, 56+r*8, 0.5+Math.random()*0.2);
+  // obstacles so the in-yard trees miss the buildings/pens/coop
+  const OBST=[[-46,40,12],[34,46,14],[60,44,10],[48,54,8],[84,4,9],[2,8,24],[28,-26,18],[50,-30,14],[74,34,20],[-64,-26,28],[6,-58,16],[20,32,9]];
   function yardClear(x,z,m){ for(let o=0;o<OBST.length;o++){ if(Math.hypot(x-OBST[o][0],z-OBST[o][1])<OBST[o][2]+(m||3)) return false; } return true; }
-  const GT=['oak','bushy','round','pine','oak','round'];
-  let groves=0, gtries=0;                                                  // 3 tight groves in open yard spots
+  let groves=0, gtries=0;                                    // 3 denser groves in open yard spots
   while(groves<3 && gtries<140){ gtries++; const a=Math.random()*Math.PI*2, r=36+Math.random()*44, cx=Math.cos(a)*r, cz=Math.sin(a)*r;
     if(!yardClear(cx,cz,12)) continue; groves++; const n=7+(Math.random()*4|0);
-    for(let i=0;i<n;i++){ const ga=Math.random()*6.28, gr=Math.random()*6;
-      place(function(s){ buildFarmTree(s, GT[(Math.random()*GT.length)|0], 0.8+Math.random()*0.9); }, cx+Math.cos(ga)*gr, cz+Math.sin(ga)*gr, Math.random()*6.28); } }
-  let yt=0, ytries=0;                                                      // ~12 shade trees dotted through the yard
+    for(let i=0;i<n;i++){ const ga=Math.random()*6.28, gr=Math.random()*6; tslot(cx+Math.cos(ga)*gr, cz+Math.sin(ga)*gr, 0.6+Math.random()*0.6); } }
+  let yt=0, ytries=0;                                        // ~12 shade trees through the yard
   while(yt<12 && ytries<220){ ytries++; const a=Math.random()*Math.PI*2, r=24+Math.random()*60, x=Math.cos(a)*r, z=Math.sin(a)*r;
-    if(!yardClear(x,z,6)) continue; place(function(s){ buildFarmTree(s, GT[(Math.random()*GT.length)|0], 0.7+Math.random()*1.0); }, x, z, Math.random()*6.28); yt++; }
-  // ---- a small wooden DOCK on the lagoon-facing shore (toward the bay centre) ----
-  (function(){ const au={x:(-FARM.x), z:(-FARM.z)}; const L=Math.hypot(au.x,au.z); au.x/=L; au.z/=L;   // unit vector toward origin
-    const dx=au.x*196, dz=au.z*196, ang=Math.atan2(au.x,au.z);
+    if(!yardClear(x,z,6)) continue; tslot(x,z, 0.5+Math.random()*0.7); yt++; }
+  // build them all as one instanced mesh from the shared tree model (matches the other islands; no green stems)
+  if(treeProto && ftSlots.length){ const box=new THREE.Box3().setFromObject(treeProto), th=Math.max(0.01,box.max.y-box.min.y), norm=13/th, minY=box.min.y, up=new THREE.Vector3(0,1,0);
+    const mats=ftSlots.map(function(sl){ const s=norm*sl.s; return new THREE.Matrix4().compose(new THREE.Vector3(FARM.x+sl.x, gy-minY*s-0.4, FARM.z+sl.z), new THREE.Quaternion().setFromAxisAngle(up,sl.rot), new THREE.Vector3(s,s,s)); });
+    scene.add(instanceModel(treeProto, mats, false)); }
+  // ---- a small wooden DOCK on the lagoon-facing shore + the on-foot landing point ----
+  (function(){ const au={x:(-FARM.x), z:(-FARM.z)}; const L=Math.hypot(au.x,au.z); au.x/=L; au.z/=L;   // unit vector toward origin (the bay centre)
+    const fE=farmEdge(Math.atan2(au.z,au.x)), c=fE+8, dx=au.x*c, dz=au.z*c, ang=Math.atan2(au.x,au.z);  // dock straddles the waterline
     const dock=new THREE.Group(); dock.position.set(dx, 2.0, dz); dock.rotation.y=ang; grp.add(dock);
     const deck=new THREE.Mesh(new THREE.BoxGeometry(5,0.3,26),plankMat); deck.position.y=0; deck.castShadow=deck.receiveShadow=true; dock.add(deck);
     for(let s=-2;s<=2;s++) for(const px of [-2.1,2.1]){ const post=new THREE.Mesh(new THREE.CylinderGeometry(0.18,0.18,7,8),postMat); post.position.set(px, -3.4, s*5.5); dock.add(post); }
     const rail=new THREE.BoxGeometry(0.1,0.7,26); for(const px of [-2.3,2.3]){ const r=new THREE.Mesh(rail,postMat); r.position.set(px,0.5,0); dock.add(r); }
-    // a ramp of dirt from the dock back up to the plateau
-    path(dx*0.78, dz*0.78, -46, 40, 3.5);
+    // a dirt ramp from the dock up into the yard
+    path(au.x*(fE-10), au.z*(fE-10), -46, 40, 3.5);
+    // craft pull-up point (in the water at the dock head) + the spot you step onto the grass
+    FARM_DOCK={ x:FARM.x+au.x*(fE+28), z:FARM.z+au.z*(fE+28), lx:FARM.x+au.x*(fE-9), lz:FARM.z+au.z*(fE-9) };
   })();
 }
 function buildWorld(){
@@ -12429,19 +12418,20 @@ function updateCar(dt){
   CAR.y=onQuay(CAR.x,CAR.z)?PORT.deckY:landH(CAR.x,CAR.z);
   car3d.position.set(CAR.x,CAR.y,CAR.z); car3d.rotation.y=CAR.heading+carYaw;
 }
-const PROMPTS={dock:'Press  F  — dock & explore on foot', drive:'Press  F  — get in the car', ride:'Press  F  — ride the jetski', exit:'Press  F  — get out of the car', board:'Press  F  — board the boat', land:'Press  F  — tie up at the dock', boardShip:'Press  F  — board the ship', leaveShip:'Press  F  — disembark', elevator:'Press  F  — take the elevator (next deck)', stairUp:'Press  F  — up the stairs', stairDown:'Press  F  — down the stairs', heli:'Press  F  — helicopter', heliExit:'Press  F  — get out of the helicopter'};
+const PROMPTS={dock:'Press  F  — dock & explore on foot', drive:'Press  F  — get in the car', ride:'Press  F  — ride the jetski', exit:'Press  F  — get out of the car', board:'Press  F  — board the boat', land:'Press  F  — tie up at the dock', boardShip:'Press  F  — board the ship', leaveShip:'Press  F  — disembark', landFarm:'Press  F  — step onto the island', elevator:'Press  F  — take the elevator (next deck)', stairUp:'Press  F  — up the stairs', stairDown:'Press  F  — down the stairs', heli:'Press  F  — helicopter', heliExit:'Press  F  — get out of the helicopter'};
 function nearestShip(x,z){ let best=null,bd=1e9; for(const v of VESSELS3D){ if(!v.ship||!v.interior) continue; const d=Math.hypot(v.grp.position.x-x,v.grp.position.z-z); if(d<(v.boardRange||20) && d<bd){bd=d;best=v;} } return best; }
 function updateInteract(){
   let a=null;
   if(heliMenuOpen || (typeof deckMenuOpen!=='undefined' && deckMenuOpen)){ nearAction=null; promptEl.style.opacity='0'; return; }
-  if(pmode==='ski'){ if(mode==='free' && B.speed<9 && dockReach(B.x,B.z)) a='dock'; }
+  if(pmode==='ski'){ if(mode==='free' && B.speed<9){ if(dockReach(B.x,B.z)) a='dock'; else if(FARM_DOCK && Math.hypot(B.x-FARM_DOCK.x,B.z-FARM_DOCK.z)<26) a='landFarm'; } }
   else if(pmode==='foot'){ const dC=carReady?Math.hypot(CAR.x-AV.x,CAR.z-AV.z):1e9, dS=Math.hypot(B.x-AV.x,B.z-AV.z), dB=Math.hypot(BOAT.x-AV.x,BOAT.z-AV.z), dH=Math.hypot(heli3d.position.x-AV.x,heli3d.position.z-AV.z);
     if(dH<11 && dH<=dB && dH<=dC && dH<=dS) a='heli';
     else if(dB<12 && dB<=dC && dB<=dS) a='board'; else if(dC<5 && dC<=dS) a='drive'; else if(dS<6.5) a='ride'; }
   else if(pmode==='car'){ const dH=Math.hypot(heli3d.position.x-CAR.x,heli3d.position.z-CAR.z);
     if(dH<13 && Math.abs(CAR.speed)<3) a='heli'; else if(Math.abs(CAR.speed)<2.5) a='exit'; }
   else if(pmode==='boat'){ const sh=Math.abs(BOAT.speed)<7?nearestShip(BOAT.x,BOAT.z):null;
-    if(sh){ a='boardShip'; _boardTarget=sh; } else if(Math.abs(BOAT.speed)<3 && dockReach(BOAT.x,BOAT.z)) a='land'; }
+    if(sh){ a='boardShip'; _boardTarget=sh; } else if(Math.abs(BOAT.speed)<3 && dockReach(BOAT.x,BOAT.z)) a='land';
+    else if(Math.abs(BOAT.speed)<4 && FARM_DOCK && Math.hypot(BOAT.x-FARM_DOCK.x,BOAT.z-FARM_DOCK.z)<28) a='landFarm'; }
   else if(pmode==='aboard' && aboard){
     if(aboard.stairwell && aboard.level<aboard.stairTop && Math.hypot(aboard.lx-aboard.stairwell[0],aboard.lz-(aboard.stairwell[1]-0.2))<2.0) a='stairUp';
     else if(aboard.stairwell && aboard.level>0 && aboard.level<=aboard.stairTop && Math.hypot(aboard.lx-aboard.stairwell[0],aboard.lz-(aboard.stairwell[1]-2.2))<2.0) a='stairDown';
@@ -12457,6 +12447,10 @@ function doAction(a){ if(!a)return; SFX.select&&SFX.select();
     AV.x=DOCK.cx+DOCK.dx*al; AV.z=DOCK.cz+DOCK.dz*al;   // stand on the dock deck (not in the water beside it)
     AV.heading=DOCK.ang+Math.PI; AV.speed=0; AV.y=DOCK.deckTop; avatar.visible=true;
     toast('On foot — walk up the dock to the city','#aef0ff'); }
+  else if(a==='landFarm'){ const fromBoat=(pmode==='boat'); pmode='foot';
+    if(fromBoat){ BOAT.x=FARM_DOCK.x; BOAT.z=FARM_DOCK.z; BOAT.speed=0; } else { B.x=FARM_DOCK.x; B.z=FARM_DOCK.z; B.speed=0; }
+    AV.x=FARM_DOCK.lx; AV.z=FARM_DOCK.lz; AV.heading=Math.atan2(FARM.x-AV.x, FARM.z-AV.z); AV.speed=0; AV.y=avatarGround(AV.x,AV.z); avatar.visible=true;
+    toast('On the farm island — explore on foot  (return to your craft and press F to leave)','#aef0ff'); }
   else if(a==='drive'){ pmode='car'; avatar.visible=false; CAR.speed=0; toast('Driving','#aef0ff'); }
   else if(a==='ride'){ pmode='ski'; avatar.visible=false; B.speed=0; toast('Back on the jetski','#aef0ff'); }
   else if(a==='exit'){ pmode='foot'; AV.x=CAR.x+Math.cos(CAR.heading)*2.6; AV.z=CAR.z-Math.sin(CAR.heading)*2.6; AV.heading=CAR.heading; AV.speed=0; AV.y=avatarGround(AV.x,AV.z); avatar.visible=true; toast('On foot','#aef0ff'); }
