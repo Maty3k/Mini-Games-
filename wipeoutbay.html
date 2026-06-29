@@ -10978,17 +10978,39 @@ function buildFarm(){
   if(treeProto && ftSlots.length){ const box=new THREE.Box3().setFromObject(treeProto), th=Math.max(0.01,box.max.y-box.min.y), norm=13/th, minY=box.min.y, up=new THREE.Vector3(0,1,0);
     const mats=ftSlots.map(function(sl){ const s=norm*sl.s; return new THREE.Matrix4().compose(new THREE.Vector3(FARM.x+sl.x, gy-minY*s-0.4, FARM.z+sl.z), new THREE.Quaternion().setFromAxisAngle(up,sl.rot), new THREE.Vector3(s,s,s)); });
     scene.add(instanceModel(treeProto, mats, false)); }
-  // ---- a small wooden DOCK on the lagoon-facing shore + the on-foot landing point ----
-  (function(){ const au={x:(-FARM.x), z:(-FARM.z)}; const L=Math.hypot(au.x,au.z); au.x/=L; au.z/=L;   // unit vector toward origin (the bay centre)
-    const fE=farmEdge(Math.atan2(au.z,au.x)), c=fE+8, dx=au.x*c, dz=au.z*c, ang=Math.atan2(au.x,au.z);  // dock straddles the waterline
-    const dock=new THREE.Group(); dock.position.set(dx, 2.0, dz); dock.rotation.y=ang; grp.add(dock);
-    const deck=new THREE.Mesh(new THREE.BoxGeometry(5,0.3,26),plankMat); deck.position.y=0; deck.castShadow=deck.receiveShadow=true; dock.add(deck);
-    for(let s=-2;s<=2;s++) for(const px of [-2.1,2.1]){ const post=new THREE.Mesh(new THREE.CylinderGeometry(0.18,0.18,7,8),postMat); post.position.set(px, -3.4, s*5.5); dock.add(post); }
-    const rail=new THREE.BoxGeometry(0.1,0.7,26); for(const px of [-2.3,2.3]){ const r=new THREE.Mesh(rail,postMat); r.position.set(px,0.5,0); dock.add(r); }
-    // a dirt ramp from the dock up into the yard
-    path(au.x*(fE-10), au.z*(fE-10), -46, 40, 3.5);
-    // craft pull-up point (in the water at the dock head) + the spot you step onto the grass
-    FARM_DOCK={ x:FARM.x+au.x*(fE+28), z:FARM.z+au.z*(fE+28), lx:FARM.x+au.x*(fE-9), lz:FARM.z+au.z*(fE-9) };
+  // ---- DOCK over the water + a GANGWAY up the beach + a welcome SIGNPOST (and the on-foot landing point) ----
+  (function(){ const au={x:(-FARM.x), z:(-FARM.z)}; const L=Math.hypot(au.x,au.z); au.x/=L; au.z/=L;   // unit vector toward the bay centre
+    const fE=farmEdge(Math.atan2(au.z,au.x)), ang=Math.atan2(au.x,au.z);
+    const dock=new THREE.Group(); dock.position.set(au.x*(fE+24), 0, au.z*(fE+24)); dock.rotation.y=ang; grp.add(dock);   // origin at the waterline; local +z = seaward
+    function add(geo,m,x,y,z,rx){ const e=new THREE.Mesh(geo,m); e.position.set(x,y,z); if(rx)e.rotation.x=rx; e.castShadow=e.receiveShadow=true; dock.add(e); return e; }
+    // deck out over the water + pilings + side rails + a mooring bollard
+    add(new THREE.BoxGeometry(5,0.35,20),plankMat, 0,2.2,10);
+    for(let z=3;z<=19;z+=4) for(const px of [-2.1,2.1]) add(new THREE.CylinderGeometry(0.18,0.18,8,8),postMat, px,-1.6,z);
+    for(const px of [-2.4,2.4]) add(new THREE.BoxGeometry(0.1,0.7,20),postMat, px,2.95,10);
+    add(new THREE.CylinderGeometry(0.22,0.26,0.95,10),postMat, 1.9,2.85,16.5);
+    // GANGWAY ramp climbing the beach to the grass (local -z = inland; rises 2.2 m -> 14 m over 24 m)
+    const len=Math.hypot(24,11.8), tilt=Math.atan2(11.8,24);
+    add(new THREE.BoxGeometry(3.6,0.3,len),plankMat, 0,8.1,-12, tilt);
+    for(const px of [-1.75,1.75]) add(new THREE.BoxGeometry(0.1,0.75,len),postMat, px,8.55,-12, tilt);
+    for(let i=0;i<9;i++){ const t=i/8; add(new THREE.BoxGeometry(3.4,0.06,0.2),postMat, 0, 2.5+t*11.4, -1.5-t*21, tilt); }   // grip cleats
+    // SIGNPOST on the grass at the top of the gangway
+    function signTex(){ const cv=document.createElement('canvas'); cv.width=256; cv.height=104; const x=cv.getContext('2d');
+      x.fillStyle='#6b4a28'; x.fillRect(0,0,256,104);
+      for(let i=0;i<26;i++){ x.strokeStyle='rgba(92,62,33,'+(0.2+Math.random()*0.3)+')'; x.lineWidth=1; const yy=Math.random()*104; x.beginPath(); x.moveTo(0,yy); x.bezierCurveTo(85,yy+(Math.random()-0.5)*8,170,yy+(Math.random()-0.5)*8,256,yy); x.stroke(); }
+      x.strokeStyle='#caa46a'; x.lineWidth=5; x.strokeRect(7,7,242,90);
+      x.fillStyle='#f4e6c4'; x.textAlign='center'; x.font='bold 40px Georgia'; x.textBaseline='middle'; x.fillText('FARM ISLAND',128,40);
+      x.font='bold 19px Georgia'; x.fillStyle='#e2ca9c'; x.fillText('~ welcome ashore ~',128,74);
+      return new THREE.CanvasTexture(cv); }
+    const signMat=new THREE.MeshStandardMaterial({map:signTex(),roughness:0.85}), woodM=new THREE.MeshStandardMaterial({color:0x6e4a26,roughness:0.9});
+    const sg=new THREE.Group(); sg.position.set(3.0,14,-24.5); dock.add(sg);
+    const sp1=new THREE.Mesh(new THREE.CylinderGeometry(0.13,0.13,3.8,8),woodM); sp1.position.set(-1.5,1.9,0); sp1.castShadow=true; sg.add(sp1);
+    const sp2=new THREE.Mesh(new THREE.CylinderGeometry(0.13,0.13,3.8,8),woodM); sp2.position.set(1.5,1.9,0); sp2.castShadow=true; sg.add(sp2);
+    const board=new THREE.Mesh(new THREE.BoxGeometry(3.7,1.45,0.14),signMat); board.position.set(0,3.0,0); board.castShadow=true; sg.add(board);
+    const roof=new THREE.Mesh(new THREE.BoxGeometry(4.0,0.12,0.7),woodM); roof.position.set(0,3.85,0); roof.rotation.x=-0.15; sg.add(roof);
+    // dirt path from the gangway top into the yard
+    path(au.x*(fE-5), au.z*(fE-5), -46,40, 3.5);
+    // craft pull-up point (alongside the deck) + the spot you step onto the grass (top of the gangway)
+    FARM_DOCK={ x:FARM.x+au.x*(fE+30), z:FARM.z+au.z*(fE+30), lx:FARM.x+au.x*(fE-6), lz:FARM.z+au.z*(fE-6) };
   })();
 }
 function buildWorld(){
