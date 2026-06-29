@@ -8087,6 +8087,30 @@ function cruiseElevator(parent, lx, lz, deckYs){
   deckYs.forEach(function(by){ const arch=new THREE.Mesh(new THREE.BoxGeometry(3.4,0.22,3.4),metal); arch.position.set(lx,by+4.2,lz); parent.add(arch);
     const panel=new THREE.Mesh(new THREE.BoxGeometry(0.4,0.7,0.12),panelM); panel.position.set(lx+1.7,by+1.4,lz); parent.add(panel); });
 }
+// stairwell linking the lower decks: a visible up-flight + a railed down-landing at each connected deck (floor/ceiling hide where flights meet)
+function cruiseStairwell(parent, sx, sz, deckYs){
+  const stepM=new THREE.MeshStandardMaterial({color:0xc4bdad,roughness:0.72}),
+        landM=new THREE.MeshStandardMaterial({color:0xa89e8a,roughness:0.8}),
+        railM=new THREE.MeshStandardMaterial({color:0xc9a14a,roughness:0.35,metalness:0.7}),
+        upS=new THREE.MeshStandardMaterial({color:0x10202c,emissive:0x46d08a,emissiveIntensity:0.5,roughness:0.4}),
+        dnS=new THREE.MeshStandardMaterial({color:0x10202c,emissive:0x33b0ff,emissiveIntensity:0.5,roughness:0.4});
+  function bx(w,h,d){ return new THREE.BoxGeometry(w,h,d); }
+  function put(geo,m,x,y,z){ const e=new THREE.Mesh(geo,m); e.position.set(x,y,z); e.castShadow=true; parent.add(e); return e; }
+  function railing(y, z0, z1, rise){ const len=Math.hypot(z1-z0, rise)+0.3, ang=Math.atan2(rise, z1-z0);
+    for(const hx of [-1.45,1.45]){ const r=put(bx(0.09,0.09,len),railM, sx+hx, y+0.95+rise/2, (z0+z1)/2); r.rotation.x=-ang; } }
+  deckYs.forEach(function(y, idx){
+    put(bx(3.6,0.18,3.0),landM, sx, y-0.07, sz);                                   // deck landing
+    if(idx<deckYs.length-1){ const rise=Math.min(2.4,(deckYs[idx+1]-y)*0.6), NS=7, st=rise/NS, run=0.46;   // UP flight toward +z
+      for(let s=0;s<NS;s++) put(bx(3.0,0.16,run+0.05),stepM, sx, y+(s+1)*st-0.08, sz+1.0+s*run);
+      put(bx(3.0,0.2,1.4),landM, sx, y+rise, sz+1.0+NS*run+0.5);
+      railing(y, sz+1.0, sz+1.0+NS*run, rise);
+      put(bx(1.5,0.45,0.08),upS, sx, y+1.0, sz-0.2); }                              // "stairs up" sign at the base
+    if(idx>0){ put(bx(3.4,0.14,2.6),landM, sx, y+0.0, sz-2.2);                      // DOWN opening/landing toward -z
+      for(const hx of [-1.55,1.55]) put(bx(0.1,0.95,2.6),railM, sx+hx, y+0.48, sz-2.2);
+      put(bx(3.2,0.1,0.1),railM, sx, y+0.95, sz-3.4);
+      put(bx(1.5,0.45,0.08),dnS, sx, y+1.0, sz-1.0); }                              // "stairs down" sign
+  });
+}
 function buildCruiseInterior(g){
   const FY=6.0;                       // lift so internal y=0 is the walkable deck
   function M(c,o){o=o||{};return new THREE.MeshStandardMaterial({color:c,roughness:o.r==null?0.85:o.r,metalness:o.m==null?0:o.m,emissive:o.e==null?0x000000:o.e,emissiveIntensity:o.ei==null?1:o.ei,transparent:!!o.t,opacity:o.o==null?1:o.o,side:o.s==null?THREE.FrontSide:o.s});}
@@ -8132,6 +8156,7 @@ function buildCruiseInterior(g){
   cruiseSubDeck(g, -4.6, 4.0, cabFn, true,  false);   // Cabin Deck / master suites (ship-local 1.4)
   cruiseSubDeck(g, 18.0, 0,   sunFn, null,  true );   // open SUN DECK on top (ship-local 24.0)
   cruiseElevator(g, 6, 56, [-8.6,-4.6,0,18.0]);       // elevator linking all four decks (interior-local floor y's)
+  cruiseStairwell(g, -7, 54, [-8.6,-4.6,0]);          // stairwell linking the three lower decks (the promenade->sun-deck gap is 18 m → elevator only)
   dimCruiseEmissives(g);    // tame the LEDs/signs so nothing blows out under bloom
   g.position.y = FY;
   // levels: ship-local deck surface y = FY + interior-local floor y. Player boards at the Promenade (gangway = bow atrium).
@@ -8140,7 +8165,7 @@ function buildCruiseInterior(g){
              {y:1.4,  bounds:[-11,11,-60,60], label:'Cabin Deck'},
              {y:6.0,  bounds:[-12,12,-64,64], label:'Promenade'},
              {y:24.0, bounds:[-11,11,-60,60], label:'Sun Deck'} ],
-    startLevel:2, elevator:[6,56] };
+    startLevel:2, elevator:[6,56], stairwell:[-7,54], stairTop:2 };
 }
 
 const VESSELS3D=[];
@@ -8156,6 +8181,7 @@ function buildWaterTraffic(){
       const rd=(info.deckY!=null?info.deckY:1);
       ent.iDeckY=(isFinite(ib.min.y) && rd>ib.min.y-0.6 && rd<ib.max.y-0.5) ? rd : (ib.min.y+0.12);
       ent.iLevels=info.levels||null; ent.iElevator=info.elevator||null; ent.iStartLevel=(info.startLevel!=null?info.startLevel:0);   // multi-deck ships
+      ent.iStairwell=info.stairwell||null; ent.iStairTop=(info.stairTop!=null?info.stairTop:0);
     }catch(e){ console.warn('interior build failed:',e.message); } }
     VESSELS3D.push(ent); return ent; }
   // big vessels — wide slow loops in the open central/eastern lagoon (clear of islands, rock, lighthouse, city)
@@ -10318,6 +10344,7 @@ let aboard=null, _boardTarget=null;
 // set up the multi-deck level state on an aboard object (no-op for single-deck ships like the yacht)
 function initAboardLevels(A, tgt){
   if(tgt.iLevels && tgt.iLevels.length){ A.levels=tgt.iLevels; A.elevator=tgt.iElevator; A.level=tgt.iStartLevel|0; A.exitLevel=tgt.iStartLevel|0;
+    A.stairwell=tgt.iStairwell||null; A.stairTop=tgt.iStairTop|0;
     const lv=A.levels[A.level]; A.deckY=lv.y; A.bounds=lv.bounds.slice(); }
   else { A.levels=null; A.elevator=null; A.level=0; }
 }
@@ -10990,7 +11017,7 @@ function updateCar(dt){
   CAR.y=onQuay(CAR.x,CAR.z)?PORT.deckY:landH(CAR.x,CAR.z);
   car3d.position.set(CAR.x,CAR.y,CAR.z); car3d.rotation.y=CAR.heading+carYaw;
 }
-const PROMPTS={dock:'Press  F  — dock & explore on foot', drive:'Press  F  — get in the car', ride:'Press  F  — ride the jetski', exit:'Press  F  — get out of the car', board:'Press  F  — board the boat', land:'Press  F  — tie up at the dock', boardShip:'Press  F  — board the ship', leaveShip:'Press  F  — disembark', elevator:'Press  F  — take the elevator (next deck)', heli:'Press  F  — helicopter', heliExit:'Press  F  — get out of the helicopter'};
+const PROMPTS={dock:'Press  F  — dock & explore on foot', drive:'Press  F  — get in the car', ride:'Press  F  — ride the jetski', exit:'Press  F  — get out of the car', board:'Press  F  — board the boat', land:'Press  F  — tie up at the dock', boardShip:'Press  F  — board the ship', leaveShip:'Press  F  — disembark', elevator:'Press  F  — take the elevator (next deck)', stairUp:'Press  F  — up the stairs', stairDown:'Press  F  — down the stairs', heli:'Press  F  — helicopter', heliExit:'Press  F  — get out of the helicopter'};
 function nearestShip(x,z){ let best=null,bd=1e9; for(const v of VESSELS3D){ if(!v.ship||!v.interior) continue; const d=Math.hypot(v.grp.position.x-x,v.grp.position.z-z); if(d<(v.boardRange||20) && d<bd){bd=d;best=v;} } return best; }
 function updateInteract(){
   let a=null;
@@ -11004,7 +11031,9 @@ function updateInteract(){
   else if(pmode==='boat'){ const sh=Math.abs(BOAT.speed)<7?nearestShip(BOAT.x,BOAT.z):null;
     if(sh){ a='boardShip'; _boardTarget=sh; } else if(Math.abs(BOAT.speed)<3 && dockReach(BOAT.x,BOAT.z)) a='land'; }
   else if(pmode==='aboard' && aboard){
-    if(aboard.elevator && Math.hypot(aboard.lx-aboard.elevator[0],aboard.lz-aboard.elevator[1])<3.2) a='elevator';   // near the elevator on any deck
+    if(aboard.stairwell && aboard.level<aboard.stairTop && Math.hypot(aboard.lx-aboard.stairwell[0],aboard.lz-(aboard.stairwell[1]-0.2))<2.0) a='stairUp';
+    else if(aboard.stairwell && aboard.level>0 && aboard.level<=aboard.stairTop && Math.hypot(aboard.lx-aboard.stairwell[0],aboard.lz-(aboard.stairwell[1]-2.2))<2.0) a='stairDown';
+    else if(aboard.elevator && Math.hypot(aboard.lx-aboard.elevator[0],aboard.lz-aboard.elevator[1])<3.2) a='elevator';   // near the elevator on any deck
     else if((!aboard.levels || aboard.level===aboard.exitLevel) && Math.hypot(aboard.lx-aboard.exit[0],aboard.lz-aboard.exit[1])<3.2) a='leaveShip';   // gangway is on the promenade deck
   }
   else if(pmode==='heli'){ if(HELI.y < heliGround(HELI.x,HELI.z)+4 && Math.abs(HELI.fwd)<5) a='heliExit'; }
@@ -11028,6 +11057,9 @@ function doAction(a){ if(!a)return; SFX.select&&SFX.select();
     pmode='aboard'; avatar.visible=false; updateAboard(0.0001); toast('Aboard the '+v.ship+' — explore (mouse to look)','#aef0ff'); } }
   else if(a==='elevator'){ if(aboard && aboard.levels){ aboard.level=(aboard.level+1)%aboard.levels.length; const lv=aboard.levels[aboard.level];
       aboard.deckY=lv.y; aboard.bounds=lv.bounds.slice(); aboard.sp=0; toast('▲ '+lv.label,'#aef0ff'); } }
+  else if(a==='stairUp' || a==='stairDown'){ if(aboard && aboard.levels){ const d=(a==='stairUp')?1:-1, n=aboard.level+d;
+      if(n>=0 && n<aboard.levels.length){ aboard.level=n; const lv=aboard.levels[n]; aboard.deckY=lv.y; aboard.bounds=lv.bounds.slice();
+        if(aboard.stairwell){ aboard.lx=aboard.stairwell[0]; aboard.lz=aboard.stairwell[1]; } aboard.sp=0; toast((d>0?'▲ ':'▼ ')+lv.label,'#aef0ff'); } } }
   else if(a==='leaveShip'){ if(aboard){ const v=aboard.entry, via=aboard.via; if(v.interior)v.interior.visible=false; v.anchored=false; aboard=null;
     if(via==='heli'){ pmode='heli'; avatar.visible=false; HELI.x=v.grp.position.x; HELI.z=v.grp.position.z; HELI.y=v.grp.position.y+30; HELI.fwd=0; HELI.vy=0; heli3d.position.set(HELI.x,HELI.y,HELI.z); SFX.heliStart&&SFX.heliStart(); toast('Back in the helicopter — fly home  (F to land & exit)','#aef0ff'); }
     else { pmode='boat'; avatar.visible=false; toast('Back on your boat','#aef0ff'); } } }
