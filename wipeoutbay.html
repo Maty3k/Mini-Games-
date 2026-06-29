@@ -203,7 +203,7 @@ scene.add(hemi);
 //  haze and exposure through a ring of hand-tuned sky keyframes.
 // ============================================================
 let timeOfDay=9.0;                 // hours, 0..24 (starts mid-morning)
-const DAY_SECONDS=240;             // real seconds for a full 24h cycle (~2min day, ~2min night)
+const DAY_SECONDS=1200;            // real seconds for a full 24h cycle (~10min day, ~10min night)
 let sunBaseIntensity=2.6;          // read by the cruise-ship lighting override below
 let exposureBase=1.05;             // base tone-map exposure (storm subtracts from this)
 // keyframes: hour, fog, sun colour, sun intensity, hemi-sky, hemi-ground, hemi intensity, exposure, sun elev°, sun az°
@@ -12063,13 +12063,13 @@ function buildVillage(){
             st:(typeof buildMarketStall!=='undefined')?buildMarketStall:null, well:(typeof buildWell!=='undefined')?buildWell:null, tav:(typeof buildTavern!=='undefined')?buildTavern:null,
             lamp:(typeof buildLampPost!=='undefined')?buildLampPost:null, foun:(typeof buildFountain!=='undefined')?buildFountain:null, cross:(typeof buildMarketCross!=='undefined')?buildMarketCross:null,
             cart:(typeof buildCart!=='undefined')?buildCart:null, barrel:(typeof buildBarrel!=='undefined')?buildBarrel:null, hedge:(typeof buildHedge!=='undefined')?buildHedge:null };
-  // ---- central market square (cobbled) ----
-  if(F.cob) place(function(s){ F.cob(s,28,28); }, 0,0,0); else { const sq=new THREE.Mesh(new THREE.CircleGeometry(15,40),new THREE.MeshStandardMaterial({color:0x9a948a,roughness:0.95})); sq.rotation.x=-Math.PI/2; sq.position.set(VILLAGE.x,gy+0.05,VILLAGE.z); scene.add(sq); }
+  // ---- central market square (cobbled) — a broad town plaza ----
+  if(F.cob) place(function(s){ F.cob(s,44,44); }, 0,0,0); else { const sq=new THREE.Mesh(new THREE.CircleGeometry(23,40),new THREE.MeshStandardMaterial({color:0x9a948a,roughness:0.95})); sq.rotation.x=-Math.PI/2; sq.position.set(VILLAGE.x,gy+0.05,VILLAGE.z); scene.add(sq); }
   place(F.cross, 0,0,0);
-  place(F.foun, 8,-6,0); place(F.well, -9,5,0);
-  // market stalls around the square
+  place(F.foun, 11,-8,0); place(F.well, -13,7,0);
+  // market stalls ringing the larger square
   const kinds=['produce','fish','bread','flowers','pottery'];
-  const sp=[[ -11,-10,0.6],[11,-9,-0.7],[-12,9,2.4],[12,8,3.6],[0,13,Math.PI]];
+  const sp=[[-15,-13,0.6],[15,-12,-0.7],[-16,12,2.4],[16,11,3.6],[0,18,Math.PI],[-18,0,1.57],[18,2,-1.57]];
   for(let i=0;i<sp.length;i++) place(F.st, sp[i][0],sp[i][1],sp[i][2], kinds[i%kinds.length]);
   // a SHOPKEEPER standing behind each stall, facing the customer (+Z of the stall)
   const SK=[0xb23b30,0x2a6a4a,0x6a4a8a,0x9a6a2a,0x3a5a8a];
@@ -12077,29 +12077,35 @@ function buildVillage(){
     const lp=buildPerson(fg,{shirt:SK[i%SK.length],pants:pick(NPC_PANTS),skin:pick(NPC_SKIN),hair:pick(NPC_HAIR)});
     fg.position.set(sp[i][0]-0.3*Math.sin(ry), gy, sp[i][1]-0.3*Math.cos(ry)); fg.rotation.y=ry; grp.add(fg);
     VILLAGE_SHOPKEEPERS.push({lp:lp, ph:Math.random()*6.28}); }
-  place(F.cart, 6,11,1.0); place(F.barrel, -4,-12,0); place(F.barrel, -5.2,-12,0);
-  // ---- cottages along streets ----
-  const cot=[[-26,-22,0.5],[-26,-8,0.4],[-26,6,0.3],[-24,20,0.2], [26,-20,-0.5],[27,-6,-0.4],[26,8,-0.3],[25,22,-0.2],
-             [-12,-28,Math.PI],[6,-30,Math.PI],[-8,30,0],[10,32,0]];
+  place(F.cart, 8,15,1.0); place(F.barrel, -6,-16,0); place(F.barrel, -7.4,-16,0); place(F.cart, -20,-6,-0.6);
+  // ---- cottages along streets: an inner ring around the square + a larger outer ring ----
+  const cot=[ // inner ring
+             [-30,-26,0.5],[-30,-10,0.4],[-30,8,0.3],[-28,24,0.2], [30,-24,-0.5],[31,-8,-0.4],[30,10,-0.3],[29,26,-0.2],
+             [-14,-34,Math.PI],[8,-36,Math.PI],[-10,36,0],[12,38,0],
+             // outer ring — spreads the village across the plateau
+             [-54,-44,0.6],[-56,-18,0.45],[-55,12,0.3],[-50,40,0.15], [54,-42,-0.6],[57,-14,-0.45],[55,16,-0.3],[50,42,-0.18],
+             [-28,-54,Math.PI],[18,-56,Math.PI],[-22,56,0],[24,58,0],[0,-60,Math.PI],[2,62,0]];
   for(let i=0;i<cot.length;i++) place(F.cot, cot[i][0],cot[i][1], cot[i][2], i%4);
   // smoke curling from every cottage chimney (+ the tavern)
   function smokeAt(cx,cz,rotY,lcx,lcz,hy){ const co=Math.cos(rotY),si=Math.sin(rotY); addChimneySmoke(VILLAGE.x+cx+lcx*co+lcz*si, villageY+hy, VILLAGE.z+cz-lcx*si+lcz*co); }
   for(let i=0;i<cot.length;i++) smokeAt(cot[i][0],cot[i][1],cot[i][2], 1.7,0, 6.6);
-  // ---- church + tavern ----
-  place(F.ch, -40,18, 0.3);
-  place(F.tav, 38,-14, -1.4);
-  smokeAt(38,-14,-1.4, 2.6,-1.6, 7.8);
+  // ---- church + tavern (set out at the edges of the bigger village) ----
+  place(F.ch, -52,26, 0.3);
+  place(F.tav, 50,-20, -1.4);
+  smokeAt(50,-20,-1.4, 2.6,-1.6, 7.8);
   // hedges + lamps + paths
-  if(F.hedge){ place(function(s){ F.hedge(s,18); }, -18,24,0); place(function(s){ F.hedge(s,18); }, 18,24,0); }
-  for(const lp of [[-9,-9],[9,-9],[-9,9],[9,9],[0,18],[0,-18],[-20,0],[20,0]]) place(F.lamp, lp[0],lp[1],0);
-  path(0,14, 0,40, 4); path(0,-14, 0,-42, 4); path(-15,0,-40,18,3.5); path(15,0,38,-14,3.5);
+  if(F.hedge){ place(function(s){ F.hedge(s,22); }, -24,32,0); place(function(s){ F.hedge(s,22); }, 24,32,0); place(function(s){ F.hedge(s,26); }, 0,-46,0); }
+  for(const lp of [[-13,-13],[13,-13],[-13,13],[13,13],[0,24],[0,-24],[-26,0],[26,0],[-40,-26],[40,-24],[-38,30],[38,30]]) place(F.lamp, lp[0],lp[1],0);
+  // street grid radiating from the square out to the cottage rings
+  path(0,20, 0,60, 5); path(0,-20, 0,-60, 5); path(-22,0,-56,12,4); path(22,0,57,-14,4);
+  path(-20,-18,-54,-44,3.5); path(20,-16,54,-42,3.5); path(-18,18,-50,40,3.5); path(18,16,50,42,3.5);
   // dock toward the bay centre
   buildIslandDock(grp, VILLAGE.x, VILLAGE.z, villageEdge, gy, 'the village');
   // ---- villagers wandering the square + streets ----
   const SH=[0x3a5a8a,0x7a3a3a,0x3a6a4a,0x6a5a2a,0x5a3a6a,0x8a6a3a,0x35506e,0x9a4b4b];
-  for(let i=0;i<16;i++){ const fg=new THREE.Group(); fg.rotation.order='YXZ';
+  for(let i=0;i<30;i++){ const fg=new THREE.Group(); fg.rotation.order='YXZ';
     const lp=buildPerson(fg,{shirt:SH[i%SH.length],pants:pick(NPC_PANTS),skin:pick(NPC_SKIN),hair:pick(NPC_HAIR)});
-    const a=Math.random()*6.28, r=Math.random()*42, x=Math.cos(a)*r, z=Math.sin(a)*r; fg.position.set(x,gy,z); grp.add(fg);
+    const a=Math.random()*6.28, r=Math.random()*64, x=Math.cos(a)*r, z=Math.sin(a)*r; fg.position.set(x,gy,z); grp.add(fg);
     VILLAGE_NPCS.push({grp:fg,lp:lp,lx:x,lz:z,tx:x,tz:z,heading:Math.random()*6.28,speed:0,step:Math.random()*6,pause:Math.random()*3,by:gy}); }
 }
 function updateVillage(dt){
@@ -12107,7 +12113,7 @@ function updateVillage(dt){
   for(let i=0;i<VILLAGE_NPCS.length;i++){ const c=VILLAGE_NPCS[i], L=c.lp;
     if(c.pause>0){ c.pause-=dt; if(L){ L.legL.rotation.x*=0.85; L.legR.rotation.x*=0.85; L.armL.rotation.x*=0.85; L.armR.rotation.x*=0.85; } continue; }
     const dx=c.tx-c.lx, dz=c.tz-c.lz, d=Math.hypot(dx,dz);
-    if(d<1.1){ const a=Math.random()*6.28, r=Math.random()*45; c.tx=Math.cos(a)*r; c.tz=Math.sin(a)*r; if(Math.random()<0.4) c.pause=1+Math.random()*3.5; continue; }
+    if(d<1.1){ const a=Math.random()*6.28, r=Math.random()*64; c.tx=Math.cos(a)*r; c.tz=Math.sin(a)*r; if(Math.random()<0.4) c.pause=1+Math.random()*3.5; continue; }
     const want=Math.atan2(dx,dz); let dh=((want-c.heading+Math.PI*3)%(Math.PI*2))-Math.PI; c.heading+=THREE.MathUtils.clamp(dh,-3.4*dt,3.4*dt);
     const sp=Math.min(1.5, d*1.2); c.lx+=Math.sin(c.heading)*sp*dt; c.lz+=Math.cos(c.heading)*sp*dt;
     c.step+=sp*dt*2.6; const sw=Math.sin(c.step)*0.5; if(L){ L.legL.rotation.x=sw; L.legR.rotation.x=-sw; L.armL.rotation.x=-sw; L.armR.rotation.x=sw; }
@@ -12136,26 +12142,33 @@ function buildBridge(){
   const aFV=Math.atan2(dz0,dx0), aVF=Math.atan2(-dz0,-dx0);
   const x0=FARM.x+dx*(farmEdge(aFV)-3), z0=FARM.z+dz*(farmEdge(aFV)-3);
   const x1=VILLAGE.x-dx*(villageEdge(aVF)-3), z1=VILLAGE.z-dz*(villageEdge(aVF)-3);
-  const len=Math.hypot(x1-x0,z1-z0); BRIDGE={x0:x0,z0:z0,x1:x1,z1:z1,len:len,dx:(x1-x0)/len,dz:(z1-z0)/len,nx:-(z1-z0)/len,nz:(x1-x0)/len,y0:14,y1:12,arch:3.2};
+  const len=Math.hypot(x1-x0,z1-z0); BRIDGE={x0:x0,z0:z0,x1:x1,z1:z1,len:len,dx:(x1-x0)/len,dz:(z1-z0)/len,nx:-(z1-z0)/len,nz:(x1-x0)/len,y0:14,y1:12,arch:4.2};
+  const HALF=3.6;                 // half deck width (was 2.0) — a much broader, grander crossing
   function hAt(t){ return BRIDGE.y0+(BRIDGE.y1-BRIDGE.y0)*t + BRIDGE.arch*Math.sin(t*Math.PI); }
   const plankMat=new THREE.MeshStandardMaterial({color:0x9a7748,roughness:0.92}), postMat=new THREE.MeshStandardMaterial({color:0x6e5230,roughness:0.95});
   const lampDk=new THREE.MeshStandardMaterial({color:0x24242a,roughness:0.5,metalness:0.6}), lampGlow=new THREE.MeshStandardMaterial({color:0xffe6a8,emissive:0xffb340,emissiveIntensity:2.0,roughness:0.4});
-  const N=Math.max(10,Math.round(len/6)), lampEvery=Math.max(3,Math.round(N/9)), ang=Math.atan2(BRIDGE.dx,BRIDGE.dz), seg=len/N, grp=new THREE.Group(); scene.add(grp);
+  const N=Math.max(14,Math.round(len/5)), lampEvery=Math.max(3,Math.round(N/11)), ang=Math.atan2(BRIDGE.dx,BRIDGE.dz), seg=len/N, grp=new THREE.Group(); scene.add(grp);
   for(let i=0;i<N;i++){ const t0=i/N,t1=(i+1)/N,tm=(t0+t1)/2, px=x0+(x1-x0)*tm, pz=z0+(z1-z0)*tm, py=hAt(tm), tilt=Math.atan2(hAt(t1)-hAt(t0),seg);
-    const deck=new THREE.Mesh(new THREE.BoxGeometry(4.2,0.3,seg+0.3),plankMat); deck.position.set(px,py,pz); deck.rotation.order='YXZ'; deck.rotation.y=ang; deck.rotation.x=-tilt; deck.castShadow=deck.receiveShadow=true; grp.add(deck);
-    if(i%2===0) for(const sgn of [-1,1]){ const plen=py+5, post=new THREE.Mesh(new THREE.CylinderGeometry(0.24,0.24,plen,8),postMat); post.position.set(px+BRIDGE.nx*1.9*sgn, py-plen/2, pz+BRIDGE.nz*1.9*sgn); post.castShadow=true; grp.add(post); }
-    for(const sgn of [-1,1]){ const rx=px+BRIDGE.nx*2.0*sgn, rz=pz+BRIDGE.nz*2.0*sgn;
-      const rp=new THREE.Mesh(new THREE.BoxGeometry(0.12,1.0,0.12),postMat); rp.position.set(rx,py+0.5,rz); grp.add(rp);
-      const rl=new THREE.Mesh(new THREE.BoxGeometry(0.1,0.12,seg+0.3),plankMat); rl.position.set(rx,py+0.98,rz); rl.rotation.order='YXZ'; rl.rotation.y=ang; rl.rotation.x=-tilt; grp.add(rl); }
+    const deck=new THREE.Mesh(new THREE.BoxGeometry(HALF*2+0.4,0.34,seg+0.3),plankMat); deck.position.set(px,py,pz); deck.rotation.order='YXZ'; deck.rotation.y=ang; deck.rotation.x=-tilt; deck.castShadow=deck.receiveShadow=true; grp.add(deck);
+    // trestle piers every other segment: a pair of legs + a cross-brace between them
+    if(i%2===0){ const legs=[];
+      for(const sgn of [-1,1]){ const plen=py+6, post=new THREE.Mesh(new THREE.CylinderGeometry(0.32,0.36,plen,8),postMat); const lx=px+BRIDGE.nx*(HALF-0.3)*sgn, lz=pz+BRIDGE.nz*(HALF-0.3)*sgn; post.position.set(lx, py-plen/2, lz); post.castShadow=true; grp.add(post); legs.push([lx,lz]); }
+      // diagonal cross-brace across the two legs, halfway down
+      const bcx=(legs[0][0]+legs[1][0])/2, bcz=(legs[0][1]+legs[1][1])/2, span=HALF*2-0.6, brace=new THREE.Mesh(new THREE.BoxGeometry(span,0.18,0.18),postMat); brace.position.set(bcx,py-2.6,bcz); brace.rotation.y=ang+Math.PI/2; grp.add(brace);
+      const beam=new THREE.Mesh(new THREE.BoxGeometry(span,0.3,0.3),postMat); beam.position.set(bcx,py-0.45,bcz); beam.rotation.y=ang+Math.PI/2; grp.add(beam); }
+    for(const sgn of [-1,1]){ const rx=px+BRIDGE.nx*HALF*sgn, rz=pz+BRIDGE.nz*HALF*sgn;
+      const rp=new THREE.Mesh(new THREE.BoxGeometry(0.14,1.2,0.14),postMat); rp.position.set(rx,py+0.6,rz); grp.add(rp);
+      const rl=new THREE.Mesh(new THREE.BoxGeometry(0.12,0.14,seg+0.3),plankMat); rl.position.set(rx,py+1.14,rz); rl.rotation.order='YXZ'; rl.rotation.y=ang; rl.rotation.x=-tilt; grp.add(rl);
+      const rlMid=new THREE.Mesh(new THREE.BoxGeometry(0.1,0.1,seg+0.3),plankMat); rlMid.position.set(rx,py+0.6,rz); rlMid.rotation.order='YXZ'; rlMid.rotation.y=ang; rlMid.rotation.x=-tilt; grp.add(rlMid); }
     // glowing LANTERNS on alternating railings for night
-    if(i%lampEvery===0){ const sgn=((i/lampEvery)%2)?1:-1, lx=px+BRIDGE.nx*1.9*sgn, lz=pz+BRIDGE.nz*1.9*sgn;
-      const lp=new THREE.Mesh(new THREE.CylinderGeometry(0.07,0.09,2.5,8),lampDk); lp.position.set(lx,py+1.25,lz); lp.castShadow=true; grp.add(lp);
-      const base=new THREE.Mesh(new THREE.CylinderGeometry(0.13,0.06,0.1,6),lampDk); base.position.set(lx,py+2.2,lz); grp.add(base);
-      const glow=new THREE.Mesh(new THREE.BoxGeometry(0.22,0.32,0.22),lampGlow); glow.position.set(lx,py+2.42,lz); grp.add(glow);
-      const cap=new THREE.Mesh(new THREE.ConeGeometry(0.17,0.16,6),lampDk); cap.position.set(lx,py+2.66,lz); grp.add(cap);
-      const pl=new THREE.PointLight(0xffb860,0.5,12,2); pl.position.set(lx,py+2.4,lz); grp.add(pl); } }
+    if(i%lampEvery===0){ const sgn=((i/lampEvery)%2)?1:-1, lx=px+BRIDGE.nx*HALF*sgn, lz=pz+BRIDGE.nz*HALF*sgn;
+      const lp=new THREE.Mesh(new THREE.CylinderGeometry(0.08,0.11,2.9,8),lampDk); lp.position.set(lx,py+1.45,lz); lp.castShadow=true; grp.add(lp);
+      const base=new THREE.Mesh(new THREE.CylinderGeometry(0.15,0.07,0.12,6),lampDk); base.position.set(lx,py+2.55,lz); grp.add(base);
+      const glow=new THREE.Mesh(new THREE.BoxGeometry(0.26,0.38,0.26),lampGlow); glow.position.set(lx,py+2.82,lz); grp.add(glow);
+      const cap=new THREE.Mesh(new THREE.ConeGeometry(0.2,0.18,6),lampDk); cap.position.set(lx,py+3.1,lz); grp.add(cap);
+      const pl=new THREE.PointLight(0xffb860,0.6,14,2); pl.position.set(lx,py+2.8,lz); grp.add(pl); } }
 }
-function onBridge(x,z){ if(!BRIDGE) return false; const ax=x-BRIDGE.x0, az=z-BRIDGE.z0, along=ax*BRIDGE.dx+az*BRIDGE.dz; if(along<-1||along>BRIDGE.len+1) return false; return Math.abs(ax*BRIDGE.nx+az*BRIDGE.nz)<2.0; }
+function onBridge(x,z){ if(!BRIDGE) return false; const ax=x-BRIDGE.x0, az=z-BRIDGE.z0, along=ax*BRIDGE.dx+az*BRIDGE.dz; if(along<-1||along>BRIDGE.len+1) return false; return Math.abs(ax*BRIDGE.nx+az*BRIDGE.nz)<3.5; }
 function bridgeHeight(x,z){ if(!BRIDGE) return 0; const ax=x-BRIDGE.x0, az=z-BRIDGE.z0, t=Math.max(0,Math.min(1,(ax*BRIDGE.dx+az*BRIDGE.dz)/BRIDGE.len)); return BRIDGE.y0+(BRIDGE.y1-BRIDGE.y0)*t + BRIDGE.arch*Math.sin(t*Math.PI)+0.18; }
 function buildWorld(){
   // ---- terrain (islands + seabed) ----
