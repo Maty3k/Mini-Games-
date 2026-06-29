@@ -262,7 +262,7 @@ const ISLANDS=[];
   ring.forEach(o=>ISLANDS.push({x:Math.cos(o.a)*o.r, z:Math.sin(o.a)*o.r, h:o.h, s:o.s}));
   ISLANDS.push({x:90,z:70,h:20,s:85});       // one small rock well inside the loop, decoration
   ISLANDS.push({x:-705,z:-309,h:46,s:62});   // rocky lighthouse islet guarding the harbour mouth
-  ISLANDS.push({x:500,z:-1015,h:38,s:175});  // FARM island — flat plateau via the farm shelf in landH (clear of course + ring islands)
+  ISLANDS.push({x:500,z:-1015,h:36,s:225});  // FARM island — flat plateau via the (irregular) farm shelf in landH (clear of course + ring islands)
 })();
 const CITY={x:-1180,z:-360};      // port-city coastal shelf on the bay's rim (gap between islands)
 const LH_ISLE={x:-705,z:-309};    // the lighthouse sits out here, not in the city
@@ -270,6 +270,7 @@ const FARM={x:500,z:-1015}, farmY=14;   // pastoral farm island in the south-eas
 const plateauY=15;                // flat city-core ground height
 function fbm(x,z){ let v=0,a=0.5,fx=x,fz=z; for(let o=0;o<5;o++){ v+=a*Math.sin(fx)*Math.cos(fz); fx=fx*1.93+1.7; fz=fz*2.07-0.9; a*=0.5; } return v; }
 function ridged(x,z){ let v=0,a=0.5,fx=x,fz=z; for(let o=0;o<4;o++){ v+=a*(1.0-Math.abs(Math.sin(fx)*Math.cos(fz))); fx=fx*1.97+1.3; fz=fz*2.03-0.7; a*=0.5; } return v-0.62; }
+function farmEdge(a){ return 168 + 24*Math.sin(a*2+0.6) + 15*Math.sin(a*3-1.1) + 9*Math.cos(a*5+0.3); }   // irregular farm-island coastline radius by angle (min ~120, max ~216)
 function landH(x,z){              // metres above sea (negative = seabed)
   let mass=0;
   for(const is of ISLANDS){ const dx=x-is.x,dz=z-is.z; mass += is.h*Math.exp(-(dx*dx+dz*dz)/(is.s*is.s*0.62)); }
@@ -281,9 +282,9 @@ function landH(x,z){              // metres above sea (negative = seabed)
   const cd=Math.hypot(x-CITY.x,z-CITY.z); let shelf=-26;
   if(cd<316) shelf=15; else if(cd<460) shelf=15+(cd-316)/144*(-41);   // flat city core (paved); ramps to the shore
   if(shelf>-26){ h=Math.max(h, shelf); }                              // no noise on the city plateau — keep it dead flat for streets
-  // farm island: flat pasture plateau (~14 m) ramping down to its shore
-  const fd=Math.hypot(x-FARM.x,z-FARM.z); let fshelf=-26;
-  if(fd<160) fshelf=farmY; else if(fd<300) fshelf=farmY+(fd-160)/140*(-40);
+  // farm island: flat pasture plateau (~14 m) with an IRREGULAR coastline, ramping down to the shore
+  const dxF=x-FARM.x, dzF=z-FARM.z, fd=Math.hypot(dxF,dzF), fE=farmEdge(Math.atan2(dzF,dxF)); let fshelf=-26;
+  if(fd<fE) fshelf=farmY; else if(fd<fE+72) fshelf=farmY+(fd-fE)/72*(-40);
   if(fshelf>-26){ h=Math.max(h, fshelf); }
   return h;
 }
@@ -10832,6 +10833,22 @@ function buildHorse(g){
 }
 // ===== farm island layout =====
 const FARM_SAILS=[], FARM_ANIMALS=[]; let FARM_TRACTOR=null;
+// varied tree builder for the farm island — type: 'oak' | 'pine' | 'bushy' | 'fruit'; sc = size scale
+function buildFarmTree(g, type, sc){
+  sc=sc||1; const greens=[0x3f7a32,0x4f8f3a,0x356b2c,0x5fa043,0x47853a];
+  const trunkMat=new THREE.MeshStandardMaterial({color:(0x5a3c20+((Math.random()*0x10)|0)*0x1000),roughness:0.95});
+  function leaf(){ return new THREE.MeshStandardMaterial({color:greens[(Math.random()*greens.length)|0],roughness:0.9}); }
+  function trunk(r,h){ const m=new THREE.Mesh(new THREE.CylinderGeometry(r*0.7,r,h,7),trunkMat); m.position.y=h/2; m.castShadow=true; m.receiveShadow=true; g.add(m); return h; }
+  function blob(geo,m,x,y,z,sy){ const b=new THREE.Mesh(geo,m); b.position.set(x,y,z); if(sy)b.scale.y=sy; b.castShadow=true; g.add(b); return b; }
+  if(type==='pine'){ const th=trunk(0.26*sc,3.0*sc), dk=new THREE.MeshStandardMaterial({color:0x2f5f2a,roughness:0.9});
+    for(let i=0;i<4;i++) blob(new THREE.ConeGeometry((1.8-i*0.34)*sc,(1.6-i*0.12)*sc,9),dk, 0, th-0.6*sc+i*1.05*sc, 0); }
+  else if(type==='bushy'){ const th=trunk(0.22*sc,1.5*sc), m=leaf();
+    for(let i=0;i<5;i++) blob(new THREE.SphereGeometry((1.0+Math.random()*0.5)*sc,8,7), (i?leaf():m), (Math.random()-0.5)*1.5*sc, th+0.5*sc+Math.random()*0.9*sc, (Math.random()-0.5)*1.5*sc); }
+  else if(type==='fruit'){ const th=trunk(0.2*sc,1.7*sc), m=leaf(); blob(new THREE.SphereGeometry(1.7*sc,9,8),m, 0, th+1.2*sc, 0, 0.85);
+    const fm=new THREE.MeshStandardMaterial({color:0xd23b2e,roughness:0.6}); for(let i=0;i<8;i++){ const a=Math.random()*6.28; blob(new THREE.SphereGeometry(0.15*sc,6,5),fm, Math.cos(a)*1.4*sc, th+0.8*sc+Math.random()*1.0*sc, Math.sin(a)*1.4*sc); } }
+  else { const th=trunk(0.32*sc,3.4*sc), m=leaf(); blob(new THREE.SphereGeometry(2.4*sc,10,9),m, 0, th+1.4*sc, 0, 0.92);   // round oak
+    for(let i=0;i<3;i++){ const a=i/3*6.28; blob(new THREE.SphereGeometry((1.3+Math.random()*0.5)*sc,8,7),leaf(), Math.cos(a)*1.8*sc, th+1.0*sc+Math.random()*1.1*sc, Math.sin(a)*1.8*sc); } }
+}
 // idle-animate the farm animals (bob/sway/graze) + the wandering farmer — only when the camera is near the farm (LOD)
 function updateFarm(dt){
   if(camera.position.x===undefined) return;
@@ -10864,29 +10881,37 @@ function buildFarm(){
         pondMat =new THREE.MeshStandardMaterial({color:0x2f7fa8,roughness:0.18,metalness:0.0,transparent:true,opacity:0.85,envMapIntensity:0.6}),
         plankMat=new THREE.MeshStandardMaterial({color:0x9a7748,roughness:0.9}),
         postMat =new THREE.MeshStandardMaterial({color:0x6e5230,roughness:0.95});
-  // grass pasture cover over the plateau
-  const grass=new THREE.Mesh(new THREE.CircleGeometry(152,56),grassMat); grass.rotation.x=-Math.PI/2; grass.position.y=gy+0.04; grass.receiveShadow=true; grp.add(grass);
+  // grass pasture with a TILED grass texture + an IRREGULAR coastline (no perfect circle)
+  function grassTex(){ const c=document.createElement('canvas'); c.width=128; c.height=128; const x=c.getContext('2d');
+    const g0=x.createLinearGradient(0,0,128,128); g0.addColorStop(0,'#6f9c41'); g0.addColorStop(1,'#5c8a36'); x.fillStyle=g0; x.fillRect(0,0,128,128);
+    for(let i=0;i<55;i++){ x.fillStyle='rgba('+(90+Math.random()*40|0)+','+(140+Math.random()*50|0)+',60,0.22)'; x.beginPath(); x.arc(Math.random()*128,Math.random()*128,8+Math.random()*22,0,7); x.fill(); }
+    for(let i=0;i<1100;i++){ const px=Math.random()*128, py=Math.random()*128, l=2+Math.random()*4; x.strokeStyle='rgba('+(70+Math.random()*60|0)+','+(120+Math.random()*70|0)+','+(40+Math.random()*30|0)+',0.55)'; x.lineWidth=1; x.beginPath(); x.moveTo(px,py); x.lineTo(px+(Math.random()-0.5)*3, py-l); x.stroke(); }
+    const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; t.anisotropy=4; return t; }
+  grassMat.map=grassTex(); grassMat.color.setHex(0xffffff); grassMat.needsUpdate=true;
+  { const segs=84, pos=[0,0,0], uv=[0.5,0.5], idx=[];
+    for(let i=0;i<=segs;i++){ const a=i/segs*Math.PI*2, r=farmEdge(a)-2, px=Math.cos(a)*r, pz=Math.sin(a)*r; pos.push(px,0,pz); uv.push(px/9, pz/9); }
+    for(let i=1;i<=segs;i++) idx.push(0,i,i+1);
+    const gg=new THREE.BufferGeometry(); gg.setAttribute('position',new THREE.Float32BufferAttribute(pos,3)); gg.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2)); gg.setIndex(idx); gg.computeVertexNormals();
+    const grass=new THREE.Mesh(gg,grassMat); grass.position.y=gy+0.04; grass.receiveShadow=true; grp.add(grass); }
   // place a builder at local (x,z) facing rotY
   function place(fn,x,z,rotY,arg){ const sg=new THREE.Group(); sg.position.set(x,gy,z); sg.rotation.y=rotY||0;
     try{ if(arg!==undefined) return fn(sg,arg)||sg; return fn(sg)||sg; }catch(e){ console.warn('farm:',fn&&fn.name,e&&e.message); } finally{ grp.add(sg); } return sg; }
   // dirt strip path between two local points
   function path(x1,z1,x2,z2,w){ const dx=x2-x1,dz=z2-z1,len=Math.hypot(dx,dz)||1; const p=new THREE.Mesh(new THREE.BoxGeometry(w||3.2,0.08,len),dirtMat);
     p.position.set((x1+x2)/2,gy+0.06,(z1+z2)/2); p.rotation.y=Math.atan2(dx,dz); p.receiveShadow=true; grp.add(p); }
-  // rectangular post-and-rail pen using buildFence on each side (with a gate gap on the front)
-  function pen(cx,cz,w,d){ const half=[w/2,d/2];
-    place(buildFence,cx,cz-half[1],0,d);                 // back (along z)... no: fences run along +Z
-    // four sides: two along z (length d) at x=±w/2, two along x (length w) at z=±d/2
-    place(function(s){ buildFence(s,d); }, cx-w/2, cz, 0);
-    place(function(s){ buildFence(s,d); }, cx+w/2, cz, 0);
-    place(function(s){ buildFence(s,w); }, cx, cz-d/2, Math.PI/2);
-    place(function(s){ buildFence(s,w-7); }, cx+3.5, cz+d/2, Math.PI/2);   // front rail with a gate gap
+  // fully-enclosed rectangular post-and-rail pen (a fence on each of the four sides, corners meeting)
+  function pen(cx,cz,w,d){
+    place(function(s){ buildFence(s,d); }, cx-w/2, cz, 0);          // left  (runs along Z)
+    place(function(s){ buildFence(s,d); }, cx+w/2, cz, 0);          // right (runs along Z)
+    place(function(s){ buildFence(s,w); }, cx, cz-d/2, Math.PI/2);  // back  (runs along X)
+    place(function(s){ buildFence(s,w); }, cx, cz+d/2, Math.PI/2);  // front (runs along X)
   }
 
   // ---- buildings ----
   place(buildFarmhouse, -46, 40, Math.PI);
   place(buildBarn,       34, 46, Math.PI);
   place(buildSilo,       60, 44, 0);
-  place(buildWaterTower, 66, 64, 0);
+  place(buildWaterTower, 48, 54, 0);
   const wm=place(buildWindmill, 84, 4, 0); if(wm && wm.sails) FARM_SAILS.push(wm.sails);
 
   // ---- crop fields (grid) with a perimeter fence + scarecrow + tractor ----
@@ -10943,6 +10968,17 @@ function buildFarm(){
   path(0,8, -64,-26, 3.2); // pasture -> fields
   path(0,8, 6,-58, 3);     // pasture -> pond
 
+  // ---- many trees of varied type & size: a coastal belt (outside the tractor loop) + a small orchard ----
+  const TT=['oak','pine','bushy','round','oak','pine','fruit','bushy','oak'];
+  const dockA=Math.atan2(-FARM.z,-FARM.x);   // keep the dock approach clear
+  let nt=0,tries=0;
+  while(nt<36 && tries<300){ tries++; const a=Math.random()*Math.PI*2, fe=farmEdge(a), inner=120;
+    if(fe-12<=inner) continue;                                                   // no room outside the tractor loop in this direction
+    if(Math.abs(((a-dockA+Math.PI*3)%(Math.PI*2))-Math.PI)<0.3) continue;        // skip the dock approach
+    const r=inner+Math.random()*(fe-12-inner), x=Math.cos(a)*r, z=Math.sin(a)*r, ty=TT[(Math.random()*TT.length)|0];
+    place(function(s){ buildFarmTree(s, ty, 0.7+Math.random()*1.1); }, x, z, Math.random()*6.28); nt++; }
+  // a tidy orchard of fruit trees north of the farmhouse
+  for(let r=0;r<2;r++) for(let c=0;c<3;c++) place(function(s){ buildFarmTree(s,'fruit',0.85+Math.random()*0.3); }, -32+c*9, 56+r*8, Math.random()*6.28);
   // ---- a small wooden DOCK on the lagoon-facing shore (toward the bay centre) ----
   (function(){ const au={x:(-FARM.x), z:(-FARM.z)}; const L=Math.hypot(au.x,au.z); au.x/=L; au.z/=L;   // unit vector toward origin
     const dx=au.x*196, dz=au.z*196, ang=Math.atan2(au.x,au.z);
