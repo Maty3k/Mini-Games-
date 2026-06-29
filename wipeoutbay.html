@@ -29,6 +29,14 @@
   #back:hover{ opacity:1; background:rgba(255,255,255,.12); }
   #title{ font-size:16px; font-weight:700; letter-spacing:2px; opacity:.9; }
   #title small{ font-weight:500; opacity:.6; letter-spacing:1px; }
+  /* time-of-day clock */
+  #clock{ margin-left:auto; pointer-events:auto; display:flex; align-items:center; gap:9px;
+    padding:7px 14px; border:1px solid rgba(255,255,255,.18); border-radius:10px;
+    background:rgba(4,12,20,.42); box-shadow:0 4px 16px rgba(0,0,0,.35); cursor:pointer; user-select:none; transition:.15s; }
+  #clock:hover{ background:rgba(255,255,255,.1); }
+  #clock .ico{ font-size:18px; line-height:1; }
+  #clock .ct{ font-size:19px; font-weight:800; letter-spacing:1px; font-variant-numeric:tabular-nums; }
+  #clock .ph{ font-size:10px; font-weight:600; letter-spacing:1.5px; opacity:.55; text-transform:uppercase; }
   /* gauges bottom-left */
   #gauges{ left:24px; bottom:22px; display:flex; align-items:flex-end; gap:24px; }
   .spd{ display:flex; align-items:baseline; gap:6px; }
@@ -107,6 +115,7 @@
   <div class="ui" id="top">
     <a id="back" href="index.html">‹ Arcade</a>
     <div id="title">WIPEOUT BAY <small>· jetski time-trial</small></div>
+    <div id="clock" title="Time of day — click to skip ahead 3h" onclick="timeOfDay=(timeOfDay+3)%24; this.blur();"><span class="ico" id="clockIco">☀️</span><div><div class="ct" id="clockTime">09:00</div><div class="ph" id="clockPhase">morning</div></div></div>
   </div>
   <div class="ui" id="obj"><div class="lab">next gate</div><div class="dist"><b id="dist">0</b><span>m</span></div></div>
   <div class="ui" id="storm"><label>Storm</label><div id="stormbar"><div id="stormfill"></div></div></div>
@@ -138,7 +147,7 @@
   <div id="panel">
     <h1><span>WIPEOUT BAY</span></h1>
     <p id="ptext">Carve a jetski around the buoy course ringing the bay — pass through <b>every lit gate</b> in order, each one buys you more time, while the <b>storm</b> rolls in and the sea turns wild. Or just explore the bay, the islands and the port city in <b>free roam</b>.</p>
-    <p class="keys"><b>W / ↑</b> throttle &nbsp; <b>S / ↓</b> brake &nbsp; <b>A D / ← →</b> steer &nbsp; <b>Shift</b> boost</p>
+    <p class="keys"><b>W / ↑</b> throttle &nbsp; <b>S / ↓</b> brake &nbsp; <b>A D / ← →</b> steer &nbsp; <b>Shift</b> boost &nbsp; <b>T</b> skip time</p>
     <div id="modes">
       <button id="goTrial" class="modebtn primary">⏱ TIME TRIAL</button>
       <button id="goFree" class="modebtn">🧭 FREE ROAM</button>
@@ -186,7 +195,63 @@ sun.shadow.camera.near=10; sun.shadow.camera.far=2200;
 { const S=900; sun.shadow.camera.left=-S; sun.shadow.camera.right=S; sun.shadow.camera.top=S; sun.shadow.camera.bottom=-S; }
 sun.shadow.bias=-0.0003;
 scene.add(sun, sun.target);
-scene.add(new THREE.HemisphereLight(0xcfe7ff, 0x2a4a5a, 0.55));
+const hemi=new THREE.HemisphereLight(0xcfe7ff, 0x2a4a5a, 0.55);
+scene.add(hemi);
+
+// ============================================================
+//  DAY / NIGHT CYCLE — one clock drives sun angle, light colour,
+//  haze and exposure through a ring of hand-tuned sky keyframes.
+// ============================================================
+let timeOfDay=9.0;                 // hours, 0..24 (starts mid-morning)
+const DAY_SECONDS=240;             // real seconds for a full 24h cycle (~2min day, ~2min night)
+let sunBaseIntensity=2.6;          // read by the cruise-ship lighting override below
+let exposureBase=1.05;             // base tone-map exposure (storm subtracts from this)
+// keyframes: hour, fog, sun colour, sun intensity, hemi-sky, hemi-ground, hemi intensity, exposure, sun elev°, sun az°
+const SKY_STOPS=[
+  {h:0.0,  fog:0x0a1420, sun:0x3a4a6a, si:0.22, hs:0x223044, hg:0x0a1018, hi:0.16, ex:0.42, el:-30, az:20},
+  {h:5.0,  fog:0x16304a, sun:0x44597a, si:0.30, hs:0x2c4258, hg:0x121a22, hi:0.24, ex:0.50, el:-8,  az:70},
+  {h:6.5,  fog:0xe0a06a, sun:0xffb060, si:1.95, hs:0x8fb0d0, hg:0x4a4438, hi:0.40, ex:0.92, el:5,   az:86},
+  {h:9.0,  fog:0x9fc4d8, sun:0xfff0d8, si:2.60, hs:0xcfe7ff, hg:0x2a4a5a, hi:0.55, ex:1.05, el:34,  az:106},
+  {h:12.0, fog:0xb6d8e6, sun:0xfff6e6, si:2.85, hs:0xd6ecff, hg:0x3a5a6a, hi:0.60, ex:1.08, el:62,  az:150},
+  {h:15.0, fog:0xa8cbdc, sun:0xfff0d8, si:2.60, hs:0xcfe7ff, hg:0x2a4a5a, hi:0.55, ex:1.05, el:38,  az:208},
+  {h:17.5, fog:0xf0b070, sun:0xffa848, si:2.20, hs:0xb0c0d8, hg:0x5a4a38, hi:0.42, ex:0.95, el:10,  az:250},
+  {h:19.0, fog:0xc06a40, sun:0xff7a3a, si:1.15, hs:0x6a6a90, hg:0x2a2230, hi:0.30, ex:0.72, el:-3,  az:268},
+  {h:20.5, fog:0x283a52, sun:0x4a5578, si:0.40, hs:0x33415a, hg:0x12161e, hi:0.22, ex:0.52, el:-14, az:286},
+  {h:22.0, fog:0x0e1826, sun:0x3a4a6a, si:0.24, hs:0x223044, hg:0x0a1018, hi:0.17, ex:0.44, el:-28, az:320},
+  {h:24.0, fog:0x0a1420, sun:0x3a4a6a, si:0.22, hs:0x223044, hg:0x0a1018, hi:0.16, ex:0.42, el:-30, az:344},
+];
+const _cA=new THREE.Color(), _cB=new THREE.Color();
+function _lerpHex(out,a,b,t){ _cA.setHex(a); _cB.setHex(b); out.copy(_cA).lerp(_cB,t); return out; }
+const _fogC=new THREE.Color(), _hsC=new THREE.Color(), _hgC=new THREE.Color();
+function updateDayNight(dt){
+  timeOfDay=(timeOfDay + dt*24/DAY_SECONDS) % 24;
+  // find the bracketing keyframes
+  let i=0; while(i<SKY_STOPS.length-1 && SKY_STOPS[i+1].h<=timeOfDay) i++;
+  const A=SKY_STOPS[i], Bk=SKY_STOPS[Math.min(i+1,SKY_STOPS.length-1)];
+  const span=Math.max(0.001, Bk.h-A.h), t=THREE.MathUtils.clamp((timeOfDay-A.h)/span,0,1);
+  setSunDir(THREE.MathUtils.lerp(A.el,Bk.el,t), THREE.MathUtils.lerp(A.az,Bk.az,t));
+  sun.color.copy(_lerpHex(_cA, A.sun, Bk.sun, t));
+  sunBaseIntensity=THREE.MathUtils.lerp(A.si,Bk.si,t);
+  exposureBase=THREE.MathUtils.lerp(A.ex,Bk.ex,t);
+  _lerpHex(_fogC, A.fog, Bk.fog, t);
+  if(scene.fog) scene.fog.color.copy(_fogC);
+  hemi.color.copy(_lerpHex(_hsC, A.hs, Bk.hs, t));
+  hemi.groundColor.copy(_lerpHex(_hgC, A.hg, Bk.hg, t));
+  hemi.intensity=THREE.MathUtils.lerp(A.hi,Bk.hi,t);
+}
+function clockLabel(){ const h=Math.floor(timeOfDay), m=Math.floor((timeOfDay-h)*60);
+  const hh=(h<10?'0':'')+h, mm=(m<10?'0':'')+m;
+  let ico,ph;
+  if(timeOfDay<5){ ico='🌙'; ph='night'; }
+  else if(timeOfDay<6.8){ ico='🌅'; ph='dawn'; }
+  else if(timeOfDay<11){ ico='☀️'; ph='morning'; }
+  else if(timeOfDay<15){ ico='☀️'; ph='midday'; }
+  else if(timeOfDay<17.5){ ico='🌤️'; ph='afternoon'; }
+  else if(timeOfDay<19.2){ ico='🌇'; ph='sunset'; }
+  else if(timeOfDay<21){ ico='🌆'; ph='dusk'; }
+  else { ico='🌙'; ph='night'; }
+  return {time:hh+':'+mm, ico, ph};
+}
 
 // ============================================================
 //  WAVE FIELD (Gerstner) — single source of truth
@@ -12315,7 +12380,8 @@ addEventListener('keydown',e=>{ const k=e.key.toLowerCase();
   if(typeof deckMenuOpen!=='undefined' && deckMenuOpen && k==='escape') hideDeckMenu();
   if(k==='r'&&running&&mode==='free'&&pmode==='ski') recenter();
   if(k==='f'&&running&&nearAction&&!freecam) doAction(nearAction);
-  if(k==='v'&&running) toggleFreecam(); });
+  if(k==='v'&&running) toggleFreecam();
+  if(k==='t'){ timeOfDay=(timeOfDay+3)%24; } });   // skip ahead 3 hours through the day/night cycle
 addEventListener('keyup',e=>{ keys[e.key.toLowerCase()]=false; });
 let touchSteer=0, touching=false;
 cv.addEventListener('touchstart',e=>{touching=true;e.preventDefault();},{passive:false});
@@ -12353,6 +12419,7 @@ function toast(msg,col){ toastEl.textContent=msg; toastEl.style.color=col||'#fff
   clearTimeout(toast._t); toast._t=setTimeout(()=>toastEl.style.opacity='0',900); }
 function updateHUD(){ const _spd=(typeof pmode!=='undefined'&&pmode==='foot')?AV.speed:(typeof pmode!=='undefined'&&pmode==='car')?CAR.speed:B.speed;
   spdEl.textContent=Math.round(Math.abs(_spd)*3.6); stormFill.style.width=Math.round(storm*100)+'%';
+  { const cl=clockLabel(); el('clockTime').textContent=cl.time; el('clockIco').textContent=cl.ico; el('clockPhase').textContent=cl.ph; }
   if(mode!=='trial') return;
   timeEl.textContent=Math.max(0,Math.ceil(timeLeft)); timeEl.className=timeLeft<8?'warn':'';
   gateEl.textContent=gatesPassed; lapEl.textContent=lap;
@@ -13620,6 +13687,7 @@ function loop(now){
   if(rawDt>0.001 && rawDt<0.5) fpsSmooth += (1/rawDt - fpsSmooth)*0.08;   // smoothed FPS for adaptive resolution
   adaptResolution(dt);
   gameT+=dt;
+  updateDayNight(dt);
 
   if(running){
     storm = mode==='trial' ? Math.min(1, storm+dt*0.011) : Math.min(0.45, storm+dt*0.004);
@@ -13716,7 +13784,7 @@ function loop(now){
     for(let i=0;i<RN;i++){ rPos[i*3+1]-=(170+120*storm)*dt; rPos[i*3]+=20*dt;
       if(rPos[i*3+1]<0){ rPos[i*3+1]=240+Math.random()*30; rPos[i*3]=(Math.random()-0.5)*500; rPos[i*3+2]=(Math.random()-0.5)*500; } }
     rGeo.attributes.position.needsUpdate=true; }
-  renderer.toneMappingExposure=1.02-0.22*storm; scene.fog.density=0.00055+0.0007*storm;
+  renderer.toneMappingExposure=Math.max(0.18, exposureBase-0.22*storm); scene.fog.density=0.00055+0.0007*storm;
 
   // water follows the camera target; feed the shared clock to the GPU
   WATER.position.set(Math.round(FX),0,Math.round(FZ));
@@ -13767,7 +13835,7 @@ function loop(now){
     const onShip = pmode==='aboard' && aboard && aboard.entry===_ce;
     const onSunDeck = onShip && aboard.levels && aboard.level===aboard.levels.length-1;   // open-air top deck
     if(onShip!==cruiseExtHidden){ if(_ce) setCruiseExterior(_ce, onShip); cruiseExtHidden=onShip; }   // hide the ship's solid exterior while aboard
-    sun.intensity = (onShip && !onSunDeck) ? 0.85 : 2.6;   // dim under the glass roof so it doesn't blow out the interior; full daylight on the open sun deck
+    sun.intensity = (onShip && !onSunDeck) ? sunBaseIntensity*0.33 : sunBaseIntensity;   // dim under the glass roof so it doesn't blow out the interior; full daylight on the open sun deck (sunBaseIntensity tracks the day/night cycle)
     sun.castShadow = !onShip;
     // hide the outside world on enclosed decks; show it on the open sun deck and on the promenade pool-deck band (4 m hysteresis)
     let wc;
@@ -13839,6 +13907,7 @@ function adaptResolution(dt){ warmup+=dt; if(warmup<2.5) return;       // let th
 // expose for headless verification
 window.__wb={B,WAVES,seaY,seaNormal,GATES,keys,get composer(){return composer;},
   get storm(){return storm;},set storm(v){storm=v;}, get gameT(){return gameT;},
+  get timeOfDay(){return timeOfDay;}, set timeOfDay(v){timeOfDay=((v%24)+24)%24; updateDayNight(0);},
   get gatesPassed(){return gatesPassed;}, get score(){return score;}, get nextGate(){return nextGate;},
   get running(){return running;},set running(v){running=v;}, set lastT(v){lastT=v;}, reset:resetRun, loopOnce:loop,
   start:start, get mode(){return mode;}, set mode(v){mode=v;}, CITY, landH, recenter,
