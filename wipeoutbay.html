@@ -59,13 +59,15 @@
   #prompt{ bottom:104px; left:50%; transform:translateX(-50%); font-size:15px; font-weight:700; letter-spacing:.4px; color:#eaf6ff;
     background:rgba(8,18,28,.62); border:1px solid rgba(255,255,255,.28); border-radius:30px; padding:11px 22px; opacity:0; transition:opacity .18s; }
   /* helicopter menu */
-  #helimenu{ left:50%; top:50%; transform:translate(-50%,-50%); display:none; flex-direction:column; gap:10px; pointer-events:auto;
+  #helimenu, #deckmenu{ left:50%; top:50%; transform:translate(-50%,-50%); display:none; flex-direction:column; gap:10px; pointer-events:auto;
     background:rgba(8,18,28,.82); border:1px solid rgba(120,200,255,.4); border-radius:18px; padding:22px 26px; min-width:300px; box-shadow:0 18px 60px rgba(0,0,0,.6); }
-  #helimenu .hm-title{ font-size:13px; font-weight:800; letter-spacing:2.5px; color:#8fd0ff; text-align:center; margin-bottom:6px; }
-  #helimenu .hm-btn{ font:inherit; font-size:16px; font-weight:700; color:#eaf6ff; text-align:left; cursor:pointer;
+  #helimenu .hm-title, #deckmenu .hm-title{ font-size:13px; font-weight:800; letter-spacing:2.5px; color:#8fd0ff; text-align:center; margin-bottom:6px; }
+  #helimenu .hm-btn, #deckmenu .hm-btn{ font:inherit; font-size:16px; font-weight:700; color:#eaf6ff; text-align:left; cursor:pointer;
     background:rgba(30,60,90,.5); border:1px solid rgba(255,255,255,.18); border-radius:12px; padding:13px 18px; transition:all .12s; }
-  #helimenu .hm-btn:hover{ background:rgba(60,120,180,.7); border-color:rgba(150,220,255,.7); transform:translateX(3px); }
-  #helimenu .hm-btn.cancel{ font-size:14px; color:#9fb3c2; text-align:center; background:transparent; border-color:rgba(255,255,255,.12); }
+  #helimenu .hm-btn:hover, #deckmenu .hm-btn:hover{ background:rgba(60,120,180,.7); border-color:rgba(150,220,255,.7); transform:translateX(3px); }
+  #helimenu .hm-btn.cancel, #deckmenu .hm-btn.cancel{ font-size:14px; color:#9fb3c2; text-align:center; background:transparent; border-color:rgba(255,255,255,.12); }
+  #deckmenu .hm-btn.current{ background:rgba(80,180,255,.78); border-color:#aef0ff; color:#04121c; cursor:default; transform:none; }
+  #deckmenu-list{ display:flex; flex-direction:column; gap:10px; }
   #freecamBtn{ position:fixed; right:14px; top:54px; z-index:200; pointer-events:auto; font:inherit; font-size:13px; font-weight:700; color:#eaf6ff; cursor:pointer;
     background:rgba(8,18,28,.7); border:1px solid rgba(120,200,255,.4); border-radius:11px; padding:8px 13px; transition:all .12s; }
   #freecamBtn:hover{ background:rgba(60,120,180,.7); border-color:rgba(150,220,255,.7); }
@@ -125,6 +127,11 @@
     <button class="hm-btn" data-hm="yacht">🛥&nbsp;&nbsp;Fly to the yacht</button>
     <button class="hm-btn" data-hm="cruise">🚢&nbsp;&nbsp;Fly to the cruise ship</button>
     <button class="hm-btn cancel" data-hm="cancel">✕ Cancel</button>
+  </div>
+  <div class="ui" id="deckmenu">
+    <div class="hm-title">◢ SELECT DECK ◣</div>
+    <div id="deckmenu-list"></div>
+    <button class="hm-btn cancel" data-deck="cancel">✕ Cancel</button>
   </div>
   <div id="cine"><div class="bar top"></div><div class="bar bot"></div><div class="cap" id="cineCap"></div><div class="skip">PRESS&nbsp;&nbsp;SPACE&nbsp;&nbsp;TO&nbsp;SKIP</div></div>
 
@@ -9826,6 +9833,7 @@ addEventListener('keydown',e=>{ const k=e.key.toLowerCase();
   keys[k]=true; if(k==='enter'&&!running&&started) start();
   if(typeof cutscene!=='undefined' && cutscene && (k===' '||k==='enter'||k==='escape')) cutsceneSkip=true;
   if(typeof heliMenuOpen!=='undefined' && heliMenuOpen && k==='escape') hideHeliMenu();
+  if(typeof deckMenuOpen!=='undefined' && deckMenuOpen && k==='escape') hideDeckMenu();
   if(k==='r'&&running&&mode==='free'&&pmode==='ski') recenter();
   if(k==='f'&&running&&nearAction&&!freecam) doAction(nearAction);
   if(k==='v'&&running) toggleFreecam(); });
@@ -10349,7 +10357,8 @@ function initAboardLevels(A, tgt){
   else { A.levels=null; A.elevator=null; A.level=0; }
 }
 function updateAboard(dt){
-  const A=aboard; if(!A) return; const g=A.entry.grp;
+  const A=aboard; if(!A) return; if(typeof deckMenuOpen!=='undefined' && deckMenuOpen) return;   // frozen while the elevator deck menu is open
+  const g=A.entry.grp;
   const fwd=(keys['w']||keys['arrowup'])?1:0, bwd=(keys['s']||keys['arrowdown'])?1:0;
   const turn=((keys['a']||keys['arrowleft'])?1:0)-((keys['d']||keys['arrowright'])?1:0);
   A.lh += turn*dt*2.6;
@@ -10729,6 +10738,22 @@ function startPilot(){ hideHeliMenu(); pmode='heli'; avatar.visible=false; HELI.
 function heliMenuAction(act){ if(act==='cancel'){ hideHeliMenu(); return; } if(act==='pilot'){ startPilot(); return; }
   const want=(act==='cruise')?'cruise ship':'yacht'; const tgt=VESSELS3D.filter(function(v){return v.ship===want && v.interior;})[0]; if(tgt) startCutscene(tgt); else hideHeliMenu(); }
 (function(){ const m=document.getElementById('helimenu'); if(m) m.addEventListener('click', function(e){ const b=e.target.closest?e.target.closest('[data-hm]'):null; if(b) heliMenuAction(b.getAttribute('data-hm')); }); })();
+// ---- elevator deck-selection menu ----
+let deckMenuOpen=false;
+function showDeckMenu(){ if(!aboard||!aboard.levels) return; deckMenuOpen=true;
+  const list=document.getElementById('deckmenu-list'); if(list){ list.innerHTML='';
+    // top deck first (so the list reads top→bottom like a real elevator panel)
+    for(let i=aboard.levels.length-1;i>=0;i--){ const lv=aboard.levels[i], b=document.createElement('button');
+      b.className='hm-btn'+(i===aboard.level?' current':''); b.setAttribute('data-deck', i===aboard.level?'cur':String(i));
+      b.textContent=(i===aboard.level?'● ':'')+lv.label; list.appendChild(b); } }
+  const m=document.getElementById('deckmenu'); if(m)m.style.display='flex'; if(promptEl)promptEl.style.opacity='0'; }
+function hideDeckMenu(){ deckMenuOpen=false; const m=document.getElementById('deckmenu'); if(m)m.style.display='none'; }
+function deckMenuAction(val){ if(val==='cancel'||val==='cur'){ hideDeckMenu(); return; }
+  const n=parseInt(val,10); if(aboard && aboard.levels && n>=0 && n<aboard.levels.length && n!==aboard.level){
+    aboard.level=n; const lv=aboard.levels[n]; aboard.deckY=lv.y; aboard.bounds=lv.bounds.slice();
+    if(aboard.elevator){ aboard.lx=aboard.elevator[0]; aboard.lz=aboard.elevator[1]; } aboard.sp=0; toast(lv.label,'#aef0ff'); }
+  hideDeckMenu(); }
+(function(){ const m=document.getElementById('deckmenu'); if(m) m.addEventListener('click', function(e){ const b=e.target.closest?e.target.closest('[data-deck]'):null; if(b) deckMenuAction(b.getAttribute('data-deck')); }); })();
 function buildPerson(g, col){
   // ===== Low-poly walking tourist. Faces +Z, feet at y=0, ~1.85m, centred on x/z. =====
   // Only THREE + col are used. col = {shirt, pants, skin, hair} (hex ints).
@@ -11021,7 +11046,7 @@ const PROMPTS={dock:'Press  F  — dock & explore on foot', drive:'Press  F  —
 function nearestShip(x,z){ let best=null,bd=1e9; for(const v of VESSELS3D){ if(!v.ship||!v.interior) continue; const d=Math.hypot(v.grp.position.x-x,v.grp.position.z-z); if(d<(v.boardRange||20) && d<bd){bd=d;best=v;} } return best; }
 function updateInteract(){
   let a=null;
-  if(heliMenuOpen){ nearAction=null; promptEl.style.opacity='0'; return; }
+  if(heliMenuOpen || (typeof deckMenuOpen!=='undefined' && deckMenuOpen)){ nearAction=null; promptEl.style.opacity='0'; return; }
   if(pmode==='ski'){ if(mode==='free' && B.speed<9 && dockReach(B.x,B.z)) a='dock'; }
   else if(pmode==='foot'){ const dC=carReady?Math.hypot(CAR.x-AV.x,CAR.z-AV.z):1e9, dS=Math.hypot(B.x-AV.x,B.z-AV.z), dB=Math.hypot(BOAT.x-AV.x,BOAT.z-AV.z), dH=Math.hypot(heli3d.position.x-AV.x,heli3d.position.z-AV.z);
     if(dH<11 && dH<=dB && dH<=dC && dH<=dS) a='heli';
@@ -11055,8 +11080,7 @@ function doAction(a){ if(!a)return; SFX.select&&SFX.select();
   else if(a==='boardShip'){ const v=_boardTarget; if(v&&v.interior){ BOAT.speed=0; v.anchored=true; v.grp.rotation.x=0; v.grp.rotation.z=0; v.interior.visible=true;
     aboard={entry:v, deckY:v.iDeckY, bounds:v.iBounds.slice(), exit:v.iExit.slice(), lx:v.iSpawn[0], lz:v.iSpawn[1], lh:0, sp:0, step:0, via:'boat'}; initAboardLevels(aboard,v); cam.yaw=0; cam.pitch=0;
     pmode='aboard'; avatar.visible=false; updateAboard(0.0001); toast('Aboard the '+v.ship+' — explore (mouse to look)','#aef0ff'); } }
-  else if(a==='elevator'){ if(aboard && aboard.levels){ aboard.level=(aboard.level+1)%aboard.levels.length; const lv=aboard.levels[aboard.level];
-      aboard.deckY=lv.y; aboard.bounds=lv.bounds.slice(); aboard.sp=0; toast('▲ '+lv.label,'#aef0ff'); } }
+  else if(a==='elevator'){ if(aboard && aboard.levels) showDeckMenu(); }
   else if(a==='stairUp' || a==='stairDown'){ if(aboard && aboard.levels){ const d=(a==='stairUp')?1:-1, n=aboard.level+d;
       if(n>=0 && n<aboard.levels.length){ aboard.level=n; const lv=aboard.levels[n]; aboard.deckY=lv.y; aboard.bounds=lv.bounds.slice();
         if(aboard.stairwell){ aboard.lx=aboard.stairwell[0]; aboard.lz=aboard.stairwell[1]; } aboard.sp=0; toast((d>0?'▲ ':'▼ ')+lv.label,'#aef0ff'); } } }
