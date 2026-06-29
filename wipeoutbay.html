@@ -12074,13 +12074,21 @@ function buildBridge(){
   const len=Math.hypot(x1-x0,z1-z0); BRIDGE={x0:x0,z0:z0,x1:x1,z1:z1,len:len,dx:(x1-x0)/len,dz:(z1-z0)/len,nx:-(z1-z0)/len,nz:(x1-x0)/len,y0:14,y1:12,arch:3.2};
   function hAt(t){ return BRIDGE.y0+(BRIDGE.y1-BRIDGE.y0)*t + BRIDGE.arch*Math.sin(t*Math.PI); }
   const plankMat=new THREE.MeshStandardMaterial({color:0x9a7748,roughness:0.92}), postMat=new THREE.MeshStandardMaterial({color:0x6e5230,roughness:0.95});
-  const N=Math.max(10,Math.round(len/6)), ang=Math.atan2(BRIDGE.dx,BRIDGE.dz), seg=len/N, grp=new THREE.Group(); scene.add(grp);
+  const lampDk=new THREE.MeshStandardMaterial({color:0x24242a,roughness:0.5,metalness:0.6}), lampGlow=new THREE.MeshStandardMaterial({color:0xffe6a8,emissive:0xffb340,emissiveIntensity:2.0,roughness:0.4});
+  const N=Math.max(10,Math.round(len/6)), lampEvery=Math.max(3,Math.round(N/9)), ang=Math.atan2(BRIDGE.dx,BRIDGE.dz), seg=len/N, grp=new THREE.Group(); scene.add(grp);
   for(let i=0;i<N;i++){ const t0=i/N,t1=(i+1)/N,tm=(t0+t1)/2, px=x0+(x1-x0)*tm, pz=z0+(z1-z0)*tm, py=hAt(tm), tilt=Math.atan2(hAt(t1)-hAt(t0),seg);
     const deck=new THREE.Mesh(new THREE.BoxGeometry(4.2,0.3,seg+0.3),plankMat); deck.position.set(px,py,pz); deck.rotation.order='YXZ'; deck.rotation.y=ang; deck.rotation.x=-tilt; deck.castShadow=deck.receiveShadow=true; grp.add(deck);
     if(i%2===0) for(const sgn of [-1,1]){ const plen=py+5, post=new THREE.Mesh(new THREE.CylinderGeometry(0.24,0.24,plen,8),postMat); post.position.set(px+BRIDGE.nx*1.9*sgn, py-plen/2, pz+BRIDGE.nz*1.9*sgn); post.castShadow=true; grp.add(post); }
     for(const sgn of [-1,1]){ const rx=px+BRIDGE.nx*2.0*sgn, rz=pz+BRIDGE.nz*2.0*sgn;
       const rp=new THREE.Mesh(new THREE.BoxGeometry(0.12,1.0,0.12),postMat); rp.position.set(rx,py+0.5,rz); grp.add(rp);
-      const rl=new THREE.Mesh(new THREE.BoxGeometry(0.1,0.12,seg+0.3),plankMat); rl.position.set(rx,py+0.98,rz); rl.rotation.order='YXZ'; rl.rotation.y=ang; rl.rotation.x=-tilt; grp.add(rl); } }
+      const rl=new THREE.Mesh(new THREE.BoxGeometry(0.1,0.12,seg+0.3),plankMat); rl.position.set(rx,py+0.98,rz); rl.rotation.order='YXZ'; rl.rotation.y=ang; rl.rotation.x=-tilt; grp.add(rl); }
+    // glowing LANTERNS on alternating railings for night
+    if(i%lampEvery===0){ const sgn=((i/lampEvery)%2)?1:-1, lx=px+BRIDGE.nx*1.9*sgn, lz=pz+BRIDGE.nz*1.9*sgn;
+      const lp=new THREE.Mesh(new THREE.CylinderGeometry(0.07,0.09,2.5,8),lampDk); lp.position.set(lx,py+1.25,lz); lp.castShadow=true; grp.add(lp);
+      const base=new THREE.Mesh(new THREE.CylinderGeometry(0.13,0.06,0.1,6),lampDk); base.position.set(lx,py+2.2,lz); grp.add(base);
+      const glow=new THREE.Mesh(new THREE.BoxGeometry(0.22,0.32,0.22),lampGlow); glow.position.set(lx,py+2.42,lz); grp.add(glow);
+      const cap=new THREE.Mesh(new THREE.ConeGeometry(0.17,0.16,6),lampDk); cap.position.set(lx,py+2.66,lz); grp.add(cap);
+      const pl=new THREE.PointLight(0xffb860,0.5,12,2); pl.position.set(lx,py+2.4,lz); grp.add(pl); } }
 }
 function onBridge(x,z){ if(!BRIDGE) return false; const ax=x-BRIDGE.x0, az=z-BRIDGE.z0, along=ax*BRIDGE.dx+az*BRIDGE.dz; if(along<-1||along>BRIDGE.len+1) return false; return Math.abs(ax*BRIDGE.nx+az*BRIDGE.nz)<2.0; }
 function bridgeHeight(x,z){ if(!BRIDGE) return 0; const ax=x-BRIDGE.x0, az=z-BRIDGE.z0, t=Math.max(0,Math.min(1,(ax*BRIDGE.dx+az*BRIDGE.dz)/BRIDGE.len)); return BRIDGE.y0+(BRIDGE.y1-BRIDGE.y0)*t + BRIDGE.arch*Math.sin(t*Math.PI)+0.18; }
