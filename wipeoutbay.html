@@ -7429,6 +7429,664 @@ function buildCZ_atrium(g){
   var runnerR=mk(boxG, carpetMat,  3.0,0.015,0); runnerR.scale.set(1.4,0.02,14); g.add(runnerR);
 }
 // SHELL + LAYOUT for the cruise "city" interior. Zone builder fns (buildCZ_*) are spliced in separately.
+// ===== cruise deck builders: cabins/suites + open sun deck (design workflow) =====
+function buildCZ_cabins(g, suites){
+  // ===================================================================
+  //  CRUISE CABIN DECK  — long central corridor (along z) lined with
+  //  passenger cabins down BOTH sides. Hotel-corridor rhythm: many
+  //  uniform standard cabins, or fewer genuinely-spacious master suites.
+  //  Floor is y=0; build upward. Fit x in [-11,11], z in [-60,60].
+  //  Central aisle x in [-1.75,1.75] kept clear of obstacles.
+  //  Heavy use of InstancedMesh + shared geo/mats so the whole deck is
+  //  only ~60 draw calls.
+  // ===================================================================
+  const UP = new THREE.Vector3(0,1,0);
+  const _v = new THREE.Vector3(), _q = new THREE.Quaternion(),
+        _s = new THREE.Vector3(), _m = new THREE.Matrix4(), _e = new THREE.Euler();
+
+  // ---- geometry cache --------------------------------------------------
+  const GC = {};
+  function box(w,h,d){ const k='B'+w+'_'+h+'_'+d; return GC[k]||(GC[k]=new THREE.BoxGeometry(w,h,d)); }
+  function cyl(rt,rb,h,sg){ const k='C'+rt+'_'+rb+'_'+h+'_'+(sg||12); return GC[k]||(GC[k]=new THREE.CylinderGeometry(rt,rb,h,sg||12)); }
+  function pln(w,h){ const k='P'+w+'_'+h; return GC[k]||(GC[k]=new THREE.PlaneGeometry(w,h)); }
+  function tor(r,t,sg){ const k='T'+r+'_'+t+'_'+(sg||16); return GC[k]||(GC[k]=new THREE.TorusGeometry(r,t,8,sg||16)); }
+  function sph(r){ const k='S'+r; return GC[k]||(GC[k]=new THREE.SphereGeometry(r,12,10)); }
+  function M(o){ return new THREE.MeshStandardMaterial(o); }
+
+  // ---- canvas-texture helpers -----------------------------------------
+  function makeTex(draw,w,h){
+    const c=document.createElement('canvas'); c.width=w; c.height=h;
+    draw(c.getContext('2d'),w,h);
+    const t=new THREE.CanvasTexture(c); t.encoding=THREE.sRGBEncoding; t.anisotropy=4; return t;
+  }
+  // patterned carpet runner — MID toned (not bright), gold key border
+  const carpetTex = makeTex(function(x,w,h){
+    x.fillStyle='#6a3f4c'; x.fillRect(0,0,w,h);                       // muted maroon ground
+    x.strokeStyle='#8a5a52'; x.lineWidth=10; x.strokeRect(12,12,w-24,h-24);
+    x.strokeStyle='#b9924e'; x.lineWidth=4;  x.strokeRect(22,22,w-44,h-44); // gold key line
+    x.fillStyle='#7d5160';
+    for(var yy=24; yy<h; yy+=48){ for(var xx=24; xx<w; xx+=48){
+      x.save(); x.translate(xx,yy); x.rotate(Math.PI/4); x.fillRect(-9,-9,18,18); x.restore(); } }
+  }, 128, 256);
+  carpetTex.wrapS = carpetTex.wrapT = THREE.RepeatWrapping;
+  // abstract framed wall art (two variants for variety)
+  function artTex(a,b,c){
+    return makeTex(function(x,w,h){
+      var grd=x.createLinearGradient(0,0,w,h); grd.addColorStop(0,a); grd.addColorStop(1,b);
+      x.fillStyle=grd; x.fillRect(0,0,w,h);
+      x.fillStyle=c; x.globalAlpha=0.55;
+      for(var i=0;i<5;i++){ x.beginPath(); x.arc(18+i*24, 30+((i*41)%52), 11+i*3, 0, 7); x.fill(); }
+      x.globalAlpha=1; x.strokeStyle='#caa15a'; x.lineWidth=7; x.strokeRect(4,4,w-8,h-8);
+    }, 128, 96);
+  }
+  const artA = M({ map:artTex('#27506b','#0e2436','#7fb6d6'), roughness:0.85 });
+  const artB = M({ map:artTex('#5a3552','#2a1428','#d68fb0'), roughness:0.85 });
+  // little glowing door number plaque
+  function numTex(label){
+    return makeTex(function(x,w,h){
+      x.fillStyle='#1b2330'; x.fillRect(0,0,w,h);
+      x.strokeStyle='#3c4a5c'; x.lineWidth=5; x.strokeRect(4,4,w-8,h-8);
+      x.fillStyle='#ffd98c'; x.textAlign='center'; x.textBaseline='middle';
+      x.font='bold 46px Georgia'; x.fillText(label, w/2, h/2+2);
+    }, 128, 80);
+  }
+  // deck / cabin-range end sign
+  function signTex(l1,l2){
+    return makeTex(function(x,w,h){
+      x.fillStyle='#10181f'; x.fillRect(0,0,w,h);
+      x.strokeStyle='#caa15a'; x.lineWidth=7; x.strokeRect(8,8,w-16,h-16);
+      x.fillStyle='#ffe6b0'; x.textAlign='center'; x.textBaseline='middle';
+      x.font='bold 50px Georgia'; x.fillText(l1, w/2, 56);
+      x.font='30px Georgia'; x.fillStyle='#cfe0ea'; x.fillText(l2, w/2, 116);
+    }, 512, 160);
+  }
+
+  // ---- shared materials ------------------------------------------------
+  const woodMat  = M({ color:0x9a785a, roughness:0.7,  metalness:0.05 });           // cabinetry
+  const woodDark = M({ color:0x664632, roughness:0.7,  metalness:0.05 });           // bed base / trim
+  const sheetMat = M({ color:0xece6da, roughness:0.85 });                           // mattress / pillows
+  const duvetStd = M({ color:0x9fb4c2, roughness:0.85 });                           // soft blue-grey duvet
+  const duvetSui = M({ color:0xbfa46e, roughness:0.7,  metalness:0.1 });            // champagne duvet
+  const headMat  = M({ color:0x6f4d66, roughness:0.8 });                            // padded headboard
+  const wallMat  = M({ color:0xe6ddca, roughness:0.9 });                            // walls (light -> ambient catches)
+  const partMat  = M({ color:0xd8ccb4, roughness:0.9 });                            // partitions
+  const carpetMat= M({ map:carpetTex, roughness:0.95 });
+  const rugMat   = M({ color:0x7a5360, roughness:0.95 });
+  const metalMat = M({ color:0xb7bbc2, roughness:0.4,  metalness:0.7 });            // handrail / fixtures
+  const goldMat  = M({ color:0xceae5e, roughness:0.35, metalness:0.8, emissive:0x4a3a12, emissiveIntensity:0.25 });
+  const sofaMat  = M({ color:0x6b7a86, roughness:0.85 });                           // suite sofa
+  const chairMat = M({ color:0x836c57, roughness:0.85 });                           // armchairs
+  // GENTLE emissive accents only (0.25-0.55) — never a big bright panel
+  const lampMat  = M({ color:0xfff1c8, emissive:0xffce80, emissiveIntensity:0.55, roughness:0.5 });
+  const sconceMat= M({ color:0xfff0cf, emissive:0xffd98c, emissiveIntensity:0.5,  roughness:0.5 });
+  const coveMat  = M({ color:0xfff1d6, emissive:0xffd98c, emissiveIntensity:0.45, roughness:0.6 });
+  // tinted window/porthole glass — gentle, NOT bright
+  const glassMat = M({ color:0xbcd6e6, roughness:0.12, metalness:0.1, transparent:true, opacity:0.5,
+                       emissive:0x33536b, emissiveIntensity:0.28, side:THREE.DoubleSide });
+
+  // ---- instanced-mesh accumulator -------------------------------------
+  // push transforms per "key"; flush builds one InstancedMesh per key.
+  const INST = {};
+  function reg(key, geo, mat, noCast){
+    if(!INST[key]) INST[key] = { geo:geo, mat:mat, noCast:!!noCast, arr:[] };
+    return INST[key];
+  }
+  function push(key, x,y,z, rx,ry,rz, sx,sy,sz){
+    INST[key].arr.push([x,y,z, rx||0,ry||0,rz||0, sx==null?1:sx, sy==null?1:sy, sz==null?1:sz]);
+  }
+  function flush(){
+    for(var k in INST){
+      var e=INST[k], n=e.arr.length; if(!n) continue;
+      var im=new THREE.InstancedMesh(e.geo, e.mat, n);
+      im.castShadow=!e.noCast; im.receiveShadow=true; im.frustumCulled=false;
+      for(var i=0;i<n;i++){
+        var a=e.arr[i];
+        _e.set(a[3],a[4],a[5]); _q.setFromEuler(_e);
+        _v.set(a[0],a[1],a[2]); _s.set(a[6],a[7],a[8]);
+        _m.compose(_v,_q,_s); im.setMatrixAt(i,_m);
+      }
+      im.instanceMatrix.needsUpdate=true; g.add(im);
+    }
+  }
+  // plain (non-instanced) mesh
+  function add(geo,mat,x,y,z,rx,ry,rz){
+    var msh=new THREE.Mesh(geo,mat); msh.position.set(x,y,z);
+    msh.rotation.set(rx||0,ry||0,rz||0); msh.castShadow=true; msh.receiveShadow=true;
+    g.add(msh); return msh;
+  }
+
+  // =====================================================================
+  //  LAYOUT
+  // =====================================================================
+  const N      = suites ? 7   : 16;     // cabins PER SIDE
+  const P      = suites ? 13  : 5.6;    // z pitch per cabin
+  const firstZ = -(N-1)*0.5*P;          // centre-z of bow-most cabin
+  const halfL  = N*P*0.5;               // half the cabin block length
+  const spanL  = N*P;                   // full cabin block length
+  const zEnd   = halfL + 0.8;
+  const deckNo = suites ? 12 : 8;
+  const CW     = 2.1;                   // corridor edge / cabin front-x
+  const OW     = 10.55;                 // outer wall centre-x
+  const WH     = 2.6;                   // wall / partition height
+
+  // register all instanced furniture keys up front (geo+mat shared) --------
+  // --- corridor / shell (both modes) ---
+  reg('partition', box(OW-CW-0.05, WH, 0.16), partMat);
+  reg('sconce',    box(0.12, 0.34, 0.12), sconceMat, true);
+  reg('bracket',   box(0.06, 0.05, 0.18), metalMat);
+  reg('dhead',     box(0.22, 0.3,  suites?2.2:1.9), woodDark);
+  reg('dpost',     box(0.22, suites?2.35:2.3, 0.15), woodDark);
+
+  if(!suites){
+    // --- standard cabin furniture ---
+    reg('bedBase',  box(2.0, 0.44, 1.7), woodDark);
+    reg('duvet',    box(1.9, 0.16, 1.6), duvetStd);
+    reg('pillow',   box(0.45,0.16, 1.4), sheetMat);
+    reg('headbd',   box(0.12,0.8,  1.8), woodDark);
+    reg('nstand',   box(0.42,0.4,  0.42), woodMat);
+    reg('lamp',     cyl(0.12,0.15, 0.2, 12), lampMat, true);
+    reg('wardrobe', box(0.55,2.0,  1.2), woodMat);
+    reg('pictA',    box(1.0, 0.7,  0.05), artA);
+    reg('pictB',    box(1.0, 0.7,  0.05), artB);
+    reg('phGlass',  cyl(0.46,0.46, 0.08, 18), glassMat, true);
+    reg('phFrame',  tor(0.52, 0.06, 18), goldMat);
+  } else {
+    // --- master-suite furniture ---
+    reg('winGlass', box(0.1, WH, P-0.5), glassMat, true);
+    reg('winRail',  box(0.16,0.1, P-0.5), goldMat);
+    reg('winMull',  box(0.12,WH,  0.1), goldMat);
+    reg('kBase',    box(2.2, 0.45, 2.4), woodDark);
+    reg('kDuvet',   box(2.1, 0.16, 1.9), duvetSui);
+    reg('kPillow',  box(1.8, 0.18, 0.5), sheetMat);
+    reg('kHead',    box(2.4, 0.95, 0.18), headMat);
+    reg('nstand',   box(0.5, 0.45, 0.5), woodMat);
+    reg('lamp',     cyl(0.13,0.16,0.22,12), lampMat, true);
+    reg('rug',      box(3.4, 0.03, 3.2), rugMat, true);
+    reg('sofaSeat', box(0.95,0.45, 2.6), sofaMat);
+    reg('sofaBack', box(0.3, 0.8,  2.6), sofaMat);
+    reg('sofaArm',  box(0.95,0.5,  0.3), sofaMat);
+    reg('cTable',   box(1.1, 0.4,  1.5), woodDark);
+    reg('aSeat',    box(0.85,0.45, 0.9), chairMat);
+    reg('aBack',    box(0.85,0.7,  0.25), chairMat);
+    reg('wardrobe', box(0.55,2.1,  1.5), woodMat);
+    reg('vanity',   box(1.3, 0.8,  0.5), woodMat);
+    reg('mirror',   box(0.05,1.0,  0.95), glassMat, true);
+    reg('chRing',   tor(0.55,0.05, 18), goldMat);
+    reg('chBulb',   sph(0.13), lampMat, true);
+    reg('chDrop',   sph(0.07), lampMat, true);
+    reg('pictA',    box(1.1, 0.75, 0.05), artA);
+    reg('pictB',    box(1.1, 0.75, 0.05), artB);
+  }
+
+  const plaqueGeo = pln(0.42, 0.26);
+  const balIndex  = (suites && N>3) ? 3 : -1;  // a couple of suites get a balcony nook
+
+  // =====================================================================
+  //  CABINS  (both sides)
+  // =====================================================================
+  for(var si=0; si<2; si++){
+    var s = si===0 ? 1 : -1;            // +1 = starboard (+x), -1 = port
+    for(var i=0; i<N; i++){
+      var zc  = firstZ + i*P;
+      var num = deckNo*100 + i*2 + (s>0?1:2);   // odd starboard, even port
+
+      // door frame (header + 2 posts) at the open corridor side
+      var dz = suites ? 1.3 : 0.95;
+      push('dhead', s*CW, suites?2.35:2.3, zc);
+      push('dpost', s*CW, suites?1.18:1.15, zc-dz);
+      push('dpost', s*CW, suites?1.18:1.15, zc+dz);
+      // corridor sconce above each door
+      push('sconce', s*(CW-0.05), 2.0, zc);
+
+      // number plaque (its own mesh — unique texture; face the corridor)
+      var ntex = numTex(''+num);
+      var pl = new THREE.Mesh(plaqueGeo, M({ map:ntex, emissive:0xffffff,
+               emissiveMap:ntex, emissiveIntensity:0.5, roughness:0.6 }));
+      pl.position.set(s*(CW-0.08), 1.62, zc - P*0.5 + 0.32);
+      pl.rotation.y = s>0 ? -Math.PI/2 : Math.PI/2;
+      g.add(pl);
+
+      if(!suites){
+        // bed (head toward outer wall)
+        push('bedBase', s*8.5, 0.22, zc);
+        push('duvet',   s*8.3, 0.52, zc);
+        push('pillow',  s*9.2, 0.60, zc);
+        push('headbd',  s*9.62,0.62, zc);
+        // nightstand + glowing lamp
+        push('nstand',  s*9.4, 0.20, zc+1.15);
+        push('lamp',    s*9.4, 0.56, zc+1.15);
+        // wardrobe near the door
+        push('wardrobe',s*2.9, 1.00, zc-1.7);
+        // framed picture on the +z partition, facing the room
+        push((i%2? 'pictB':'pictA'), s*5.8, 1.65, zc + P*0.5 - 0.12);
+        // porthole on the outer wall
+        push('phGlass', s*10.30, 1.5, zc, 0,0,Math.PI/2);
+        push('phFrame', s*10.34, 1.5, zc, 0,Math.PI/2,0);
+      } else {
+        var winX = (i===balIndex) ? 9.4 : 10.4;   // balcony suites pull glass inboard
+        // floor-to-ceiling window wall + frame + mullions
+        push('winGlass', s*winX, 1.3, zc);
+        push('winRail',  s*winX, WH-0.08, zc);
+        push('winRail',  s*winX, 0.1, zc);
+        push('winMull',  s*winX, 1.3, zc - P*0.28);
+        push('winMull',  s*winX, 1.3, zc + P*0.28);
+        // king bed
+        push('kBase',   s*7.8, 0.225, zc+2.4);
+        push('kDuvet',  s*7.7, 0.62,  zc+2.0);
+        push('kPillow', s*7.8, 0.66,  zc+3.2);
+        push('kHead',   s*7.8, 0.60,  zc+3.75);
+        push('nstand',  s*6.45,0.225, zc+3.4);
+        push('nstand',  s*9.15,0.225, zc+3.4);
+        push('lamp',    s*6.45,0.62,  zc+3.4);
+        push('lamp',    s*9.15,0.62,  zc+3.4);
+        // sitting area
+        push('rug',     s*5.2, 0.03,  zc-2.8);
+        push('sofaSeat',s*3.7, 0.40,  zc-2.8);
+        push('sofaBack',s*3.25,0.60,  zc-2.8);
+        push('sofaArm', s*3.7, 0.50,  zc-4.1);
+        push('sofaArm', s*3.7, 0.50,  zc-1.5);
+        push('cTable',  s*5.4, 0.20,  zc-2.8);
+        push('aSeat',   s*5.7, 0.40,  zc-4.8); push('aBack', s*5.7, 0.60, zc-5.15);
+        push('aSeat',   s*5.7, 0.40,  zc-0.8); push('aBack', s*5.7, 0.60, zc-0.45);
+        // wardrobe + vanity + mirror
+        push('wardrobe',s*2.95,1.05,  zc-5.0);
+        push('vanity',  s*3.0, 0.40,  zc+4.6);
+        push('mirror',  s*2.66,1.55,  zc+4.6);
+        // chandelier (gentle)
+        push('chRing',  s*6.3, 2.50,  zc, Math.PI/2,0,0);
+        push('chBulb',  s*6.3, 2.40,  zc);
+        push('chDrop',  s*6.3, 2.46,  zc-0.5);
+        push('chDrop',  s*6.3, 2.46,  zc+0.5);
+        // wall art
+        push((i%2? 'pictB':'pictA'), s*6.0, 1.7, zc - P*0.5 + 0.12, 0, Math.PI, 0);
+
+        // --- balcony nook (a couple of suites) ---
+        if(i===balIndex){
+          add(box(1.3,0.06,P-1.4), woodDark, s*10.05, 0.03, zc);          // balcony floor
+          add(box(0.06,0.9,P-1.4), glassMat, s*10.65, 0.50, zc);          // glass balustrade
+          add(box(0.1,0.06,P-1.4), goldMat,  s*10.65, 0.96, zc);          // rail cap
+          add(box(0.5,0.5,0.5), chairMat,    s*10.05, 0.25, zc-1.6);      // chairs
+          add(box(0.5,0.5,0.5), chairMat,    s*10.05, 0.25, zc+1.6);
+        }
+      }
+    }
+
+    // partitions between cabins (N+1 per side) + handrail brackets
+    for(var k=0;k<=N;k++){
+      var zp = firstZ - P*0.5 + k*P;
+      push('partition', s*((CW+OW)*0.5), WH*0.5, zp);
+      push('bracket',   s*(CW-0.1), 0.95, zp);
+    }
+  }
+
+  // =====================================================================
+  //  OUTER WALLS  (standard only — suites use full window walls)
+  // =====================================================================
+  if(!suites){
+    add(box(0.3, WH, spanL+0.4), wallMat,  OW, WH*0.5, 0);
+    add(box(0.3, WH, spanL+0.4), wallMat, -OW, WH*0.5, 0);
+  }
+
+  // =====================================================================
+  //  CORRIDOR DRESSING  (common)
+  // =====================================================================
+  // patterned carpet runner (flush, mid-toned, walkable — within the aisle)
+  carpetTex.repeat.set(1, Math.max(1, Math.round(spanL/4)));
+  var runner = add(box(3.4, 0.04, spanL+0.6), carpetMat, 0, 0.02, 0); runner.castShadow=false;
+  // gold edge trim flanking the runner
+  add(box(0.07,0.05,spanL+0.6), goldMat, -1.78, 0.045, 0);
+  add(box(0.07,0.05,spanL+0.6), goldMat,  1.78, 0.045, 0);
+  // continuous brass handrails along each wall (outside the clear aisle)
+  add(cyl(0.035,0.035,spanL+0.4,8), metalMat, -1.95, 0.95, 0, Math.PI/2,0,0);
+  add(cyl(0.035,0.035,spanL+0.4,8), metalMat,  1.95, 0.95, 0, Math.PI/2,0,0);
+  // recessed ceiling-cove hint (thin gentle emissive strips, never bright)
+  add(box(0.12,0.12,spanL+0.4), coveMat, -1.82, WH-0.05, 0);
+  add(box(0.12,0.12,spanL+0.4), coveMat,  1.82, WH-0.05, 0);
+
+  // deck / cabin-range signage at both ends (face inward, gentle glow)
+  var loN = deckNo*100+1, hiN = deckNo*100 + (N-1)*2 + 2;
+  var l1 = 'DECK ' + deckNo;
+  var l2 = (suites?'MASTER SUITES ':'CABINS ') + loN + ' - ' + hiN;
+  var stex = signTex(l1,l2);
+  var signMat = M({ map:stex, emissive:0xffffff, emissiveMap:stex,
+                    emissiveIntensity:0.4, roughness:0.6, side:THREE.DoubleSide });
+  add(pln(4.0,1.0), signMat, 0, 2.25, -(zEnd+0.1), 0, 0, 0);
+  add(pln(4.0,1.0), signMat, 0, 2.25,  (zEnd+0.1), 0, Math.PI, 0);
+
+  // =====================================================================
+  //  build all instanced furniture + a few gentle fill lights
+  // =====================================================================
+  flush();
+
+  // a few sparse warm point lights so sconces/lamps read (dim deck)
+  var lz = spanL*0.5;
+  for(var li=0; li<5; li++){
+    var L=new THREE.PointLight(0xffe2b0, 0.32, 16, 2.0);
+    L.position.set(0, 2.35, -lz + (li/4)*spanL);
+    g.add(L);
+  }
+
+  return g;
+}
+function buildCZ_sundeck(g){
+  const T = THREE;
+  const dummy = new T.Object3D();
+
+  // ---------- helpers ----------
+  function M(o){ return new T.MeshStandardMaterial(o); }
+  function add(geo, mat, x, y, z, o){
+    const m = new T.Mesh(geo, mat);
+    m.position.set(x, y, z);
+    if(o){
+      if(o.rx) m.rotation.x = o.rx;
+      if(o.ry) m.rotation.y = o.ry;
+      if(o.rz) m.rotation.z = o.rz;
+      if(o.sx || o.sy || o.sz) m.scale.set(o.sx||1, o.sy||1, o.sz||1);
+    }
+    m.castShadow = true; m.receiveShadow = true;
+    g.add(m); return m;
+  }
+  function inst(geo, mat, list){
+    const im = new T.InstancedMesh(geo, mat, list.length);
+    for(let i=0;i<list.length;i++){
+      const o = list[i];
+      dummy.position.set(o.x, o.y||0, o.z);
+      dummy.rotation.set(o.rx||0, o.ry||0, o.rz||0);
+      const s = (o.s===undefined)?1:o.s;
+      dummy.scale.set(o.sx||s, o.sy||s, o.sz||s);
+      dummy.updateMatrix();
+      im.setMatrixAt(i, dummy.matrix);
+      if(o.c && im.setColorAt){ im.setColorAt(i, new T.Color(o.c)); }
+    }
+    im.instanceMatrix.needsUpdate = true;
+    if(im.instanceColor) im.instanceColor.needsUpdate = true;
+    im.castShadow = true; im.receiveShadow = true;
+    g.add(im); return im;
+  }
+  function ctex(w,h,draw,rx,ry){
+    const c = document.createElement('canvas'); c.width=w; c.height=h;
+    const ctx = c.getContext('2d'); draw(ctx,w,h);
+    const t = new T.CanvasTexture(c);
+    t.wrapS = t.wrapT = T.RepeatWrapping;
+    if(rx||ry) t.repeat.set(rx||1, ry||1);
+    t.anisotropy = 4;
+    return t;
+  }
+
+  // ---------- canvas textures ----------
+  const tileTex = ctex(128,128,(x,w,h)=>{
+    x.fillStyle='#ded8c8'; x.fillRect(0,0,w,h);
+    x.strokeStyle='#b6ac95'; x.lineWidth=4;
+    for(let i=0;i<=w;i+=32){
+      x.beginPath(); x.moveTo(i,0); x.lineTo(i,h); x.stroke();
+      x.beginPath(); x.moveTo(0,i); x.lineTo(w,i); x.stroke();
+    }
+  }, 9, 8);
+  const stripeTex = ctex(64,64,(x,w,h)=>{
+    for(let i=0;i<8;i++){ x.fillStyle = (i%2)?'#2f8f9c':'#f3efe4'; x.fillRect(i*w/8,0,w/8+1,h); }
+  });
+  const thatchTex = ctex(64,64,(x,w,h)=>{
+    x.fillStyle='#a87a3e'; x.fillRect(0,0,w,h);
+    x.strokeStyle='#7d551f'; x.lineWidth=2;
+    for(let i=-2;i<h;i+=6){ x.beginPath(); x.moveTo(0,i); x.lineTo(w,i+3); x.stroke(); }
+  }, 4, 2);
+
+  // ---------- materials (shared) ----------
+  const matPad    = M({color:0xffffff, map:tileTex, roughness:0.92, metalness:0.0});
+  const matTeak   = M({color:0xb08658, roughness:0.7, metalness:0.05});
+  const matTeakDk = M({color:0x6f4f2f, roughness:0.65, metalness:0.05});
+  const matStone  = M({color:0xe7e2d6, roughness:0.85, metalness:0.0});
+  const matCush   = M({color:0xeceae2, roughness:0.85, metalness:0.0});
+  const matSteel  = M({color:0xbac1c9, roughness:0.35, metalness:0.85});
+  const matChrome = M({color:0xd7dde3, roughness:0.2, metalness:0.95});
+  const matGlass  = M({color:0xaaccdd, roughness:0.1, metalness:0.0, transparent:true, opacity:0.22});
+  const matWater  = M({color:0x2fa6d6, roughness:0.15, metalness:0.0, transparent:true, opacity:0.72, emissive:0x0a3a55, emissiveIntensity:0.06});
+  const matWaterH = M({color:0x39c6c9, roughness:0.15, metalness:0.0, transparent:true, opacity:0.7, emissive:0x094a4a, emissiveIntensity:0.08});
+  const matPoolBed= M({color:0x9fd6e6, roughness:0.6, metalness:0.0});
+  const matFunnel = M({color:0xe6e4df, roughness:0.5, metalness:0.25});
+  const matBand   = M({color:0xb6382f, roughness:0.5, metalness:0.1});
+  const matDark   = M({color:0x2b2f33, roughness:0.6, metalness:0.4});
+  const matLeaf   = M({color:0x3f9152, roughness:0.8, metalness:0.0});
+  const matPot    = M({color:0xb5703a, roughness:0.85, metalness:0.0});
+  const matTrunk  = M({color:0x8a6b46, roughness:0.85, metalness:0.0});
+  const matFabric = M({color:0xffffff, map:stripeTex, roughness:0.9, metalness:0.0, side:T.DoubleSide});
+  const matThatch = M({color:0xffffff, map:thatchTex, roughness:0.9, metalness:0.0});
+  const matShelf  = M({color:0xffe7bf, roughness:0.5, metalness:0.0, emissive:0xffce85, emissiveIntensity:0.55});
+  const matBottle = M({color:0x8fd0c2, roughness:0.3, metalness:0.1, emissive:0x244a3e, emissiveIntensity:0.3});
+  const matLamp   = M({color:0xfff4d6, roughness:0.4, metalness:0.0, emissive:0xfff0c0, emissiveIntensity:0.55});
+  const matTrack  = M({color:0xb5613a, roughness:0.95, metalness:0.0});
+  const matRing   = M({color:0xe8552c, roughness:0.7, metalness:0.0});
+
+  // ====================================================================
+  // PERIMETER RAILING (glass panels + metal top rail + posts) around edge
+  // ====================================================================
+  const RX = 10.7, RZ = 59.5;           // rail line
+  const glassL = new T.BoxGeometry(0.06, 0.9, 2*RZ-0.6);
+  const glassS = new T.BoxGeometry(2*RX-0.6, 0.9, 0.06);
+  add(glassL, matGlass,  RX, 0.58, 0);
+  add(glassL, matGlass, -RX, 0.58, 0);
+  add(glassS, matGlass, 0, 0.58,  RZ);
+  add(glassS, matGlass, 0, 0.58, -RZ);
+  const railL = new T.BoxGeometry(0.14, 0.09, 2*RZ);
+  const railS = new T.BoxGeometry(2*RX, 0.09, 0.14);
+  add(railL, matSteel,  RX, 1.10, 0);
+  add(railL, matSteel, -RX, 1.10, 0);
+  add(railS, matSteel, 0, 1.10,  RZ);
+  add(railS, matSteel, 0, 1.10, -RZ);
+  const kickL = new T.BoxGeometry(0.10, 0.12, 2*RZ);
+  const kickS = new T.BoxGeometry(2*RX, 0.12, 0.10);
+  add(kickL, matSteel,  RX, 0.07, 0);
+  add(kickL, matSteel, -RX, 0.07, 0);
+  add(kickS, matSteel, 0, 0.07,  RZ);
+  add(kickS, matSteel, 0, 0.07, -RZ);
+  // posts + rail lights
+  const postGeo = new T.CylinderGeometry(0.05, 0.05, 1.12, 8);
+  const lampGeo = new T.SphereGeometry(0.07, 8, 6);
+  const posts = [], lamps = [];
+  for(let z=-RZ; z<=RZ; z+=4.0){
+    posts.push({x:RX, y:0.56, z}); posts.push({x:-RX, y:0.56, z});
+  }
+  for(let x=-RX+3; x<=RX-3; x+=4.0){
+    posts.push({x, y:0.56, z:RZ}); posts.push({x, y:0.56, z:-RZ});
+  }
+  for(let i=0;i<posts.length;i+=3){ const p=posts[i]; lamps.push({x:p.x, y:1.18, z:p.z}); }
+  inst(postGeo, matSteel, posts);
+  inst(lampGeo, matLamp, lamps);
+  // life rings hung on the rail (nautical accent)
+  const ringGeo = new T.TorusGeometry(0.32, 0.09, 8, 18);
+  inst(ringGeo, matRing, [
+    {x:RX-0.1, y:0.7, z:-24, ry:Math.PI/2}, {x:RX-0.1, y:0.7, z:30, ry:Math.PI/2},
+    {x:-RX+0.1, y:0.7, z:-30, ry:Math.PI/2}, {x:-RX+0.1, y:0.7, z:18, ry:Math.PI/2}
+  ]);
+
+  // ====================================================================
+  // JOGGING TRACK (thin painted perimeter line, mid-toned)
+  // ====================================================================
+  const trkL = new T.BoxGeometry(0.16, 0.02, 2*RZ-3);
+  const trkS = new T.BoxGeometry(2*RX-3, 0.02, 0.16);
+  add(trkL, matTrack,  10.0, 0.012, 0);
+  add(trkL, matTrack, -10.0, 0.012, 0);
+  add(trkS, matTrack, 0, 0.012,  58.6);
+  add(trkS, matTrack, 0, 0.012, -58.6);
+
+  // ====================================================================
+  // SWIMMING POOL (starboard, +x) — tiled surround, recessed water, ladders
+  // ====================================================================
+  const PCX = 6.4;
+  add(new T.BoxGeometry(8.4, 0.06, 17.4), matPad, PCX, 0.03, 0);           // tiled surround pad
+  add(new T.BoxGeometry(7.4, 0.30, 0.34), matStone, PCX, 0.15,  6.15);     // coping
+  add(new T.BoxGeometry(7.4, 0.30, 0.34), matStone, PCX, 0.15, -6.15);
+  add(new T.BoxGeometry(0.34, 0.30, 12.6), matStone, PCX-3.5, 0.15, 0);
+  add(new T.BoxGeometry(0.34, 0.30, 12.6), matStone, PCX+3.5, 0.15, 0);
+  add(new T.BoxGeometry(6.6, 0.04, 11.8), matPoolBed, PCX, 0.05, 0);       // basin bed
+  add(new T.BoxGeometry(6.5, 0.20, 11.7), matWater, PCX, 0.16, 0);         // water (surface ~0.26)
+  const ladRail = new T.CylinderGeometry(0.03, 0.03, 0.95, 8);
+  const ladRung = new T.CylinderGeometry(0.025, 0.025, 0.5, 8);
+  [4.6, 8.2].forEach(lx=>{
+    add(ladRail, matChrome, lx-0.25, 0.55, 6.45);
+    add(ladRail, matChrome, lx+0.25, 0.55, 6.45);
+    add(ladRung, matChrome, lx, 0.85, 6.45, {rz:Math.PI/2});
+  });
+
+  // ====================================================================
+  // HOT TUB beside the pool
+  // ====================================================================
+  const HT = {x:6.4, z:-10.6};
+  add(new T.CylinderGeometry(1.9, 1.9, 0.55, 24), matStone, HT.x, 0.275, HT.z);
+  add(new T.CylinderGeometry(1.7, 1.7, 0.40, 24), matWaterH, HT.x, 0.42, HT.z);
+  add(new T.TorusGeometry(1.9, 0.12, 8, 24), matSteel, HT.x, 0.55, HT.z, {rx:Math.PI/2});
+  add(new T.TorusGeometry(1.35, 0.16, 8, 20), matStone, HT.x, 0.2, HT.z, {rx:Math.PI/2});
+
+  // ====================================================================
+  // SUN LOUNGERS (instanced base + seat + back), PARASOLS, POTTED PALMS
+  // ====================================================================
+  const baseGeo = new T.BoxGeometry(0.62, 0.12, 1.95); baseGeo.translate(0, 0.20, 0);
+  const seatGeo = new T.BoxGeometry(0.56, 0.08, 1.18); seatGeo.rotateX(-0.13); seatGeo.translate(0, 0.31, 0.28);
+  const backGeo = new T.BoxGeometry(0.56, 0.08, 0.80); backGeo.rotateX(-1.05); backGeo.translate(0, 0.55, -0.52);
+  const loungers = [];
+  [-45,-39,-33,-27,-21].forEach(z=>{
+    loungers.push({x:-8.6,z}); loungers.push({x:-5.5,z});
+    loungers.push({x:5.5,z});  loungers.push({x:8.6,z});
+  });
+  [-3,3,9].forEach(z=>{ loungers.push({x:-9.0,z}); loungers.push({x:-6.3,z}); });
+  [22,28].forEach(z=>{
+    loungers.push({x:-8.6,z}); loungers.push({x:-5.6,z});
+    loungers.push({x:5.6,z});  loungers.push({x:8.6,z});
+  });
+  inst(baseGeo, matTeak, loungers);
+  inst(seatGeo, matCush, loungers);
+  inst(backGeo, matCush, loungers);
+  // parasols
+  const paraList = [{x:-7,z:-36},{x:7,z:-30},{x:-7.6,z:6},{x:7.6,z:24},{x:-6,z:-24}];
+  inst(new T.CylinderGeometry(0.05,0.05,2.6,8), matSteel, paraList.map(p=>({x:p.x,y:1.3,z:p.z})));
+  inst(new T.ConeGeometry(1.5, 0.7, 8), matFabric, paraList.map(p=>({x:p.x,y:2.55,z:p.z})));
+  // potted palms
+  const palmList = [
+    {x:-2.7,z:-17},{x:2.7,z:-17},{x:10.2,z:-6.4},{x:10.2,z:6.4},{x:-9.6,z:-7},
+    {x:2.7,z:16},{x:-2.7,z:16},{x:9.0,z:33},{x:-9.0,z:33}
+  ];
+  inst(new T.CylinderGeometry(0.42,0.32,0.55,12), matPot, palmList.map(p=>({x:p.x,y:0.27,z:p.z})));
+  inst(new T.CylinderGeometry(0.10,0.13,1.7,8), matTrunk, palmList.map(p=>({x:p.x,y:1.2,z:p.z})));
+  inst(new T.IcosahedronGeometry(0.95,0), matLeaf, palmList.map(p=>({x:p.x,y:2.1,z:p.z,sy:0.65})));
+
+  // ====================================================================
+  // POOL / SUN-DECK BAR (port, -x) — counter, stools, roof, backlit shelf
+  // ====================================================================
+  const BX = -8.6, BZ = -12;
+  add(new T.BoxGeometry(1.2, 1.05, 5.0), matTeak, BX, 0.525, BZ);          // counter base
+  add(new T.BoxGeometry(1.5, 0.10, 5.4), matTeakDk, BX+0.05, 1.10, BZ);    // counter top
+  add(new T.BoxGeometry(0.5, 1.6, 4.6), matTeakDk, BX-1.35, 0.8, BZ);      // back cabinet
+  add(new T.BoxGeometry(0.08, 0.9, 3.6), matShelf, BX-1.05, 1.15, BZ);     // backlit bottle shelf (gentle)
+  add(new T.BoxGeometry(2.7, 0.12, 5.6), matThatch, BX-0.1, 2.55, BZ);     // modern roof
+  add(new T.BoxGeometry(2.9, 0.28, 0.18), matThatch, BX-0.1, 2.40, BZ-2.8);// thatch valance
+  inst(new T.CylinderGeometry(0.06,0.06,2.5,8), matTeakDk, [
+    {x:BX-1.2,y:1.25,z:BZ-2.6},{x:BX-1.2,y:1.25,z:BZ+2.6},
+    {x:BX+1.1,y:1.25,z:BZ-2.6},{x:BX+1.1,y:1.25,z:BZ+2.6}
+  ]);
+  const bottles = [];
+  for(let k=0;k<10;k++){
+    bottles.push({x:BX-1.0, y:1.0+(k%2)*0.45, z:BZ-1.6+k*0.35, s:1, c:[0x7fc7b0,0xd98f6a,0x6fa8d6,0xcfd86f][k%4]});
+  }
+  inst(new T.CylinderGeometry(0.05,0.05,0.32,7), matBottle, bottles);
+  const stools = [-14.2,-12.7,-11.2,-9.7].map(z=>({x:BX+1.35,z}));
+  inst(new T.CylinderGeometry(0.22,0.22,0.1,12), matCush, stools.map(s=>({x:s.x,y:0.78,z:s.z})));
+  inst(new T.CylinderGeometry(0.05,0.05,0.78,8), matSteel, stools.map(s=>({x:s.x,y:0.39,z:s.z})));
+
+  // ====================================================================
+  // TWO SHIP FUNNELS (aft) + base flares + bands + caps
+  // ====================================================================
+  function funnel(fx){
+    const o = {sz:0.78};
+    add(new T.CylinderGeometry(2.7, 2.4, 0.8, 24), matFunnel, fx, 0.4, 38, o);   // base housing
+    add(new T.CylinderGeometry(1.8, 2.4, 11, 24), matFunnel, fx, 6.3, 38, o);    // tapered body
+    add(new T.CylinderGeometry(1.92, 2.02, 1.7, 24), matBand, fx, 9.8, 38, o);   // coloured band
+    add(new T.CylinderGeometry(1.8, 1.8, 0.25, 24), matDark, fx, 11.85, 38, o);  // top cap
+    add(new T.TorusGeometry(1.78, 0.16, 8, 22), matDark, fx, 11.8, 38, {rx:Math.PI/2, sz:0.78}); // rim
+  }
+  funnel(-5.2); funnel(5.2);
+
+  // ====================================================================
+  // MASTS / ANTENNAE (forward + aft, off the main aisle termini)
+  // ====================================================================
+  function mast(mx, mz, baseY){
+    add(new T.CylinderGeometry(0.09, 0.12, 7.0, 10), matSteel, mx, baseY+3.5, mz);
+    add(new T.BoxGeometry(1.7, 0.07, 0.07), matSteel, mx, baseY+6.0, mz);
+    add(new T.SphereGeometry(0.12, 8, 6), matLamp, mx, baseY+7.1, mz);
+  }
+  mast(0, -55, 0.4);   // on the forward stage
+  mast(0, 57.5, 0.0);  // aft signal mast (near aft rail terminus)
+  inst(new T.CylinderGeometry(0.03,0.03,2.4,6), matSteel, [
+    {x:-5.2,y:13.0,z:37.2},{x:5.2,y:13.0,z:38.8}
+  ]);
+
+  // ====================================================================
+  // DECK VENTS (aft service clutter, instanced)
+  // ====================================================================
+  inst(new T.BoxGeometry(0.7,0.7,0.7), matSteel, [
+    {x:-8.5,y:0.35,z:44},{x:8.5,y:0.35,z:44},
+    {x:-3.0,y:0.35,z:50},{x:3.0,y:0.35,z:50},
+    {x:-8.0,y:0.35,z:33},{x:8.0,y:0.35,z:33}
+  ]);
+  inst(new T.CylinderGeometry(0.3,0.3,0.9,12), matSteel, [
+    {x:-6.0,y:0.45,z:48},{x:6.0,y:0.45,z:48},{x:0,y:0.45,z:57}
+  ]);
+
+  // ====================================================================
+  // FORWARD STAGE with SHADE CANOPY (lively focal point, bow terminus)
+  // ====================================================================
+  const SZ = -55.5;
+  add(new T.BoxGeometry(8.0, 0.4, 7.0), matTeakDk, 0, 0.2, SZ);            // raised platform
+  add(new T.BoxGeometry(8.0, 0.18, 0.6), matTeak, 0, 0.09, SZ+3.7);       // front step
+  add(new T.BoxGeometry(8.6, 0.12, 7.4), matFabric, 0, 3.05, SZ, {rx:0.06}); // shade canopy
+  inst(new T.CylinderGeometry(0.07,0.07,2.6,8), matSteel, [
+    {x:-3.6,y:1.7,z:SZ-3.2},{x:3.6,y:1.7,z:SZ-3.2},
+    {x:-3.6,y:1.7,z:SZ+3.2},{x:3.6,y:1.7,z:SZ+3.2}
+  ]);
+  add(new T.BoxGeometry(2.0, 0.9, 0.7), matDark, 0, 0.85, SZ-1.6);        // DJ booth
+  add(new T.BoxGeometry(2.1, 0.06, 0.8), matSteel, 0, 1.32, SZ-1.6);      // booth top
+  inst(new T.BoxGeometry(0.7,1.1,0.7), matDark, [
+    {x:-3.0,y:0.95,z:SZ},{x:3.0,y:0.95,z:SZ}                              // speakers
+  ]);
+
+  // ====================================================================
+  // GENTLE ACCENT LIGHTS (low intensity; deck is daylight-lit otherwise)
+  // ====================================================================
+  const bl = new T.PointLight(0xffce8a, 0.5, 9, 2); bl.position.set(BX, 2.2, BZ); g.add(bl);
+  const pl = new T.PointLight(0x66ccff, 0.3, 11, 2); pl.position.set(PCX, 1.4, 0); g.add(pl);
+}
+// tone down the cruise interior's emissives so the LEDs/signs don't blow out under bloom (scale each material once)
+function dimCruiseEmissives(root){
+  const seen=new Set();
+  root.traverse(function(o){ if(!o.isMesh) return; const ms=Array.isArray(o.material)?o.material:[o.material];
+    ms.forEach(function(m){ if(m && !seen.has(m) && m.emissive && m.emissiveIntensity){ seen.add(m); m.emissiveIntensity=Math.min(0.7, m.emissiveIntensity*0.5); } }); });
+}
+// a stacked sub-deck (floor + ceiling + walls + fill light), with an optional content builder; open=true builds an open-air deck (low bulwark, no ceiling)
+function cruiseSubDeck(parent, baseY, h, builderFn, builderArg, open){
+  const sub=new THREE.Group(); sub.position.set(0,baseY,0); parent.add(sub);
+  const wallM=new THREE.MeshStandardMaterial({color:0xe6dcc8,roughness:0.86}),
+        floorM=new THREE.MeshStandardMaterial({color:0x6e3a2e,roughness:0.92}),
+        ceilM=new THREE.MeshStandardMaterial({color:0xece6da,roughness:0.8});
+  const HW=11, ZN=-60, ZP=60, LEN=ZP-ZN, wh=open?1.1:h;
+  function bx(w,hh,d,m,x,y,z){ const e=new THREE.Mesh(new THREE.BoxGeometry(w,hh,d),m); e.position.set(x,y,z); e.receiveShadow=true; sub.add(e); return e; }
+  bx(HW*2,0.3,LEN,floorM,0,-0.15,0);                          // floor slab
+  if(!open) bx(HW*2,0.3,LEN,ceilM,0,h,0).castShadow=true;     // ceiling (blocks sun); open decks get sky
+  for(const sx of [-1,1]) bx(0.4,wh,LEN,wallM,sx*HW,wh/2,0);  // side walls / bulwark
+  bx(HW*2,wh,0.5,wallM,0,wh/2,ZN); bx(HW*2,wh,0.5,wallM,0,wh/2,ZP);   // end walls
+  const L=new THREE.PointLight(0xfff1da, open?0.0:0.5, 90); L.position.set(0,open?3:h-0.6,0); sub.add(L);
+  if(typeof builderFn==='function'){ const cg=new THREE.Group(); sub.add(cg); try{ builderFn(cg, builderArg); }catch(e){ console.warn('cruise sub-deck build failed:',e&&e.message); } }
+  return sub;
+}
+// elevator linking every deck — glass shaft + per-deck glowing call panel; the interaction is handled in updateAboard/doAction
+function cruiseElevator(parent, lx, lz, deckYs){
+  const metal=new THREE.MeshStandardMaterial({color:0x9aa0a8,roughness:0.4,metalness:0.7}),
+        glass=new THREE.MeshStandardMaterial({color:0x9fd0e0,roughness:0.1,transparent:true,opacity:0.26,side:THREE.DoubleSide}),
+        panelM=new THREE.MeshStandardMaterial({color:0x14202a,emissive:0x2aa6d8,emissiveIntensity:0.6,roughness:0.4});
+  const lo=Math.min.apply(null,deckYs)-0.3, hi=Math.max.apply(null,deckYs)+4.4;
+  for(const dx of [-1.5,1.5]) for(const dz of [-1.5,1.5]){ const p=new THREE.Mesh(new THREE.BoxGeometry(0.22,hi-lo,0.22),metal); p.position.set(lx+dx,(lo+hi)/2,lz+dz); parent.add(p); }
+  const shaft=new THREE.Mesh(new THREE.BoxGeometry(3.0,hi-lo,3.0),glass); shaft.position.set(lx,(lo+hi)/2,lz); parent.add(shaft);
+  deckYs.forEach(function(by){ const arch=new THREE.Mesh(new THREE.BoxGeometry(3.4,0.22,3.4),metal); arch.position.set(lx,by+4.2,lz); parent.add(arch);
+    const panel=new THREE.Mesh(new THREE.BoxGeometry(0.4,0.7,0.12),panelM); panel.position.set(lx+1.7,by+1.4,lz); parent.add(panel); });
+}
 function buildCruiseInterior(g){
   const FY=6.0;                       // lift so internal y=0 is the walkable deck
   function M(c,o){o=o||{};return new THREE.MeshStandardMaterial({color:c,roughness:o.r==null?0.85:o.r,metalness:o.m==null?0:o.m,emissive:o.e==null?0x000000:o.e,emissiveIntensity:o.ei==null?1:o.ei,transparent:!!o.t,opacity:o.o==null?1:o.o,side:o.s==null?THREE.FrontSide:o.s});}
@@ -7467,9 +8125,22 @@ function buildCruiseInterior(g){
   buildCruiseNPCs(g, 14);   // passengers wandering the promenade
   buildCruiseSitters(g);    // passengers seated on the loungers + theatre seats
   buildCruiseCrew(g);       // uniformed staff behind the bars, desk and shop counters
+  // ---- additional DECKS stacked above/below the promenade (interior-local floor y) ----
+  const cabFn=(typeof buildCZ_cabins!=='undefined')?buildCZ_cabins:null;
+  const sunFn=(typeof buildCZ_sundeck!=='undefined')?buildCZ_sundeck:null;
+  cruiseSubDeck(g, -8.6, 4.0, cabFn, false, false);   // Lower Cabins  (ship-local deck y = -2.6)
+  cruiseSubDeck(g, -4.6, 4.0, cabFn, true,  false);   // Cabin Deck / master suites (ship-local 1.4)
+  cruiseSubDeck(g, 18.0, 0,   sunFn, null,  true );   // open SUN DECK on top (ship-local 24.0)
+  cruiseElevator(g, 6, 56, [-8.6,-4.6,0,18.0]);       // elevator linking all four decks (interior-local floor y's)
+  dimCruiseEmissives(g);    // tame the LEDs/signs so nothing blows out under bloom
   g.position.y = FY;
-  // spawn mid-ship by the pool looking toward the shops/atrium; disembark gangway is the bow atrium
-  return { deckY:6.0, bounds:[-12,12,-64,64], spawn:[0,19], exit:[0,62] };
+  // levels: ship-local deck surface y = FY + interior-local floor y. Player boards at the Promenade (gangway = bow atrium).
+  return { deckY:6.0, bounds:[-12,12,-64,64], spawn:[0,19], exit:[0,62],
+    levels:[ {y:-2.6, bounds:[-11,11,-60,60], label:'Lower Cabins'},
+             {y:1.4,  bounds:[-11,11,-60,60], label:'Cabin Deck'},
+             {y:6.0,  bounds:[-12,12,-64,64], label:'Promenade'},
+             {y:24.0, bounds:[-11,11,-60,60], label:'Sun Deck'} ],
+    startLevel:2, elevator:[6,56] };
 }
 
 const VESSELS3D=[];
@@ -7484,6 +8155,7 @@ function buildWaterTraffic(){
       ig.updateMatrixWorld(true); const ib=new THREE.Box3().setFromObject(ig);   // trust the returned floor if it's inside the interior, else fall back to the bbox
       const rd=(info.deckY!=null?info.deckY:1);
       ent.iDeckY=(isFinite(ib.min.y) && rd>ib.min.y-0.6 && rd<ib.max.y-0.5) ? rd : (ib.min.y+0.12);
+      ent.iLevels=info.levels||null; ent.iElevator=info.elevator||null; ent.iStartLevel=(info.startLevel!=null?info.startLevel:0);   // multi-deck ships
     }catch(e){ console.warn('interior build failed:',e.message); } }
     VESSELS3D.push(ent); return ent; }
   // big vessels — wide slow loops in the open central/eastern lagoon (clear of islands, rock, lighthouse, city)
@@ -9643,6 +10315,12 @@ function mooredBoatBob(){
 }
 // ---- walking around a boarded ship's interior (vessel anchored; avatar moves in vessel-local frame) ----
 let aboard=null, _boardTarget=null;
+// set up the multi-deck level state on an aboard object (no-op for single-deck ships like the yacht)
+function initAboardLevels(A, tgt){
+  if(tgt.iLevels && tgt.iLevels.length){ A.levels=tgt.iLevels; A.elevator=tgt.iElevator; A.level=tgt.iStartLevel|0; A.exitLevel=tgt.iStartLevel|0;
+    const lv=A.levels[A.level]; A.deckY=lv.y; A.bounds=lv.bounds.slice(); }
+  else { A.levels=null; A.elevator=null; A.level=0; }
+}
 function updateAboard(dt){
   const A=aboard; if(!A) return; const g=A.entry.grp;
   const fwd=(keys['w']||keys['arrowup'])?1:0, bwd=(keys['s']||keys['arrowdown'])?1:0;
@@ -10006,7 +10684,7 @@ function updateCutscene(dt){ const c=cutscene; if(!c) return; c.t+=dt; const u=M
 }
 function endCutscene(){ const tgt=cutscene.target; cutscene=null; cutsceneSkip=false; hideCine(); SFX.heliStop&&SFX.heliStop();
   tgt.anchored=true; tgt.grp.rotation.x=0; tgt.grp.rotation.z=0; if(tgt.interior)tgt.interior.visible=true;
-  aboard={entry:tgt,deckY:tgt.iDeckY,bounds:tgt.iBounds.slice(),exit:tgt.iExit.slice(),lx:tgt.iSpawn[0],lz:tgt.iSpawn[1],lh:0,sp:0,step:0,via:'heli'}; cam.yaw=0; cam.pitch=0;   // face down the promenade on arrival
+  aboard={entry:tgt,deckY:tgt.iDeckY,bounds:tgt.iBounds.slice(),exit:tgt.iExit.slice(),lx:tgt.iSpawn[0],lz:tgt.iSpawn[1],lh:0,sp:0,step:0,via:'heli'}; initAboardLevels(aboard,tgt); cam.yaw=0; cam.pitch=0;   // face down the promenade on arrival
   pmode='aboard'; avatar.visible=false;
   const _s=tgt.grp.scale.x||1;
   if(tgt.helipad){ const ry=tgt.grp.rotation.y, cs=Math.cos(ry), sn=Math.sin(ry), p=tgt.helipad;   // park the heli on the pad it landed on
@@ -10312,7 +10990,7 @@ function updateCar(dt){
   CAR.y=onQuay(CAR.x,CAR.z)?PORT.deckY:landH(CAR.x,CAR.z);
   car3d.position.set(CAR.x,CAR.y,CAR.z); car3d.rotation.y=CAR.heading+carYaw;
 }
-const PROMPTS={dock:'Press  F  — dock & explore on foot', drive:'Press  F  — get in the car', ride:'Press  F  — ride the jetski', exit:'Press  F  — get out of the car', board:'Press  F  — board the boat', land:'Press  F  — tie up at the dock', boardShip:'Press  F  — board the ship', leaveShip:'Press  F  — disembark', heli:'Press  F  — helicopter', heliExit:'Press  F  — get out of the helicopter'};
+const PROMPTS={dock:'Press  F  — dock & explore on foot', drive:'Press  F  — get in the car', ride:'Press  F  — ride the jetski', exit:'Press  F  — get out of the car', board:'Press  F  — board the boat', land:'Press  F  — tie up at the dock', boardShip:'Press  F  — board the ship', leaveShip:'Press  F  — disembark', elevator:'Press  F  — take the elevator (next deck)', heli:'Press  F  — helicopter', heliExit:'Press  F  — get out of the helicopter'};
 function nearestShip(x,z){ let best=null,bd=1e9; for(const v of VESSELS3D){ if(!v.ship||!v.interior) continue; const d=Math.hypot(v.grp.position.x-x,v.grp.position.z-z); if(d<(v.boardRange||20) && d<bd){bd=d;best=v;} } return best; }
 function updateInteract(){
   let a=null;
@@ -10325,7 +11003,10 @@ function updateInteract(){
     if(dH<13 && Math.abs(CAR.speed)<3) a='heli'; else if(Math.abs(CAR.speed)<2.5) a='exit'; }
   else if(pmode==='boat'){ const sh=Math.abs(BOAT.speed)<7?nearestShip(BOAT.x,BOAT.z):null;
     if(sh){ a='boardShip'; _boardTarget=sh; } else if(Math.abs(BOAT.speed)<3 && dockReach(BOAT.x,BOAT.z)) a='land'; }
-  else if(pmode==='aboard'){ if(aboard && Math.hypot(aboard.lx-aboard.exit[0],aboard.lz-aboard.exit[1])<3.2) a='leaveShip'; }
+  else if(pmode==='aboard' && aboard){
+    if(aboard.elevator && Math.hypot(aboard.lx-aboard.elevator[0],aboard.lz-aboard.elevator[1])<3.2) a='elevator';   // near the elevator on any deck
+    else if((!aboard.levels || aboard.level===aboard.exitLevel) && Math.hypot(aboard.lx-aboard.exit[0],aboard.lz-aboard.exit[1])<3.2) a='leaveShip';   // gangway is on the promenade deck
+  }
   else if(pmode==='heli'){ if(HELI.y < heliGround(HELI.x,HELI.z)+4 && Math.abs(HELI.fwd)<5) a='heliExit'; }
   nearAction=a; promptEl.textContent=a?PROMPTS[a]:''; promptEl.style.opacity=a?'1':'0';
 }
@@ -10343,8 +11024,10 @@ function doAction(a){ if(!a)return; SFX.select&&SFX.select();
     let al=(BOAT.x-DOCK.cx)*DOCK.dx+(BOAT.z-DOCK.cz)*DOCK.dz; al=Math.max(DOCK.start+3,Math.min(DOCK.endCd-3,al));
     AV.x=DOCK.cx+DOCK.dx*al; AV.z=DOCK.cz+DOCK.dz*al; AV.heading=DOCK.ang+Math.PI; AV.speed=0; AV.y=DOCK.deckTop; avatar.visible=true; toast('Tied up — back on the dock','#aef0ff'); }
   else if(a==='boardShip'){ const v=_boardTarget; if(v&&v.interior){ BOAT.speed=0; v.anchored=true; v.grp.rotation.x=0; v.grp.rotation.z=0; v.interior.visible=true;
-    aboard={entry:v, deckY:v.iDeckY, bounds:v.iBounds.slice(), exit:v.iExit.slice(), lx:v.iSpawn[0], lz:v.iSpawn[1], lh:0, sp:0, step:0, via:'boat'}; cam.yaw=0; cam.pitch=0;
+    aboard={entry:v, deckY:v.iDeckY, bounds:v.iBounds.slice(), exit:v.iExit.slice(), lx:v.iSpawn[0], lz:v.iSpawn[1], lh:0, sp:0, step:0, via:'boat'}; initAboardLevels(aboard,v); cam.yaw=0; cam.pitch=0;
     pmode='aboard'; avatar.visible=false; updateAboard(0.0001); toast('Aboard the '+v.ship+' — explore (mouse to look)','#aef0ff'); } }
+  else if(a==='elevator'){ if(aboard && aboard.levels){ aboard.level=(aboard.level+1)%aboard.levels.length; const lv=aboard.levels[aboard.level];
+      aboard.deckY=lv.y; aboard.bounds=lv.bounds.slice(); aboard.sp=0; toast('▲ '+lv.label,'#aef0ff'); } }
   else if(a==='leaveShip'){ if(aboard){ const v=aboard.entry, via=aboard.via; if(v.interior)v.interior.visible=false; v.anchored=false; aboard=null;
     if(via==='heli'){ pmode='heli'; avatar.visible=false; HELI.x=v.grp.position.x; HELI.z=v.grp.position.z; HELI.y=v.grp.position.y+30; HELI.fwd=0; HELI.vy=0; heli3d.position.set(HELI.x,HELI.y,HELI.z); SFX.heliStart&&SFX.heliStart(); toast('Back in the helicopter — fly home  (F to land & exit)','#aef0ff'); }
     else { pmode='boat'; avatar.visible=false; toast('Back on your boat','#aef0ff'); } } }
@@ -10542,11 +11225,16 @@ function loop(now){
   if(pmode==='aboard' && aboard && aboard.entry && aboard.entry.ship==='cruise ship') updateCruiseNPCs(dt);
   { const _ce = (typeof VESSELS3D!=='undefined') ? VESSELS3D.filter(function(v){return v.ship==='cruise ship';})[0] : null;
     const onShip = pmode==='aboard' && aboard && aboard.entry===_ce;
-    if(onShip!==cruiseExtHidden){ if(_ce) setCruiseExterior(_ce, onShip); cruiseExtHidden=onShip;
-      sun.intensity = onShip ? 0.85 : 2.6;   // the hidden exterior used to shade the deck; dim the sun while inside so it doesn't blow out the bright interior walls
-      sun.castShadow = !onShip; }
-    // cull the outside world while inside — but keep it on the open pool deck (lz ~ -16..24), with a 4 m hysteresis band
-    const wc = onShip ? (worldCulledState ? !(aboard.lz>-18 && aboard.lz<26) : (aboard.lz<-22 || aboard.lz>30)) : false;
+    const onSunDeck = onShip && aboard.levels && aboard.level===aboard.levels.length-1;   // open-air top deck
+    if(onShip!==cruiseExtHidden){ if(_ce) setCruiseExterior(_ce, onShip); cruiseExtHidden=onShip; }   // hide the ship's solid exterior while aboard
+    sun.intensity = (onShip && !onSunDeck) ? 0.85 : 2.6;   // dim under the glass roof so it doesn't blow out the interior; full daylight on the open sun deck
+    sun.castShadow = !onShip;
+    // hide the outside world on enclosed decks; show it on the open sun deck and on the promenade pool-deck band (4 m hysteresis)
+    let wc;
+    if(!onShip) wc=false;
+    else if(onSunDeck) wc=false;
+    else if(aboard.levels && aboard.deckY!==6.0) wc=true;   // cabin decks (not the promenade)
+    else wc = worldCulledState ? !(aboard.lz>-18 && aboard.lz<26) : (aboard.lz<-22 || aboard.lz>30);
     if(wc!==worldCulledState){ cullOutsideWorld(wc, onShip?_ce:null); worldCulledState=wc; } }
   updateWaterTraffic(dt);
   updatePort(dt);
