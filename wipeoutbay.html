@@ -10831,7 +10831,7 @@ function buildHorse(g){
   var tail=add(new THREE.CylinderGeometry(0.10,0.05,1.0,8), mane, 0,1.05,-0.84); tail.rotation.x=0.55;
 }
 // ===== farm island layout =====
-const FARM_SAILS=[], FARM_ANIMALS=[]; let FARM_FARMER=null;
+const FARM_SAILS=[], FARM_ANIMALS=[]; let FARM_TRACTOR=null;
 // idle-animate the farm animals (bob/sway/graze) + the wandering farmer — only when the camera is near the farm (LOD)
 function updateFarm(dt){
   if(camera.position.x===undefined) return;
@@ -10844,15 +10844,15 @@ function updateFarm(dt){
     if(a.kind==='chicken') a.grp.rotation.x = (ph2<0.3 ? Math.sin(ph2/0.3*Math.PI)*0.34 : 0);   // quick peck
     else                   a.grp.rotation.x = (ph2<0.42 ? Math.sin(ph2/0.42*Math.PI)*0.17 : 0); // head-down graze
   }
-  const F=FARM_FARMER;
-  if(F){ const L=F.lp;
-    if(F.pause>0){ F.pause-=dt; if(L){ L.legL.rotation.x*=0.85; L.legR.rotation.x*=0.85; L.armL.rotation.x*=0.85; L.armR.rotation.x*=0.85; } }
-    else { const dx=F.tx-F.lx, dz=F.tz-F.lz, d=Math.hypot(dx,dz);
-      if(d<1.2){ F.tx=-60+Math.random()*120; F.tz=-50+Math.random()*90; if(Math.random()<0.4) F.pause=1+Math.random()*3; }   // roam the yard
-      else { const want=Math.atan2(dx,dz); let dh=((want-F.heading+Math.PI*3)%(Math.PI*2))-Math.PI; F.heading+=THREE.MathUtils.clamp(dh,-3*dt,3*dt);
-        const sp=Math.min(2.4, d*1.2); F.lx+=Math.sin(F.heading)*sp*dt; F.lz+=Math.cos(F.heading)*sp*dt;
-        F.step+=sp*dt*2.6; const sw=Math.sin(F.step)*0.5; if(L){ L.legL.rotation.x=sw; L.legR.rotation.x=-sw; L.armL.rotation.x=-sw; L.armR.rotation.x=sw; } } }
-    F.grp.position.set(F.lx, F.by, F.lz); F.grp.rotation.y=F.heading;
+  const T=FARM_TRACTOR;
+  if(T){ const tgt=T.route[T.wp], dx=tgt[0]-T.x, dz=tgt[1]-T.z, d=Math.hypot(dx,dz);
+    if(d<6) T.wp=(T.wp+1)%T.route.length;                                              // reached a waypoint
+    const want=Math.atan2(dx,dz); let dh=((want-T.heading+Math.PI*3)%(Math.PI*2))-Math.PI;
+    T.heading+=THREE.MathUtils.clamp(dh,-1.1*dt,1.1*dt);                                // tractor-style slow turn
+    T.x+=Math.sin(T.heading)*T.speed*dt; T.z+=Math.cos(T.heading)*T.speed*dt;
+    T.grp.position.set(T.x, T.by+Math.sin(gameT*9)*0.03, T.z);                          // drive + slight engine bob
+    T.grp.rotation.y=T.heading;
+    const roll=T.speed*dt*1.4; for(let w=0;w<T.wheels.length;w++) T.wheels[w].rotation.x+=roll;   // roll the wheels
   }
 }
 function buildFarm(){
@@ -10894,8 +10894,7 @@ function buildFarm(){
   let ki=0;
   for(let fx=-78;fx<=-50;fx+=14){ for(let fz=-12;fz<=-40;fz-=14){ place(buildCropField,fx,fz,0,kinds[ki%kinds.length]); ki++; } }
   pen(-64,-26,42,42);
-  place(buildScarecrow, -64, -26, 0);
-  place(buildTractor,   -40, -8, -1.4);
+  place(buildScarecrow, -64, -26, 0);   // (the tractor is driven by the farmer — set up below)
 
   // ---- animal pens (animals collected into FARM_ANIMALS for idle animation) ----
   function pa(fn,x,z,rot,kind){ const a=place(fn,x,z,rot);
@@ -10917,14 +10916,22 @@ function buildFarm(){
   for(let i=0;i<7;i++) pa(buildChicken, -54+(i%4)*4, 22+((i/4|0)*5)+ (Math.random()*3), Math.random()*6.28, 'chicken');
   // hay bales near the barn
   for(let i=0;i<5;i++) place(buildHaybale, 46+(i%3)*2.2, 30+((i/3|0)*2.4), Math.random()*6.28);
-  // ---- farmer NPC wandering the yard ----
-  { const fg=new THREE.Group(); fg.rotation.order='YXZ';
+  // ---- the FARMER DRIVES THE TRACTOR around the open pasture ----
+  { const tg=place(buildTractor, 112, 0, 0);
+    // seat the farmer on the tractor (child of the tractor, sitting pose, hands on the wheel)
+    const fg=new THREE.Group(); fg.rotation.order='YXZ';
     const lp=buildPerson(fg,{shirt:0xb23b30, pants:0x33507e, skin:pick(NPC_SKIN), hair:pick(NPC_HAIR)});   // red plaid shirt + denim overalls
     const hatM=new THREE.MeshStandardMaterial({color:0xceac5e,roughness:0.95});                            // straw hat
     const brim=new THREE.Mesh(new THREE.CylinderGeometry(0.30,0.30,0.05,14),hatM); brim.position.y=1.80; fg.add(brim);
     const crown=new THREE.Mesh(new THREE.CylinderGeometry(0.17,0.19,0.16,14),hatM); crown.position.y=1.88; fg.add(crown);
-    fg.position.set(-30,gy,18); grp.add(fg);
-    FARM_FARMER={grp:fg, lp:lp, lx:-30, lz:18, tx:-30, tz:18, heading:0, speed:0, step:0, pause:1.2, by:gy}; }
+    fg.position.set(0,0.22,-0.55); fg.rotation.y=0;                                                        // on the seat, facing the wheel (+Z = tractor forward)
+    if(lp){ lp.legL.rotation.x=-1.25; lp.legR.rotation.x=-1.25; lp.armL.rotation.x=-1.0; lp.armR.rotation.x=-1.0; }   // seated, gripping the wheel
+    tg.add(fg);
+    // gather the wheel meshes (full cylinders turned onto their axle) so we can roll them
+    const wheels=[]; tg.traverse(function(o){ if(o.isMesh && o.geometry && o.geometry.type==='CylinderGeometry' && Math.abs(o.rotation.z)>1.2){ const th=o.geometry.parameters.thetaLength; if(th===undefined||th>6) wheels.push(o); } });
+    // an oval circuit around the open pasture, clear of the buildings, pens and dock
+    const RTE=[]; for(let k=0;k<16;k++){ const a=k/16*Math.PI*2; RTE.push([Math.cos(a)*112, Math.sin(a)*96]); }
+    FARM_TRACTOR={grp:tg, lp:lp, wheels:wheels, route:RTE, wp:1, x:112, z:0, heading:0, by:gy, speed:7}; }
 
   // ---- pond ----
   const pond=new THREE.Mesh(new THREE.CircleGeometry(13,32),pondMat); pond.rotation.x=-Math.PI/2; pond.position.set(6,gy-0.25,-58); pond.receiveShadow=true; grp.add(pond);
