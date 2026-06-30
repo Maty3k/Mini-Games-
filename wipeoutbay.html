@@ -11185,6 +11185,20 @@ function buildFarm(){
   for(let i=0;i<7;i++) pa(buildChicken, 16+(i%4)*3, 28+((i/4|0)*4)+ (Math.random()*2), Math.random()*6.28, 'chicken');
   // hay bales near the barn
   for(let i=0;i<5;i++) place(buildHaybale, 46+(i%3)*2.2, 30+((i/3|0)*2.4), Math.random()*6.28);
+  // ---- farm liveliness: troughs, churns, sacks, tools, kitchen garden, woodpiles, a dog & greenery ----
+  for(const t of [[-12,18,0],[18,-20,1.57],[44,-24,0],[66,42,1.57]]) place(buildTrough, t[0],t[1], t[2]);   // water troughs in the pens
+  for(const s of [[66,40],[24,-44],[12,-40]]) place(buildSackPile, s[0],s[1], Math.random()*6.28);            // grain sacks by the silos
+  place(buildMilkChurn, -40,34, 0); place(buildMilkChurn, -38,33, 0); place(buildMilkChurn, 40,41, 0);
+  place(buildWheelbarrow, -51,34, 0.6); place(buildWheelbarrow, 30,42, -0.5);
+  place(buildCrateStack, -53,45, 0); place(buildProduceCrate, -49,46, 0);
+  place(buildGardenPlot, -55,33, 0.2);                                                                        // kitchen garden by the farmhouse
+  place(buildFlowerBed, -42,46, 0); place(buildFlowerBed, -50,47, 0);
+  place(buildWoodpile, 27,49, 0); place(buildWoodpile, -53,37, 1.57);
+  place(buildDogHouse, -40,46, 0.4);
+  for(const b of [[44,36],[-44,47],[64,40],[-30,-24]]) place(buildBarrel, b[0],b[1], 0);
+  for(let i=0;i<4;i++) place(buildHaybale, -29+(i%2)*2.4, -27+((i/2|0)*2.4), Math.random()*6.28);             // a hay stack by the lean-to
+  { const farmObs=[{x:-46,z:40,r:11},{x:34,z:46,r:13},{x:60,z:44,r:7},{x:48,z:54,r:7},{x:84,z:4,r:8},{x:-90,z:-8,r:13},{x:-86,z:50,r:7},{x:-98,z:-40,r:8},{x:92,z:-22,r:8},{x:-60,z:24,r:7},{x:-30,z:-30,r:8},{x:2,z:8,r:24},{x:28,z:-26,r:18},{x:50,z:-30,r:14},{x:74,z:34,r:20},{x:-64,z:-26,r:28},{x:-28,z:-51,r:22},{x:6,z:-58,r:17},{x:2,z:-46,r:7},{x:18,z:-46,r:7}];
+    scatterBushes(grp, FARM.x, FARM.z, farmEdge, farmObs, 34, gy); }
   // ---- the FARMER DRIVES THE TRACTOR around the open pasture ----
   { const tg=place(buildTractor, 112, 0, 0);
     // seat the farmer on the tractor (child of the tractor, sitting pose, hands on the wheel)
@@ -12247,6 +12261,56 @@ function buildIslandDock(grp, CX, CZ, edgeFn, gy, name){
   ISLAND_LANDINGS.push(dock0);
   return { au:au, fE:fE };
 }
+// ===================== RUSTIC PROPS (village + farm liveliness) =====================
+const _ppWood = new THREE.MeshStandardMaterial({color:0x8a5a32, roughness:0.9});
+const _ppWoodD= new THREE.MeshStandardMaterial({color:0x5e3f22, roughness:0.9});
+const _ppMetal= new THREE.MeshStandardMaterial({color:0x55585f, roughness:0.45, metalness:0.7});
+const _ppMetalD=new THREE.MeshStandardMaterial({color:0x3a3d42, roughness:0.5, metalness:0.6});
+const _ppBurlap=new THREE.MeshStandardMaterial({color:0xb9a06a, roughness:1.0});
+const _ppLeafA= new THREE.MeshStandardMaterial({color:0x3f7a34, roughness:0.95});
+const _ppLeafB= new THREE.MeshStandardMaterial({color:0x57913f, roughness:0.95});
+const _ppSoil = new THREE.MeshStandardMaterial({color:0x49301c, roughness:1.0});
+const _ppFire = new THREE.MeshStandardMaterial({color:0xff8a2e, emissive:0xff5a10, emissiveIntensity:2.2, roughness:0.6});
+const _ppWater= new THREE.MeshStandardMaterial({color:0x2f6f8a, roughness:0.25});
+function _pm(geo,mat,x,y,z){ const m=new THREE.Mesh(geo,mat); m.position.set(x||0,y||0,z||0); m.castShadow=true; m.receiveShadow=true; return m; }
+function _flowerMat(c){ return new THREE.MeshStandardMaterial({color:c, roughness:0.7}); }
+function buildCrate(g){ const s=0.6; g.add(_pm(new THREE.BoxGeometry(s,s,s),_ppWood,0,s/2,0));
+  for(const yy of [0.16,0.46]) g.add(_pm(new THREE.BoxGeometry(s+0.02,0.05,s+0.02),_ppWoodD,0,yy,0)); }
+function buildCrateStack(g){ const n=2+(Math.random()*2|0);
+  for(let k=0;k<n;k++){ const s=0.55, m=_pm(new THREE.BoxGeometry(s,s,s),k%2?_ppWoodD:_ppWood,(Math.random()-0.5)*0.25, s/2+k*0.57, (Math.random()-0.5)*0.25); m.rotation.y=Math.random()*0.5; g.add(m); } }
+function buildProduceCrate(g){ buildCrate(g); const cols=[0xd23b30,0xe8a13a,0x3a8a4a,0xd96a2a,0x9a4bd0];
+  for(let k=0;k<7;k++) g.add(_pm(new THREE.SphereGeometry(0.1,7,6),_flowerMat(cols[k%cols.length]),(Math.random()-0.5)*0.42,0.62+Math.random()*0.06,(Math.random()-0.5)*0.42)); }
+function buildSackPile(g){ for(let k=0;k<4;k++){ const ox=((k%2)-0.5)*0.5, oz=(((k/2)|0)-0.5)*0.5, y=(((k/2)|0))*0.42+0.24; g.add(_pm(new THREE.SphereGeometry(0.3,8,6),_ppBurlap,ox,y,oz)); } }
+function buildWoodpile(g){ for(let r=0;r<3;r++) for(let c=0;c<5;c++){ const log=_pm(new THREE.CylinderGeometry(0.1,0.1,1.6,8),_ppWoodD,-0.4+c*0.2,0.12+r*0.2,0); log.rotation.z=Math.PI/2; g.add(log); } }
+function buildTrough(g){ g.add(_pm(new THREE.BoxGeometry(1.8,0.42,0.6),_ppWood,0,0.21,0)); g.add(_pm(new THREE.BoxGeometry(1.62,0.16,0.44),_ppWater,0,0.34,0)); }
+function buildWheelbarrow(g){ g.add(_pm(new THREE.BoxGeometry(0.7,0.34,1.0),_ppMetal,0,0.5,-0.05));
+  const w=_pm(new THREE.CylinderGeometry(0.22,0.22,0.1,12),_ppMetalD,0,0.22,0.55); w.rotation.z=Math.PI/2; g.add(w);
+  for(const x of [-0.28,0.28]){ const h=_pm(new THREE.CylinderGeometry(0.03,0.03,1.3,6),_ppWood,x,0.4,-0.7); h.rotation.x=0.5; g.add(h); g.add(_pm(new THREE.CylinderGeometry(0.03,0.03,0.4,6),_ppWood,x,0.2,-0.45)); } }
+function buildMilkChurn(g){ g.add(_pm(new THREE.CylinderGeometry(0.22,0.26,0.7,12),_ppMetal,0,0.35,0)); g.add(_pm(new THREE.CylinderGeometry(0.14,0.22,0.2,12),_ppMetal,0,0.78,0)); g.add(_pm(new THREE.CylinderGeometry(0.16,0.16,0.08,12),_ppMetalD,0,0.92,0)); }
+function buildDogHouse(g){ g.add(_pm(new THREE.BoxGeometry(1.0,0.7,1.1),_ppWood,0,0.35,0));
+  const r1=_pm(new THREE.BoxGeometry(0.72,0.07,1.25),_ppWoodD,0,0.85,0.3); r1.rotation.x=-0.5; g.add(r1);
+  const r2=_pm(new THREE.BoxGeometry(0.72,0.07,1.25),_ppWoodD,0,0.85,-0.3); r2.rotation.x=0.5; g.add(r2);
+  g.add(_pm(new THREE.BoxGeometry(0.42,0.5,0.1),new THREE.MeshStandardMaterial({color:0x140d08}),0,0.3,0.56)); }
+function buildBrazier(g){ g.add(_pm(new THREE.CylinderGeometry(0.04,0.04,1.0,6),_ppMetalD,0,0.5,0)); g.add(_pm(new THREE.CylinderGeometry(0.35,0.22,0.3,10),_ppMetalD,0,1.05,0)); g.add(_pm(new THREE.ConeGeometry(0.28,0.5,8),_ppFire,0,1.42,0));
+  const pl=new THREE.PointLight(0xff7a30,0.7,12,2); pl.position.set(0,1.4,0); g.add(pl); }
+function buildHangingSign(g){ g.add(_pm(new THREE.CylinderGeometry(0.05,0.05,0.5,6),_ppMetalD,0,2.55,0)); g.add(_pm(new THREE.BoxGeometry(1.2,0.07,0.07),_ppMetalD,0.5,2.7,0)); g.add(_pm(new THREE.BoxGeometry(0.74,0.5,0.06),_ppWoodD,0.92,2.35,0)); }
+function buildGardenPlot(g){ g.add(_pm(new THREE.BoxGeometry(2.6,0.16,1.8),_ppSoil,0,0.08,0));
+  for(let r=0;r<3;r++) for(let c=0;c<7;c++) g.add(_pm(new THREE.SphereGeometry(0.12,6,5),r%2?_ppLeafB:_ppLeafA,-1.1+c*0.36,0.22,-0.6+r*0.6)); }
+function buildFlowerBed(g){ g.add(_pm(new THREE.BoxGeometry(1.6,0.22,0.6),_ppWood,0,0.11,0)); const cols=[0xe23b46,0xe8a13a,0xd86a9a,0xf2e23a,0x9a5bd0];
+  for(let k=0;k<14;k++) g.add(_pm(new THREE.SphereGeometry(0.07,6,5),_flowerMat(cols[k%cols.length]),(Math.random()-0.5)*1.4,0.3+Math.random()*0.08,(Math.random()-0.5)*0.45)); }
+function buildPottedPlant(g){ g.add(_pm(new THREE.CylinderGeometry(0.22,0.16,0.34,10),new THREE.MeshStandardMaterial({color:0xb05a3a,roughness:0.8}),0,0.17,0)); g.add(_pm(new THREE.SphereGeometry(0.26,8,7),_ppLeafA,0,0.5,0)); }
+function buildLaundryLine(g,len){ len=len||5; for(const x of [-len/2,len/2]) g.add(_pm(new THREE.CylinderGeometry(0.05,0.06,2.4,6),_ppWood,x,1.2,0));
+  const line=_pm(new THREE.CylinderGeometry(0.012,0.012,len,4),_ppWoodD,0,2.2,0); line.rotation.z=Math.PI/2; g.add(line);
+  const cl=[0xd05a5a,0x5a7ad0,0xe8e0d0,0x6aae6a,0xe0c050]; for(let k=0;k<5;k++){ const cw=0.4+Math.random()*0.2; g.add(_pm(new THREE.BoxGeometry(cw,0.5,0.04),new THREE.MeshStandardMaterial({color:cl[k%cl.length],roughness:0.8,side:THREE.DoubleSide}),-len/2+0.6+k*(len-1.2)/4,1.9,0)); } }
+// scatter instanced bushes around an island, avoiding a list of {x,z,r} obstacles
+function scatterBushes(parent, baseX, baseZ, edgeFn, obstacles, count, yBase){
+  const mats=[], up=new THREE.Vector3(0,1,0), one=new THREE.Vector3(1,1,1); let tries=0;
+  while(mats.length<count && tries<count*8){ tries++;
+    const a=Math.random()*6.28, r=14+Math.random()*(edgeFn(a)-22); const x=Math.cos(a)*r, z=Math.sin(a)*r;
+    let ok=true; for(const o of obstacles){ if(Math.hypot(x-o.x,z-o.z)<(o.r||6)+1.5){ ok=false; break; } } if(!ok) continue;
+    const s=0.8+Math.random()*0.7; mats.push(new THREE.Matrix4().compose(new THREE.Vector3(baseX+x,yBase,baseZ+z), new THREE.Quaternion().setFromAxisAngle(up,Math.random()*6.28), new THREE.Vector3(s,s,s))); }
+  if(mats.length) parent.add(instanceModel(propBush(), mats, false));
+}
 function buildVillage(){
   const grp=new THREE.Group(); grp.position.set(VILLAGE.x,0,VILLAGE.z); scene.add(grp);
   const gy=villageY;
@@ -12316,6 +12380,20 @@ function buildVillage(){
   path(-50,40,-70,78,3); path(50,42,68,80,3); path(-56,-18,-92,-18,3); path(57,-14,94,-16,3);
   // dock toward the bay centre
   buildIslandDock(grp, VILLAGE.x, VILLAGE.z, villageEdge, gy, 'the village');
+  // ---- village liveliness: yard props, market goods, warmth & greenery ----
+  const yardProps=[buildWoodpile,buildGardenPlot,buildFlowerBed,buildPottedPlant,buildCrateStack,buildSackPile,buildBarrel,buildWheelbarrow];
+  for(let i=0;i<cot.length;i++){ const dx=(i%2?1:-1)*6.5, dz=((i%3)-1)*5.5; place(yardProps[i%yardProps.length], cot[i][0]+dx, cot[i][1]+dz, Math.random()*6.28); }
+  for(let i=0;i<sp.length;i++){ const a=sp[i][2]; place(buildProduceCrate, sp[i][0]+Math.sin(a)*2.0, sp[i][1]+Math.cos(a)*2.0, Math.random()*6.28); }
+  for(const b of [[-19,-6],[19,6],[0,-26]]) place(buildBrazier, b[0],b[1],0);                         // braziers for warmth & night light
+  for(const c of [[-13,-7],[13,8],[-7,13]]) place(buildBarrel, c[0],c[1],0);
+  place(function(s){ buildLaundryLine(s,6); }, -30,-18, 0.4); place(function(s){ buildLaundryLine(s,6); }, 30,9, -0.3);
+  place(buildHangingSign, 47,-18, -1.4); place(buildHangingSign, -14,-10, 0.0);                        // tavern + shop signs
+  place(buildDogHouse, -33,8, 0.5);
+  for(let k=0;k<8;k++){ const a=Math.random()*6.28, r=8+Math.random()*40; place(buildChicken, Math.cos(a)*r, Math.sin(a)*r, Math.random()*6.28); }
+  scatterBushes(grp, VILLAGE.x, VILLAGE.z, villageEdge, COTS, 55, gy);
+  if(treeProto){ const box=new THREE.Box3().setFromObject(treeProto), th=Math.max(0.01,box.max.y-box.min.y), minY=box.min.y, up=new THREE.Vector3(0,1,0), tm=[];
+    let tt=0; while(tm.length<16 && tt<200){ tt++; const a=Math.random()*6.28, r=72+Math.random()*(villageEdge(a)-82); if(r<72) continue; const x=Math.cos(a)*r, z=Math.sin(a)*r; const s=(11/th)*(0.7+Math.random()*0.5); tm.push(new THREE.Matrix4().compose(new THREE.Vector3(VILLAGE.x+x, gy-minY*s, VILLAGE.z+z), new THREE.Quaternion().setFromAxisAngle(up,Math.random()*6.28), new THREE.Vector3(s,s,s))); }
+    if(tm.length) grp.add(instanceModel(treeProto, tm, false)); }
   // ---- villagers wandering the square + streets ----
   const SH=[0x3a5a8a,0x7a3a3a,0x3a6a4a,0x6a5a2a,0x5a3a6a,0x8a6a3a,0x35506e,0x9a4b4b];
   for(let i=0;i<46;i++){ const fg=new THREE.Group(); fg.rotation.order='YXZ';
