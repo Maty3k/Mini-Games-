@@ -12222,7 +12222,7 @@ function buildCobbleArea(g, w, d){
   m.rotation.x=-Math.PI/2; m.position.y=0.05; m.receiveShadow=true; g.add(m);
 }
 // ===== village island layout =====
-const VILLAGE_NPCS=[], VILLAGE_SHOPKEEPERS=[], VILLAGE_DUCKS=[];
+const VILLAGE_NPCS=[], VILLAGE_SHOPKEEPERS=[], VILLAGE_DUCKS=[], VILLAGE_RIPPLES=[];
 // irregular grass cover + tiled grass texture for an island plateau (shared shape with the farm)
 function islandGrassMesh(grp, gy, edgeFn){
   function grassTex(){ const c=document.createElement('canvas'); c.width=128; c.height=128; const x=c.getContext('2d');
@@ -12402,10 +12402,13 @@ function buildVillage(){
     const rim=new THREE.Mesh(new THREE.RingGeometry(pr-0.4,pr+2.4,36),new THREE.MeshStandardMaterial({color:0x6e5638,roughness:1.0})); rim.rotation.x=-Math.PI/2; rim.position.set(pcx,gy+0.02,pcz); grp.add(rim);
     for(let k=0;k<11;k++){ const a=Math.random()*6.28; place(buildReed, pcx+Math.cos(a)*(pr+0.7), pcz+Math.sin(a)*(pr+0.7), 0); }
     place(buildBarrel, pcx-pr-2.5, pcz+1, 0); place(buildWoodpile, pcx+pr+2, pcz-3, 0.6);   // a barrel & woodpile by the water
-    const dkinds=['white','mallard','mallard','mallardF','white','mallard'];
-    for(let k=0;k<6;k++){ const dg=new THREE.Group(); buildDuck(dg, dkinds[k]); const a=Math.random()*6.28, orb=1.4+Math.random()*(pr-3.2);
-      dg.position.set(pcx+Math.cos(a)*orb, gy+0.04, pcz+Math.sin(a)*orb); grp.add(dg);
-      VILLAGE_DUCKS.push({grp:dg, cx:pcx, cz:pcz, orb:orb, a:a, spd:(0.18+Math.random()*0.3)*(Math.random()<0.5?1:-1), ph:Math.random()*6.28, by:gy+0.04}); } }
+    // expanding-ring ripple pool (shared by the ducks)
+    for(let k=0;k<28;k++){ const rg=new THREE.Mesh(new THREE.RingGeometry(0.84,1.0,24), new THREE.MeshBasicMaterial({color:0xdcefff,transparent:true,opacity:0,depthWrite:false}));
+      rg.rotation.x=-Math.PI/2; rg.position.set(pcx,gy-0.12,pcz); rg.visible=false; grp.add(rg); VILLAGE_RIPPLES.push({m:rg,t:-1}); }
+    const dkinds=['white','mallard','mallard','mallardF','white','mallard'], bnd=pr-1.5;
+    for(let k=0;k<6;k++){ const dg=new THREE.Group(); buildDuck(dg, dkinds[k]); const a=Math.random()*6.28, r=Math.random()*bnd, lx=pcx+Math.cos(a)*r, lz=pcz+Math.sin(a)*r;
+      dg.position.set(lx, gy+0.04, lz); grp.add(dg);
+      VILLAGE_DUCKS.push({grp:dg, cx:pcx, cz:pcz, bnd:bnd, x:lx, z:lz, tx:lx, tz:lz, heading:a, speed:0, pause:Math.random()*3, step:Math.random()*6, rip:Math.random()*0.4, ph:Math.random()*6.28, by:gy+0.04}); } }
   // ---- village liveliness: yard props, market goods, warmth & greenery ----
   const yardProps=[buildWoodpile,buildGardenPlot,buildFlowerBed,buildPottedPlant,buildCrateStack,buildSackPile,buildBarrel,buildWheelbarrow];
   for(let i=0;i<cot.length;i++){ const dx=(i%2?1:-1)*6.5, dz=((i%3)-1)*5.5; place(yardProps[i%yardProps.length], cot[i][0]+dx, cot[i][1]+dz, Math.random()*6.28); }
@@ -12440,11 +12443,23 @@ function updateVillage(dt){
   }
   for(let i=0;i<VILLAGE_SHOPKEEPERS.length;i++){ const s=VILLAGE_SHOPKEEPERS[i].lp, ph=VILLAGE_SHOPKEEPERS[i].ph; if(!s) continue;
     const sw=Math.sin(gameT*1.4+ph)*0.16; s.armL.rotation.x=-0.32+sw; s.armR.rotation.x=-0.32-sw; }   // busy hands at the counter
-  for(let i=0;i<VILLAGE_DUCKS.length;i++){ const d=VILLAGE_DUCKS[i]; d.a+=d.spd*dt;
-    const x=d.cx+Math.cos(d.a)*d.orb, z=d.cz+Math.sin(d.a)*d.orb, sg=Math.sign(d.spd);
-    d.grp.position.set(x, d.by+Math.sin(gameT*2.0+d.ph)*0.025, z);
-    d.grp.rotation.y=Math.atan2(-Math.sin(d.a)*sg, Math.cos(d.a)*sg); }   // paddle around the pond, facing the way they go
+  for(let i=0;i<VILLAGE_DUCKS.length;i++){ const d=VILLAGE_DUCKS[i];
+    if(d.pause>0){ d.pause-=dt; d.speed*=0.88; }
+    else { const dx=d.tx-d.x, dz=d.tz-d.z, dist=Math.hypot(dx,dz);
+      if(dist<0.6){ const a=Math.random()*6.28, r=Math.random()*d.bnd; d.tx=d.cx+Math.cos(a)*r; d.tz=d.cz+Math.sin(a)*r; if(Math.random()<0.45) d.pause=0.8+Math.random()*2.6; }
+      else { const want=Math.atan2(dx,dz); let dh=((want-d.heading+Math.PI*3)%(Math.PI*2))-Math.PI; d.heading+=THREE.MathUtils.clamp(dh,-1.6*dt,1.6*dt);
+        d.speed=Math.min(0.85,d.speed+0.8*dt); d.x+=Math.sin(d.heading)*d.speed*dt; d.z+=Math.cos(d.heading)*d.speed*dt; } }
+    d.step+=d.speed*dt*3;
+    d.grp.position.set(d.x, d.by+Math.sin(gameT*1.8+d.ph)*0.02, d.z);
+    d.grp.rotation.y=d.heading; d.grp.rotation.x=Math.sin(d.step)*0.05*Math.min(1,d.speed*2);   // gentle paddling nod
+    if(d.speed>0.12){ d.rip-=dt; if(d.rip<=0){ d.rip=0.34+Math.random()*0.12; spawnRipple(d.x-Math.sin(d.heading)*0.4, d.z-Math.cos(d.heading)*0.4); } }
+  }
+  for(let i=0;i<VILLAGE_RIPPLES.length;i++){ const rp=VILLAGE_RIPPLES[i]; if(rp.t<0) continue; rp.t+=dt/1.5;
+    if(rp.t>=1){ rp.t=-1; rp.m.visible=false; continue; }
+    const sc=0.2+rp.t*2.4; rp.m.scale.set(sc,sc,sc); rp.m.material.opacity=(1-rp.t)*0.38; }
 }
+function spawnRipple(x,z){ for(let i=0;i<VILLAGE_RIPPLES.length;i++){ const rp=VILLAGE_RIPPLES[i];
+  if(rp.t<0){ rp.t=0; rp.m.position.x=x; rp.m.position.z=z; rp.m.visible=true; rp.m.scale.set(0.2,0.2,0.2); rp.m.material.opacity=0.38; return; } } }
 // ---- animated chimney smoke (sprite puffs) ----
 let _smokeTex=null;
 function smokeTex(){ if(_smokeTex) return _smokeTex; const c=document.createElement('canvas'); c.width=c.height=64; const x=c.getContext('2d'); const g=x.createRadialGradient(32,32,1,32,32,31); g.addColorStop(0,'rgba(226,226,228,0.95)'); g.addColorStop(0.45,'rgba(206,206,209,0.5)'); g.addColorStop(1,'rgba(196,196,199,0)'); x.fillStyle=g; x.beginPath(); x.arc(32,32,31,0,7); x.fill(); _smokeTex=new THREE.CanvasTexture(c); return _smokeTex; }
