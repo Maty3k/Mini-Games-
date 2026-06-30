@@ -666,18 +666,24 @@ function buildStreetFurniture(parent){
     if(avLat<16 && avAlong>30) return false;
     return !inPlaza(bx,bz); }
   const M={lamp:[],bench:[],trash:[],bush:[],planter:[],dump:[],traffic:[],stop:[],lantern:[]};
-  function fm(arr,x,z,ry){ arr.push(new THREE.Matrix4().compose(new THREE.Vector3(x,plateauY,z), new THREE.Quaternion().setFromAxisAngle(up,ry||0), one)); }
+  function fm(arr,x,z,ry,sc){ arr.push(new THREE.Matrix4().compose(new THREE.Vector3(x,plateauY,z), new THREE.Quaternion().setFromAxisAngle(up,ry||0), sc?new THREE.Vector3(sc,sc,sc):one)); }
   for(let i=-10;i<=10;i++) for(let j=-10;j<=10;j++){
     const bx=cx+i*GRID, bz=cz+j*GRID; if(!validBlock(bx,bz)) continue;
     for(const s of [[1,0],[-1,0],[0,1],[0,-1]]){ const nx=s[0],nz=s[1], ax=nz,az=-nx, ry=Math.atan2(nx,nz);   // outward normal + along-edge axis
       const ox=bx+nx*E, oz=bz+nz*E;                              // sidewalk edge centre, facing the road
-      if(Math.random()<0.5) fm(M.lamp, ox+ax*14, oz+az*14, ry); // a street lamp near the corner (regular lighting)
-      const r=Math.random();                                    // a feature at the edge centre
-      if(r<0.24) fm(M.bench, ox,oz,ry);
-      else if(r<0.42) fm(M.planter, ox,oz,ry);
-      else if(r<0.58) fm(M.trash, ox+ax*4, oz+az*4, ry);
-      for(const t of [-11,11]) if(Math.random()<0.5) fm(M.bush, ox+ax*t, oz+az*t, ry); }   // hedges/bushes along the kerb
-    if(Math.random()<0.12) fm(M.dump, bx-E+1.6, bz-E+1.6, Math.random()*6.28);
+      if(Math.random()<0.6) fm(M.lamp, ox+ax*15, oz+az*15, ry);  // a street lamp near the corner
+      // a DENSE run of greenery & furniture the whole length of the sidewalk (lush, lived-in streets)
+      for(let t=-15.5; t<=15.5; t+=2.6){ const px=ox+ax*t, pz=oz+az*t, r=Math.random();
+        if(r<0.60) fm(M.bush, px,pz, Math.random()*6.28, 0.7+Math.random()*0.9);   // varied-size hedge bushes
+        else if(r<0.74) fm(M.planter, px,pz,ry);
+        else if(r<0.80) fm(M.trash, px,pz,ry);
+        else if(r<0.86) fm(M.bench, px,pz,ry);
+        // else a small gap for kerb access
+      }
+      // a second, inner row of bushes set back from the kerb → fuller borders
+      for(let t=-13; t<=13; t+=4.5){ if(Math.random()<0.5) fm(M.bush, ox-nx*2.4+ax*t, oz-nz*2.4+az*t, Math.random()*6.28, 0.6+Math.random()*0.7); }
+    }
+    if(Math.random()<0.22) fm(M.dump, bx-E+1.6, bz-E+1.6, Math.random()*6.28);
     if(validBlock(bx+GRID,bz) && validBlock(bx,bz+GRID) && Math.random()<0.7){
       if(i%2===0 && j%2===0) fm(M.traffic, bx+E, bz+E, -2.36);
       else fm(M.stop, bx+E, bz+E, -2.36);
@@ -12216,7 +12222,7 @@ function buildCobbleArea(g, w, d){
   m.rotation.x=-Math.PI/2; m.position.y=0.05; m.receiveShadow=true; g.add(m);
 }
 // ===== village island layout =====
-const VILLAGE_NPCS=[], VILLAGE_SHOPKEEPERS=[];
+const VILLAGE_NPCS=[], VILLAGE_SHOPKEEPERS=[], VILLAGE_DUCKS=[];
 // irregular grass cover + tiled grass texture for an island plateau (shared shape with the farm)
 function islandGrassMesh(grp, gy, edgeFn){
   function grassTex(){ const c=document.createElement('canvas'); c.width=128; c.height=128; const x=c.getContext('2d');
@@ -12299,6 +12305,16 @@ function buildGardenPlot(g){ g.add(_pm(new THREE.BoxGeometry(2.6,0.16,1.8),_ppSo
 function buildFlowerBed(g){ g.add(_pm(new THREE.BoxGeometry(1.6,0.22,0.6),_ppWood,0,0.11,0)); const cols=[0xe23b46,0xe8a13a,0xd86a9a,0xf2e23a,0x9a5bd0];
   for(let k=0;k<14;k++) g.add(_pm(new THREE.SphereGeometry(0.07,6,5),_flowerMat(cols[k%cols.length]),(Math.random()-0.5)*1.4,0.3+Math.random()*0.08,(Math.random()-0.5)*0.45)); }
 function buildPottedPlant(g){ g.add(_pm(new THREE.CylinderGeometry(0.22,0.16,0.34,10),new THREE.MeshStandardMaterial({color:0xb05a3a,roughness:0.8}),0,0.17,0)); g.add(_pm(new THREE.SphereGeometry(0.26,8,7),_ppLeafA,0,0.5,0)); }
+function buildReed(g){ const m=new THREE.MeshStandardMaterial({color:0x5f7a3a,roughness:0.95}), bM=new THREE.MeshStandardMaterial({color:0x6e5230,roughness:0.9});
+  for(let k=0;k<7;k++){ const a=Math.random()*6.28, r=Math.random()*0.4, h=0.9+Math.random()*0.7, bl=_pm(new THREE.CylinderGeometry(0.02,0.04,h,5),m,Math.cos(a)*r,h/2,Math.sin(a)*r); bl.rotation.z=(Math.random()-0.5)*0.4; g.add(bl);
+    if(Math.random()<0.5){ const cat=_pm(new THREE.CylinderGeometry(0.05,0.05,0.22,6),bM,Math.cos(a)*r,h-0.05,Math.sin(a)*r); g.add(cat); } } }
+function buildDuck(g, kind){ const body = kind==='mallardF'?0x8a6a3a : 0xf2f2f2, head = kind==='mallard'?0x2f6f3a : (kind==='mallardF'?0x8a6a3a:0xf2f2f2);
+  const bM=new THREE.MeshStandardMaterial({color:body,roughness:0.7}), hM=new THREE.MeshStandardMaterial({color:head,roughness:0.6}), kM=new THREE.MeshStandardMaterial({color:0xe8a13a,roughness:0.6});
+  const b=_pm(new THREE.SphereGeometry(0.3,12,10),bM); b.scale.set(1,0.66,1.5); b.position.y=0.2; g.add(b);
+  const tail=_pm(new THREE.ConeGeometry(0.13,0.3,7),bM); tail.position.set(0,0.3,-0.4); tail.rotation.x=-0.9; g.add(tail);
+  const neck=_pm(new THREE.CylinderGeometry(0.09,0.12,0.3,8),hM); neck.position.set(0,0.4,0.36); neck.rotation.x=0.35; g.add(neck);
+  const h=_pm(new THREE.SphereGeometry(0.15,10,9),hM); h.position.set(0,0.54,0.46); g.add(h);
+  const beak=_pm(new THREE.ConeGeometry(0.055,0.2,7),kM); beak.rotation.x=Math.PI/2; beak.position.set(0,0.52,0.64); g.add(beak); }
 function buildLaundryLine(g,len){ len=len||5; for(const x of [-len/2,len/2]) g.add(_pm(new THREE.CylinderGeometry(0.05,0.06,2.4,6),_ppWood,x,1.2,0));
   const line=_pm(new THREE.CylinderGeometry(0.012,0.012,len,4),_ppWoodD,0,2.2,0); line.rotation.z=Math.PI/2; g.add(line);
   const cl=[0xd05a5a,0x5a7ad0,0xe8e0d0,0x6aae6a,0xe0c050]; for(let k=0;k<5;k++){ const cw=0.4+Math.random()*0.2; g.add(_pm(new THREE.BoxGeometry(cw,0.5,0.04),new THREE.MeshStandardMaterial({color:cl[k%cl.length],roughness:0.8,side:THREE.DoubleSide}),-len/2+0.6+k*(len-1.2)/4,1.9,0)); } }
@@ -12380,6 +12396,16 @@ function buildVillage(){
   path(-50,40,-70,78,3); path(50,42,68,80,3); path(-56,-18,-92,-18,3); path(57,-14,94,-16,3);
   // dock toward the bay centre
   buildIslandDock(grp, VILLAGE.x, VILLAGE.z, villageEdge, gy, 'the village');
+  // ---- village duck pond on the south green ----
+  { const pcx=15, pcz=-75, pr=8, pondM=new THREE.MeshStandardMaterial({color:0x2f7fa8,roughness:0.18,transparent:true,opacity:0.85,envMapIntensity:0.6});
+    const pond=new THREE.Mesh(new THREE.CircleGeometry(pr,36),pondM); pond.rotation.x=-Math.PI/2; pond.position.set(pcx,gy-0.18,pcz); pond.receiveShadow=true; grp.add(pond);
+    const rim=new THREE.Mesh(new THREE.RingGeometry(pr-0.4,pr+2.4,36),new THREE.MeshStandardMaterial({color:0x6e5638,roughness:1.0})); rim.rotation.x=-Math.PI/2; rim.position.set(pcx,gy+0.02,pcz); grp.add(rim);
+    for(let k=0;k<11;k++){ const a=Math.random()*6.28; place(buildReed, pcx+Math.cos(a)*(pr+0.7), pcz+Math.sin(a)*(pr+0.7), 0); }
+    place(buildBarrel, pcx-pr-2.5, pcz+1, 0); place(buildWoodpile, pcx+pr+2, pcz-3, 0.6);   // a barrel & woodpile by the water
+    const dkinds=['white','mallard','mallard','mallardF','white','mallard'];
+    for(let k=0;k<6;k++){ const dg=new THREE.Group(); buildDuck(dg, dkinds[k]); const a=Math.random()*6.28, orb=1.4+Math.random()*(pr-3.2);
+      dg.position.set(pcx+Math.cos(a)*orb, gy+0.04, pcz+Math.sin(a)*orb); grp.add(dg);
+      VILLAGE_DUCKS.push({grp:dg, cx:pcx, cz:pcz, orb:orb, a:a, spd:(0.18+Math.random()*0.3)*(Math.random()<0.5?1:-1), ph:Math.random()*6.28, by:gy+0.04}); } }
   // ---- village liveliness: yard props, market goods, warmth & greenery ----
   const yardProps=[buildWoodpile,buildGardenPlot,buildFlowerBed,buildPottedPlant,buildCrateStack,buildSackPile,buildBarrel,buildWheelbarrow];
   for(let i=0;i<cot.length;i++){ const dx=(i%2?1:-1)*6.5, dz=((i%3)-1)*5.5; place(yardProps[i%yardProps.length], cot[i][0]+dx, cot[i][1]+dz, Math.random()*6.28); }
@@ -12414,6 +12440,10 @@ function updateVillage(dt){
   }
   for(let i=0;i<VILLAGE_SHOPKEEPERS.length;i++){ const s=VILLAGE_SHOPKEEPERS[i].lp, ph=VILLAGE_SHOPKEEPERS[i].ph; if(!s) continue;
     const sw=Math.sin(gameT*1.4+ph)*0.16; s.armL.rotation.x=-0.32+sw; s.armR.rotation.x=-0.32-sw; }   // busy hands at the counter
+  for(let i=0;i<VILLAGE_DUCKS.length;i++){ const d=VILLAGE_DUCKS[i]; d.a+=d.spd*dt;
+    const x=d.cx+Math.cos(d.a)*d.orb, z=d.cz+Math.sin(d.a)*d.orb, sg=Math.sign(d.spd);
+    d.grp.position.set(x, d.by+Math.sin(gameT*2.0+d.ph)*0.025, z);
+    d.grp.rotation.y=Math.atan2(-Math.sin(d.a)*sg, Math.cos(d.a)*sg); }   // paddle around the pond, facing the way they go
 }
 // ---- animated chimney smoke (sprite puffs) ----
 let _smokeTex=null;
