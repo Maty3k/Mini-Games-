@@ -169,7 +169,7 @@ let best=+(localStorage.wipeoutBayBest||0); bestEl.textContent=best;
 
 // ---------- renderer ----------
 const renderer=new THREE.WebGLRenderer({canvas:cv,antialias:true,powerPreference:'high-performance'});
-const DPR=Math.min(2,window.devicePixelRatio||1);
+const DPR=Math.min(1.5,window.devicePixelRatio||1);   // cap pixel ratio (Retina renders 4x the pixels otherwise)
 renderer.setPixelRatio(DPR);
 renderer.outputEncoding=THREE.sRGBEncoding;
 renderer.toneMapping=THREE.ACESFilmicToneMapping; renderer.toneMappingExposure=1.02;
@@ -190,7 +190,7 @@ function setSunDir(elevDeg,azDeg){ const ph=THREE.MathUtils.degToRad(90-elevDeg)
   sunDir.setFromSphericalCoords(1,ph,th); }
 setSunDir(34, 50);
 const sun=new THREE.DirectionalLight(0xfff4e0, 2.6); sun.position.copy(sunDir).multiplyScalar(600);
-sun.castShadow=true; sun.shadow.mapSize.set(2048,2048);
+sun.castShadow=true; sun.shadow.mapSize.set(1536,1536);   // smaller shadow map → cheaper shadow pass
 sun.shadow.camera.near=10; sun.shadow.camera.far=2200;
 { const S=900; sun.shadow.camera.left=-S; sun.shadow.camera.right=S; sun.shadow.camera.top=S; sun.shadow.camera.bottom=-S; }
 sun.shadow.bias=-0.0003;
@@ -395,9 +395,16 @@ function makeTerrainMat(){
 // instance every mesh of a loaded GLB across N placement matrices → just a few draw calls
 function instanceModel(proto, mats, shadow){ proto.updateMatrixWorld(true);
   const grp=new THREE.Group(), tmp=new THREE.Matrix4();
+  // a bounding sphere covering all instance positions so the whole group frustum-culls correctly
+  // (mats are world-space; the returned group must be added to a non-offset parent — scene/cityGroup)
+  let cx=0,cy=0,cz=0; const n=Math.max(1,mats.length);
+  for(let i=0;i<mats.length;i++){ const e=mats[i].elements; cx+=e[12]; cy+=e[13]; cz+=e[14]; } cx/=n; cy/=n; cz/=n;
+  let maxR=0; for(let i=0;i<mats.length;i++){ const e=mats[i].elements, dx=e[12]-cx,dy=e[13]-cy,dz=e[14]-cz, d=dx*dx+dy*dy+dz*dz; if(d>maxR)maxR=d; }
+  const sph=new THREE.Sphere(new THREE.Vector3(cx,cy,cz), Math.sqrt(maxR)+16);
   proto.traverse(o=>{ if(!o.isMesh) return; const local=o.matrixWorld.clone();
     const inst=new THREE.InstancedMesh(o.geometry,o.material,mats.length);
-    inst.castShadow=!!shadow; inst.receiveShadow=true; inst.frustumCulled=false;
+    inst.castShadow=!!shadow; inst.receiveShadow=true; inst.frustumCulled=true;
+    o.geometry.boundingSphere=sph.clone();
     for(let i=0;i<mats.length;i++){ tmp.multiplyMatrices(mats[i],local); inst.setMatrixAt(i,tmp); }
     inst.instanceMatrix.needsUpdate=true; grp.add(inst); });
   return grp; }
@@ -12325,7 +12332,7 @@ function scatterBushes(parent, baseX, baseZ, edgeFn, obstacles, count, yBase){
     const a=Math.random()*6.28, r=14+Math.random()*(edgeFn(a)-22); const x=Math.cos(a)*r, z=Math.sin(a)*r;
     let ok=true; for(const o of obstacles){ if(Math.hypot(x-o.x,z-o.z)<(o.r||6)+1.5){ ok=false; break; } } if(!ok) continue;
     const s=0.8+Math.random()*0.7; mats.push(new THREE.Matrix4().compose(new THREE.Vector3(baseX+x,yBase,baseZ+z), new THREE.Quaternion().setFromAxisAngle(up,Math.random()*6.28), new THREE.Vector3(s,s,s))); }
-  if(mats.length) parent.add(instanceModel(propBush(), mats, false));
+  if(mats.length) scene.add(instanceModel(propBush(), mats, false));   // world-space mats → add to scene (not the offset island group)
 }
 function buildVillage(){
   const grp=new THREE.Group(); grp.position.set(VILLAGE.x,0,VILLAGE.z); scene.add(grp);
@@ -12428,7 +12435,7 @@ function buildVillage(){
   scatterBushes(grp, VILLAGE.x, VILLAGE.z, villageEdge, COTS, 55, gy);
   if(treeProto){ const box=new THREE.Box3().setFromObject(treeProto), th=Math.max(0.01,box.max.y-box.min.y), minY=box.min.y, up=new THREE.Vector3(0,1,0), tm=[];
     let tt=0; while(tm.length<16 && tt<200){ tt++; const a=Math.random()*6.28, r=72+Math.random()*(villageEdge(a)-82); if(r<72) continue; const x=Math.cos(a)*r, z=Math.sin(a)*r; const s=(11/th)*(0.7+Math.random()*0.5); tm.push(new THREE.Matrix4().compose(new THREE.Vector3(VILLAGE.x+x, gy-minY*s, VILLAGE.z+z), new THREE.Quaternion().setFromAxisAngle(up,Math.random()*6.28), new THREE.Vector3(s,s,s))); }
-    if(tm.length) grp.add(instanceModel(treeProto, tm, false)); }
+    if(tm.length) scene.add(instanceModel(treeProto, tm, false)); }   // world-space mats → add to scene (not the offset village group)
   // ---- villagers wandering the square + streets ----
   const SH=[0x3a5a8a,0x7a3a3a,0x3a6a4a,0x6a5a2a,0x5a3a6a,0x8a6a3a,0x35506e,0x9a4b4b];
   for(let i=0;i<46;i++){ const fg=new THREE.Group(); fg.rotation.order='YXZ';
@@ -12515,6 +12522,26 @@ function buildBridge(){
 }
 function onBridge(x,z){ if(!BRIDGE) return false; const ax=x-BRIDGE.x0, az=z-BRIDGE.z0, along=ax*BRIDGE.dx+az*BRIDGE.dz; if(along<-1||along>BRIDGE.len+1) return false; return Math.abs(ax*BRIDGE.nx+az*BRIDGE.nz)<3.5; }
 function bridgeHeight(x,z){ if(!BRIDGE) return 0; const ax=x-BRIDGE.x0, az=z-BRIDGE.z0, t=Math.max(0,Math.min(1,(ax*BRIDGE.dx+az*BRIDGE.dz)/BRIDGE.len)); return BRIDGE.y0+(BRIDGE.y1-BRIDGE.y0)*t + BRIDGE.arch*Math.sin(t*Math.PI)+0.18; }
+// ===== performance: dynamic light budget + shadow-caster pruning =====
+const LIGHTS_POOL=[]; const _lp=new THREE.Vector3(); let _lightClock=0; const MAX_LIVE_LIGHTS=4;
+function manageLights(dt){ if(LIGHTS_POOL.length<=MAX_LIVE_LIGHTS) return;   // forward renderer cost scales with live light count → keep only the nearest few lit
+  _lightClock-=dt; if(_lightClock>0) return; _lightClock=0.2;
+  const c=camera.position;
+  for(const L of LIGHTS_POOL){ L.getWorldPosition(_lp); L._d=(_lp.x-c.x)*(_lp.x-c.x)+(_lp.y-c.y)*(_lp.y-c.y)+(_lp.z-c.z)*(_lp.z-c.z); }
+  LIGHTS_POOL.sort((a,b)=>a._d-b._d);
+  for(let i=0;i<LIGHTS_POOL.length;i++){ const v=i<MAX_LIVE_LIGHTS; if(LIGHTS_POOL[i].visible!==v) LIGHTS_POOL[i].visible=v; } }
+function optimizeScene(){
+  scene.updateMatrixWorld(true);
+  // gather every decorative point/spot light; only the few nearest the camera will stay lit
+  scene.traverse(o=>{ if(o.isLight && (o.isPointLight||o.isSpotLight)){ LIGHTS_POOL.push(o); o.visible=false; } });
+  // prune shadow casters: keep only large meshes (big buildings/landmarks/terrain) — drop the tens of
+  // thousands of small props/details/pedestrians the sun was re-rendering into the shadow map each frame
+  const _s=new THREE.Vector3();
+  scene.traverse(o=>{ if(!o.isMesh || o.isInstancedMesh || !o.castShadow || !o.geometry) return;
+    if(!o.geometry.boundingBox) o.geometry.computeBoundingBox(); const bb=o.geometry.boundingBox; if(!bb) return;
+    o.getWorldScale(_s); const mx=Math.max((bb.max.x-bb.min.x)*Math.abs(_s.x),(bb.max.y-bb.min.y)*Math.abs(_s.y),(bb.max.z-bb.min.z)*Math.abs(_s.z));
+    if(mx<6.5) o.castShadow=false; });
+}
 function buildWorld(){
   // ---- terrain (islands + seabed) ----
   const TR=1900, TG=440;
@@ -12537,6 +12564,7 @@ function buildWorld(){
   buildFarm();
   if(typeof buildVillage==='function') buildVillage();
   buildBridge();
+  optimizeScene();                              // light budget + shadow pruning (perf)
   // pre-render the minimap base (bay silhouette)
   drawMapBase();
   // idle camera until START
@@ -14065,6 +14093,7 @@ function loop(now){
   let dt=rawDt; if(!(dt>0))dt=0.016; if(dt>0.05)dt=0.05;
   if(rawDt>0.001 && rawDt<0.5) fpsSmooth += (1/rawDt - fpsSmooth)*0.08;   // smoothed FPS for adaptive resolution
   adaptResolution(dt);
+  manageLights(dt);
   gameT+=dt;
   updateDayNight(dt);
 
@@ -14272,7 +14301,7 @@ const fxaa=new THREE.ShaderPass(THREE.FXAAShader); composer.addPass(fxaa);
 composer.setSize(VW,VH);
 // ---------- adaptive resolution: drop the render scale when FPS sags, recover when smooth ----------
 let fpsSmooth=60, renderScale=1, scaleAcc=0, warmup=0;
-const RS_FLOOR=0.6;
+const RS_FLOOR=0.5;
 function setRenderScale(s){ renderScale=s; const pr=DPR*s;
   renderer.setPixelRatio(pr); renderer.setSize(VW,VH,false);
   composer.setPixelRatio(pr);
