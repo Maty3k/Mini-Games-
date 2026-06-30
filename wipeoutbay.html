@@ -12575,6 +12575,22 @@ const DOCK=(function(){ const d=new THREE.Vector2(-CITY.x,-CITY.z).normalize();
 function onDock(x,z){ const ax=x-DOCK.cx,az=z-DOCK.cz, al=ax*DOCK.dx+az*DOCK.dz, lt=Math.abs(ax*DOCK.rx+az*DOCK.rz); return al>DOCK.start-3 && al<DOCK.endCd+3 && lt<DOCK.width/2; }
 function dockReach(x,z){ const ax=x-DOCK.cx,az=z-DOCK.cz, al=ax*DOCK.dx+az*DOCK.dz, lt=Math.abs(ax*DOCK.rx+az*DOCK.rz); return al>DOCK.start-8 && al<DOCK.endCd+8 && lt<DOCK.width/2+9; }
 function avatarGround(x,z){ return onBridge(x,z)?bridgeHeight(x,z):onQuay(x,z)?PORT.deckY:onDock(x,z)?DOCK.deckTop:landH(x,z); }
+// the drivable road network — keeps the car on the streets (grid lanes, avenues, roundabout rings,
+// the perimeter boulevard and the harbour causeway) instead of bumping over sidewalks, parks & blocks
+function onCityRoad(x,z){
+  const dx=x-CITY.x, dz=z-CITY.z, cd=Math.hypot(dx,dz), ce=cityEdge(Math.atan2(dz,dx));
+  if(cd > ce+2) return false;                                                  // off the city shelf
+  if(x<PORT.edgeX+6 && x>PORT.faceX-6 && z>PORT.z0-6 && z<PORT.z1+6) return false;   // not across the cargo port
+  for(const P of LM_PLAZAS){ const pd=Math.hypot(x-P.x,z-P.z); if(pd<P.r-11) return false; if(pd<P.r+8) return true; }  // roundabout ring drivable, landmark centre blocked
+  const al=dx*DOCK.dx+dz*DOCK.dz, lat=Math.abs(dx*DOCK.rx+dz*DOCK.rz);
+  if(al>30 && al<432 && lat<DOCK.width/2+3) return true;                        // harbour causeway / avenue down to the dock
+  if(inAvenueRoad(dx,dz)) return true;                                          // diagonal boulevards
+  if(Math.abs(cd-(ce-15))<8) return true;                                       // perimeter boulevard ring
+  if(cd < ce-9){ const RH=8;                                                    // the street grid (a lane on every (k+0.5)*GRID line)
+    const dvx=Math.abs(dx/GRID-0.5-Math.round(dx/GRID-0.5))*GRID, dvz=Math.abs(dz/GRID-0.5-Math.round(dz/GRID-0.5))*GRID;
+    if(dvx<RH || dvz<RH) return true; }
+  return false;
+}
 // ===== DRIVABLE BOAT (board it from the dock) =====
 // TEMP model — replaced by the boat-design workflow output.
 function buildBoat(g, col){
@@ -13716,7 +13732,12 @@ function updateCar(dt){
   CAR.speed=THREE.MathUtils.clamp(CAR.speed+(thr*(26+boost*16)-brk*32-6)*dt, -9, 22+boost*10);
   CAR.heading += steer*dt*1.5*Math.min(1,Math.abs(CAR.speed)/5)*(CAR.speed>=0?1:-1);
   const nx=CAR.x+Math.sin(CAR.heading)*CAR.speed*dt, nz=CAR.z+Math.cos(CAR.heading)*CAR.speed*dt;
-  if(onQuay(nx,nz)||landH(nx,nz)>0.6){ CAR.x=nx; CAR.z=nz; } else CAR.speed*=-0.25;   // can't drive into the sea — but CAN roll onto the quay deck
+  // keep the car on the road network (+ the drivable quay); slide along the kerb rather than dead-stop
+  function drv(px,pz){ return onQuay(px,pz)||onCityRoad(px,pz); }
+  if(drv(nx,nz)){ CAR.x=nx; CAR.z=nz; }
+  else if(drv(nx,CAR.z)){ CAR.x=nx; CAR.speed*=0.6; }        // slide along X
+  else if(drv(CAR.x,nz)){ CAR.z=nz; CAR.speed*=0.6; }        // slide along Z
+  else CAR.speed*=-0.3;                                       // nose into a kerb head-on → nudge back
   CAR.y=onQuay(CAR.x,CAR.z)?PORT.deckY:landH(CAR.x,CAR.z);
   car3d.position.set(CAR.x,CAR.y,CAR.z); car3d.rotation.y=CAR.heading+carYaw;
 }

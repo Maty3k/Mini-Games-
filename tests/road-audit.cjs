@@ -94,11 +94,25 @@ const AUDIT = `(function(){
   for(const r of paths){ if(Math.hypot(r.x-FARM.x,r.z-FARM.z)>240) continue; const sx2=Math.sin(r.yaw), sz2=Math.cos(r.yaw), L=Math.max(r.hx,r.hz);
     for(let t=-L+1;t<=L-1;t+=3){ const px=r.x+sx2*t, pz=r.z+sz2*t; if(inPen(px,pz)){ const k=Math.round(px/6)*6+','+Math.round(pz/6)*6; fc[k]={x:Math.round(px),z:Math.round(pz)}; } } }
   const penCross=Object.values(fc);
+  // ---- the car's drivable road network is one connected region reachable from its spawn ----
+  let carNet={spawnOnRoad:true,reachPct:100};
+  if(typeof onCityRoad==='function'){
+    const SP=8,R=520,spawn=[CITY.x+DOCK.dx*312,CITY.z+DOCK.dz*312],drv=new Set(),key=(i,j)=>i*100000+j;
+    const i0=Math.floor((CITY.x-R)/SP),i1=Math.ceil((CITY.x+R)/SP),j0=Math.floor((CITY.z-R)/SP),j1=Math.ceil((CITY.z+R)/SP);
+    let total=0; for(let i=i0;i<=i1;i++)for(let j=j0;j<=j1;j++){ if(onCityRoad(i*SP,j*SP)){ drv.add(key(i,j)); total++; } }
+    carNet.spawnOnRoad=onCityRoad(spawn[0],spawn[1]);
+    let si=Math.round(spawn[0]/SP),sj=Math.round(spawn[1]/SP);
+    if(!drv.has(key(si,sj))){ for(let di=-2;di<=2;di++)for(let dj=-2;dj<=2;dj++){ if(drv.has(key(si+di,sj+dj))){ si+=di;sj+=dj;di=3;dj=3; } } }
+    const seen=new Set([key(si,sj)]),q=[[si,sj]]; let h=0;
+    while(h<q.length){ const c=q[h++]; for(const d of [[1,0],[-1,0],[0,1],[0,-1]]){ const k=key(c[0]+d[0],c[1]+d[1]); if(drv.has(k)&&!seen.has(k)){ seen.add(k); q.push([c[0]+d[0],c[1]+d[1]]); } } }
+    carNet.reachPct=+(100*seen.size/Math.max(1,total)).toFixed(1);
+  }
   return JSON.stringify({roads:roads.length,paths:paths.length,solids:solids.length,roadInPort,
     onRoad:{n:onRoad.length,byReg:byReg(onRoad),items:onRoad.slice(0,20)},
     onPath:{n:onPath.length,byReg:byReg(onPath),items:onPath.slice(0,20)},
     floating:{n:floaters.length,items:floaters.slice(0,16)},
     penCross:{n:penCross.length,items:penCross.slice(0,16)},
+    carNet:carNet,
     coverage:+(100*covLen/Math.max(1,totalLen)).toFixed(1), gaps:gaps.slice(0,12)});
 })()`;
 
@@ -150,6 +164,8 @@ function rpc(ws,method,params){ return new Promise((res,rej)=>{ const i=++id; pe
     if(!c5){ a.floating.items.forEach(v=>console.log('         · '+v.reg+' ('+v.x+','+v.z+') '+(v.gap>0?'floats +'+v.gap:'sunk '+v.gap)+'m')); fails.push('floating-buildings'); }
     const c6 = a.penCross.n===0; console.log('  ['+(c6?P:F)+'] no farm lane runs through a fenced pen — '+a.penCross.n+' found');
     if(!c6){ a.penCross.items.forEach(v=>console.log('         · pen crossing at ('+v.x+','+v.z+')')); fails.push('lane-through-fence'); }
+    const c7 = a.carNet.spawnOnRoad && a.carNet.reachPct>=98; console.log('  ['+(c7?P:F)+'] car road network connected from spawn — spawn-on-road '+a.carNet.spawnOnRoad+', '+a.carNet.reachPct+'% reachable');
+    if(!c7) fails.push('car-network');
 
     console.log('');
     if(fails.length){ console.log('\x1b[31m✗ '+fails.length+' check(s) failed: '+fails.join(', ')+'\x1b[0m\n'); process.exit(1); }
