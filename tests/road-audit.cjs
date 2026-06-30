@@ -87,10 +87,18 @@ const AUDIT = `(function(){
   scanFloat(containerAt(FARM.x,FARM.z), farmY, 'farm');
   scanFloat(containerAt(VILLAGE.x,VILLAGE.z), villageY, 'village');
   floaters.sort((a,b)=>Math.abs(b.gap)-Math.abs(a.gap));
+  // ---- no farm lane runs through a fenced pen ----
+  const PENS=(typeof FARM_PENS!=='undefined')?FARM_PENS:[];
+  function inPen(px,pz){ for(const P of PENS){ if(Math.abs(px-P.x)<P.w/2-3 && Math.abs(pz-P.z)<P.d/2-3) return true; } return false; }
+  const fc={};
+  for(const r of paths){ if(Math.hypot(r.x-FARM.x,r.z-FARM.z)>240) continue; const sx2=Math.sin(r.yaw), sz2=Math.cos(r.yaw), L=Math.max(r.hx,r.hz);
+    for(let t=-L+1;t<=L-1;t+=3){ const px=r.x+sx2*t, pz=r.z+sz2*t; if(inPen(px,pz)){ const k=Math.round(px/6)*6+','+Math.round(pz/6)*6; fc[k]={x:Math.round(px),z:Math.round(pz)}; } } }
+  const penCross=Object.values(fc);
   return JSON.stringify({roads:roads.length,paths:paths.length,solids:solids.length,roadInPort,
     onRoad:{n:onRoad.length,byReg:byReg(onRoad),items:onRoad.slice(0,20)},
     onPath:{n:onPath.length,byReg:byReg(onPath),items:onPath.slice(0,20)},
     floating:{n:floaters.length,items:floaters.slice(0,16)},
+    penCross:{n:penCross.length,items:penCross.slice(0,16)},
     coverage:+(100*covLen/Math.max(1,totalLen)).toFixed(1), gaps:gaps.slice(0,12)});
 })()`;
 
@@ -140,6 +148,8 @@ function rpc(ws,method,params){ return new Promise((res,rej)=>{ const i=++id; pe
     if(!c4){ a.gaps.forEach(g=>console.log('         · '+(g.vert?'N-S':'E-W')+' line off '+g.off+': '+g.len+'m gap ('+g.from+'..'+g.to+')')); fails.push('road-gaps'); }
     const c5 = a.floating.n===0; console.log('  ['+(c5?P:F)+'] no floating/sunk building on the farm or village — '+a.floating.n+' found');
     if(!c5){ a.floating.items.forEach(v=>console.log('         · '+v.reg+' ('+v.x+','+v.z+') '+(v.gap>0?'floats +'+v.gap:'sunk '+v.gap)+'m')); fails.push('floating-buildings'); }
+    const c6 = a.penCross.n===0; console.log('  ['+(c6?P:F)+'] no farm lane runs through a fenced pen — '+a.penCross.n+' found');
+    if(!c6){ a.penCross.items.forEach(v=>console.log('         · pen crossing at ('+v.x+','+v.z+')')); fails.push('lane-through-fence'); }
 
     console.log('');
     if(fails.length){ console.log('\x1b[31m✗ '+fails.length+' check(s) failed: '+fails.join(', ')+'\x1b[0m\n'); process.exit(1); }

@@ -10936,7 +10936,7 @@ function buildHorse(g){
   var tail=add(new THREE.CylinderGeometry(0.10,0.05,1.0,8), mane, 0,1.05,-0.84); tail.rotation.x=0.55;
 }
 // ===== farm island layout =====
-const FARM_SAILS=[], FARM_ANIMALS=[], ISLAND_LANDINGS=[]; let FARM_TRACTOR=null, FARM_DOCK=null, _landTarget=null;
+const FARM_SAILS=[], FARM_ANIMALS=[], ISLAND_LANDINGS=[], FARM_PENS=[]; let FARM_TRACTOR=null, FARM_DOCK=null, _landTarget=null;
 // idle-animate the farm animals (bob/sway/graze) + the wandering farmer — only when the camera is near the farm (LOD)
 function updateFarm(dt){
   if(camera.position.x===undefined) return;
@@ -11021,6 +11021,7 @@ function buildFarm(){
     place(function(s){ buildFence(s,d); }, cx+w/2, cz, 0);          // right (runs along Z)
     place(function(s){ buildFence(s,w); }, cx, cz-d/2, Math.PI/2);  // back  (runs along X)
     place(function(s){ buildFence(s,w); }, cx, cz+d/2, Math.PI/2);  // front (runs along X)
+    FARM_PENS.push({x:FARM.x+cx, z:FARM.z+cz, w:w, d:d});           // world rect (for the road-audit fence test)
   }
 
   // ---- buildings ----
@@ -11035,14 +11036,14 @@ function buildFarm(){
     place(buildFarmShop, _au.x*sd+perp.x*9, _au.z*sd+perp.z*9, Math.atan2(_au.x,_au.z)); }
 
   // ---- extra outbuildings: a SILO BATTERY, two more WINDMILLS, a west barn, water tower, well, carts ----
-  place(buildSilo,       -22, -46, 0);
-  place(buildSilo,       -14, -46, 0);
-  place(buildSilo,        -6, -46, 0);                                 // a battery of three grain silos in the south pasture
+  place(buildSilo,         2, -46, 0);
+  place(buildSilo,        10, -46, 0);
+  place(buildSilo,        18, -46, 0);                                 // a battery of three grain silos in the open south pasture (clear of the crop fences)
   place(buildBarn,       -90,  -8, Math.PI/2);                         // a second (west) barn
   place(buildWaterTower, -86,  50, 0);
   const wm2=place(buildWindmill, -98, -40, 0.5);  if(wm2 && wm2.sails) FARM_SAILS.push(wm2.sails);
   const wm3=place(buildWindmill,  92, -22, -0.4); if(wm3 && wm3.sails) FARM_SAILS.push(wm3.sails);
-  place(buildWell, -30, 8, 0);
+  place(buildWell, -37, 4, 0);
   place(buildCart,  40, 36, 0.7); place(buildCart, -50, 52, -0.5);
   // glass GREENHOUSE in the farmhouse kitchen garden
   place(function(s){ const glass=new THREE.MeshStandardMaterial({color:0xbfe0ef,roughness:0.15,metalness:0,transparent:true,opacity:0.42,envMapIntensity:0.8}), frameM=new THREE.MeshStandardMaterial({color:0xe6e6df,roughness:0.6});
@@ -11109,11 +11110,20 @@ function buildFarm(){
   const pond=new THREE.Mesh(new THREE.CircleGeometry(13,32),pondMat); pond.rotation.x=-Math.PI/2; pond.position.set(6,gy-0.25,-58); pond.receiveShadow=true; grp.add(pond);
   { const rim=new THREE.Mesh(new THREE.RingGeometry(12.5,15,32),dirtMat); rim.rotation.x=-Math.PI/2; rim.position.set(6,gy+0.02,-58); grp.add(rim); }
 
-  // ---- dirt paths linking the yard ----
-  path(-46,40, 0,8, 4);    // farmhouse -> cow pasture
-  path(34,46, 0,8, 4);     // barn -> pasture
-  path(0,8, -64,-26, 3.2); // pasture -> fields
-  path(0,8, 6,-58, 3);     // pasture -> pond
+  // ---- dirt lanes: a rectangular yard loop that rings the central cow pasture (never crosses a
+  // fence) with short spurs to the buildings; spurs are auto-carved to stop at each footprint ----
+  path(-40, 33,  54, 33, 4);    // north lane (along the building frontages)
+  path(-40,-13,  54,-13, 4);    // south lane
+  path(-40,-13, -40, 33, 4);    // west lane
+  path( 54,-13,  54, 33, 4);    // east lane
+  // spurs off the loop
+  path(-40, 33, -46, 40, 3.5);  // -> farmhouse
+  path( 34, 33,  34, 46, 3.5);  // -> barn
+  path( 54, 33,  58, 42, 3.5);  // -> silo
+  path( 48, 33,  48, 54, 3);    // -> water tower
+  path(  6,-13,   6,-56, 3);    // -> pond
+  path(-40,-13, -45,-26, 3);    // -> west crop fields (stops at the gate)
+  path( 12,-13,  12,-43, 3);    // -> south silo battery
 
   // ---- trees: the SAME downloaded model as the other islands (instanced), in varied sizes ----
   const ftSlots=[];                                          // {x,z,s,rot} in farm-local coords
@@ -11129,7 +11139,7 @@ function buildFarm(){
   for(let r=0;r<2;r++) for(let c=0;c<3;c++) tslot(-32+c*9, 56+r*8, 0.5+Math.random()*0.2);
   // obstacles so the in-yard trees miss the buildings/pens/coop
   const OBST=[[-46,40,12],[34,46,14],[60,44,10],[48,54,8],[84,4,9],[2,8,24],[28,-26,18],[50,-30,14],[74,34,20],[-64,-26,28],[6,-58,16],[20,32,9],
-    [-22,-46,10],[-14,-46,8],[-6,-46,8],[-90,-8,13],[-86,50,9],[-98,-40,11],[92,-22,11],[-30,8,7],[-60,24,9],[-30,-30,12],[40,36,5],[-50,52,5],[-28,-51,22]];
+    [2,-46,10],[10,-46,8],[18,-46,8],[-90,-8,13],[-86,50,9],[-98,-40,11],[92,-22,11],[-37,4,7],[-60,24,9],[-30,-30,12],[40,36,5],[-50,52,5],[-28,-51,22]];
   function yardClear(x,z,m){ for(let o=0;o<OBST.length;o++){ if(Math.hypot(x-OBST[o][0],z-OBST[o][1])<OBST[o][2]+(m||3)) return false; } return true; }
   let groves=0, gtries=0;                                    // 3 denser groves in open yard spots
   while(groves<3 && gtries<140){ gtries++; const a=Math.random()*Math.PI*2, r=36+Math.random()*44, cx=Math.cos(a)*r, cz=Math.sin(a)*r;
