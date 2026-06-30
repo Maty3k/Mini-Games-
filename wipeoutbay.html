@@ -534,6 +534,9 @@ function buildStreets(parent){
     const cuts=[];
     for(const P of LM_PLAZAS){ const pPerp=(vertical?P.x-cx:P.z-cz), pAlong=(vertical?P.z-cz:P.x-cx), dd=Math.abs(off-pPerp);
       if(dd<P.r){ const h=Math.sqrt(P.r*P.r-dd*dd); cuts.push([pAlong-h,pAlong+h]); } }
+    // carve the cargo-port footprint out of the grid so no road runs across the quay
+    { const perp=vertical?cx+off:cz+off, lo2=vertical?PORT.faceX:PORT.z0, hi2=vertical?PORT.edgeX:PORT.z1, p0=vertical?PORT.z0:PORT.faceX, p1=vertical?PORT.z1:PORT.edgeX;
+      if(perp>Math.min(lo2,hi2)-8 && perp<Math.max(lo2,hi2)+8){ const a0=(vertical?p0:p0)-(vertical?cz:cx); const a1=(vertical?p1:p1)-(vertical?cz:cx); cuts.push([Math.min(a0,a1)-6, Math.max(a0,a1)+6]); } }
     cuts.sort(function(a,b){return a[0]-b[0];});
     const segs=[]; let s=lo;
     for(const c of cuts){ const b=Math.min(c[0],hi); if(b>s+2) segs.push([s,b]); s=Math.max(s,c[1]); }
@@ -593,6 +596,7 @@ function buildAvenues(parent, treeSlots){
 function buildCity(){
   const cx=CITY.x, cz=CITY.z, grp=new THREE.Group(); scene.add(grp); cityGroup=grp;
   computePlazas();
+  LM_PLAZAS.push({x:HELIPAD.x, z:HELIPAD.z, r:13});   // clear an apron so no road/building runs across the helipad
   buildStreets(grp);
   buildCauseway(grp);
   const csx=cx+DOCK.dx*290, csz=cz+DOCK.dz*290;                   // the car parks here, in the open by the harbour cove
@@ -12130,10 +12134,21 @@ function buildVillage(){
   const grp=new THREE.Group(); grp.position.set(VILLAGE.x,0,VILLAGE.z); scene.add(grp);
   const gy=villageY;
   const dirtMat=new THREE.MeshStandardMaterial({color:0x8a7350,roughness:1.0});
+  const COTS=[];   // building footprints (filled as cottages/tavern/church are placed) so lanes can route around them
   islandGrassMesh(grp, gy, villageEdge);
   function place(fn,x,z,rotY,arg){ if(typeof fn!=='function') return null; const sg=new THREE.Group(); sg.position.set(x,gy,z); sg.rotation.y=rotY||0;
     try{ if(arg!==undefined) fn(sg,arg); else fn(sg); }catch(e){ console.warn('village:',fn&&fn.name,e&&e.message); } grp.add(sg); return sg; }
-  function path(x1,z1,x2,z2,w){ const dx=x2-x1,dz=z2-z1,len=Math.hypot(dx,dz)||1; const p=new THREE.Mesh(new THREE.BoxGeometry(w||3,0.08,len),dirtMat); p.position.set((x1+x2)/2,gy+0.06,(z1+z2)/2); p.rotation.y=Math.atan2(dx,dz); p.receiveShadow=true; grp.add(p); }
+  // a dirt lane that stops short of its ends AND is carved out wherever it would pass under a building
+  function path(x1,z1,x2,z2,w){ const dx=x2-x1,dz=z2-z1,len=Math.hypot(dx,dz)||1, ux=dx/len,uz=dz/len, ry=Math.atan2(dx,dz);
+    const cuts=[];
+    for(const C of COTS){ const t=(C.x-x1)*ux+(C.z-z1)*uz, px=x1+ux*t, pz=z1+uz*t, perp=Math.hypot(C.x-px,C.z-pz);
+      if(perp<C.r){ const h=Math.sqrt(C.r*C.r-perp*perp); cuts.push([t-h,t+h]); } }
+    cuts.sort((a,b)=>a[0]-b[0]);
+    const segs=[]; let s=4;                                  // start a few m out from the origin end (e.g. the square)
+    for(const c of cuts){ const b=Math.min(c[0],len-4); if(b>s+2) segs.push([s,b]); s=Math.max(s,c[1]); }
+    if(s<len-6) segs.push([s,len-4]);
+    for(const sp of segs){ const L=sp[1]-sp[0], mid=(sp[0]+sp[1])/2; const p=new THREE.Mesh(new THREE.BoxGeometry(w||3,0.08,L),dirtMat);
+      p.position.set(x1+ux*mid,gy+0.06,z1+uz*mid); p.rotation.y=ry; p.receiveShadow=true; grp.add(p); } }
   const F={ cob:(typeof buildCobbleArea!=='undefined')?buildCobbleArea:null, cot:(typeof buildCottage!=='undefined')?buildCottage:null, ch:(typeof buildChurch!=='undefined')?buildChurch:null,
             st:(typeof buildMarketStall!=='undefined')?buildMarketStall:null, well:(typeof buildWell!=='undefined')?buildWell:null, tav:(typeof buildTavern!=='undefined')?buildTavern:null,
             lamp:(typeof buildLampPost!=='undefined')?buildLampPost:null, foun:(typeof buildFountain!=='undefined')?buildFountain:null, cross:(typeof buildMarketCross!=='undefined')?buildMarketCross:null,
@@ -12164,13 +12179,13 @@ function buildVillage(){
              [-86,-50,0.6],[-92,-18,0.5],[-90,16,0.35],[-84,48,0.2],[-70,78,0.1],
              [86,-48,-0.6],[94,-16,-0.5],[90,18,-0.35],[82,50,-0.2],[68,80,-0.1],
              [-44,-88,Math.PI],[30,-90,Math.PI],[-34,88,0],[38,90,0]];
-  for(let i=0;i<cot.length;i++) place(F.cot, cot[i][0],cot[i][1], cot[i][2], (i*5)%6);   // spread all 6 cottage types so neighbours differ
+  for(let i=0;i<cot.length;i++){ place(F.cot, cot[i][0],cot[i][1], cot[i][2], (i*5)%6); COTS.push({x:cot[i][0],z:cot[i][1],r:6.5}); }   // spread all 6 cottage types so neighbours differ; record footprints so lanes avoid them
   // smoke curling from every cottage chimney (+ the tavern)
   function smokeAt(cx,cz,rotY,lcx,lcz,hy){ const co=Math.cos(rotY),si=Math.sin(rotY); addChimneySmoke(VILLAGE.x+cx+lcx*co+lcz*si, villageY+hy, VILLAGE.z+cz-lcx*si+lcz*co); }
   for(let i=0;i<cot.length;i++) smokeAt(cot[i][0],cot[i][1],cot[i][2], 1.7,0, 6.6);
   // ---- church + tavern (set out at the edges of the bigger village) ----
-  place(F.ch, -52,26, 0.3);
-  place(F.tav, 50,-20, -1.4);
+  place(F.ch, -52,26, 0.3);   COTS.push({x:-52,z:26,r:11});
+  place(F.tav, 50,-20, -1.4);  COTS.push({x:50,z:-20,r:10});
   smokeAt(50,-20,-1.4, 2.6,-1.6, 7.8);
   // hedges + lamps + paths
   if(F.hedge){ place(function(s){ F.hedge(s,22); }, -24,32,0); place(function(s){ F.hedge(s,22); }, 24,32,0); place(function(s){ F.hedge(s,26); }, 0,-46,0); }
