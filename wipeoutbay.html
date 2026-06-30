@@ -593,6 +593,103 @@ function buildAvenues(parent, treeSlots){
           const lamp=new THREE.Mesh(new THREE.SphereGeometry(0.26,8,8),lampGlowMat); lamp.position.set(tx+(-a.s)*(a.road+1.6)*sg,plateauY+4,tz+a.c*(a.road+1.6)*sg); parent.add(lamp); } } }
   }
 }
+// ===================== STREET FURNITURE — lamps, lights, signs, benches, bins, plants (instanced) =====================
+const furnPole = new THREE.MeshStandardMaterial({color:0x2b2f34, roughness:0.5, metalness:0.75, envMapIntensity:0.5});
+const furnMetal= new THREE.MeshStandardMaterial({color:0x3a4046, roughness:0.55, metalness:0.7, envMapIntensity:0.5});
+const furnWood = new THREE.MeshStandardMaterial({color:0x6e4a2c, roughness:0.85});
+const furnLeaf = new THREE.MeshStandardMaterial({color:0x3c7a32, roughness:0.95, envMapIntensity:0.2});
+const furnLeaf2= new THREE.MeshStandardMaterial({color:0x4f9040, roughness:0.95, envMapIntensity:0.2});
+const furnRed  = new THREE.MeshStandardMaterial({color:0xc0392b, roughness:0.55, metalness:0.1});
+const furnWhite= new THREE.MeshStandardMaterial({color:0xf2f2f2, roughness:0.6});
+const furnGreenBin=new THREE.MeshStandardMaterial({color:0x2f6f4a, roughness:0.7, metalness:0.2});
+const liRed=new THREE.MeshStandardMaterial({color:0xff4533, emissive:0xff2010, emissiveIntensity:1.5, roughness:0.4});
+const liYel=new THREE.MeshStandardMaterial({color:0xffcf3a, emissive:0xffa800, emissiveIntensity:0.5, roughness:0.4});
+const liGrn=new THREE.MeshStandardMaterial({color:0x46ff5e, emissive:0x12cc34, emissiveIntensity:1.5, roughness:0.4});
+function _fm(geo,mat,x,y,z,rx,ry,rz){ const m=new THREE.Mesh(geo,mat); m.position.set(x||0,y||0,z||0); if(rx)m.rotation.x=rx; if(ry)m.rotation.y=ry; if(rz)m.rotation.z=rz; return m; }
+function propStreetLamp(){ const g=new THREE.Group();
+  g.add(_fm(new THREE.CylinderGeometry(0.17,0.24,6.6,10),furnPole,0,3.3,0));
+  g.add(_fm(new THREE.BoxGeometry(0.12,0.12,1.7),furnPole,0,6.5,0.85));
+  g.add(_fm(new THREE.BoxGeometry(0.46,0.2,0.66),furnMetal,0,6.34,1.6));
+  g.add(_fm(new THREE.BoxGeometry(0.36,0.1,0.5),lampGlowMat,0,6.2,1.6)); return g; }
+function propTrafficLight(){ const g=new THREE.Group();
+  g.add(_fm(new THREE.CylinderGeometry(0.15,0.2,5.4,10),furnPole,0,2.7,0));
+  g.add(_fm(new THREE.BoxGeometry(0.12,0.12,2.6),furnPole,0,5.2,1.3));
+  g.add(_fm(new THREE.BoxGeometry(0.46,1.3,0.42),furnMetal,0,4.6,2.4));
+  g.add(_fm(new THREE.SphereGeometry(0.15,10,8),liRed,0,5.0,2.62));
+  g.add(_fm(new THREE.SphereGeometry(0.15,10,8),liYel,0,4.6,2.62));
+  g.add(_fm(new THREE.SphereGeometry(0.15,10,8),liGrn,0,4.2,2.62)); return g; }
+function propStopSign(){ const g=new THREE.Group();
+  g.add(_fm(new THREE.CylinderGeometry(0.07,0.08,2.7,6),furnMetal,0,1.35,0));
+  g.add(_fm(new THREE.CylinderGeometry(0.54,0.54,0.05,8),furnWhite,0,2.5,0.04,Math.PI/2));
+  g.add(_fm(new THREE.CylinderGeometry(0.46,0.46,0.06,8),furnRed,0,2.5,0.07,Math.PI/2)); return g; }
+function propBench(){ const g=new THREE.Group();
+  for(const zz of [-0.16,0.02,0.2]) g.add(_fm(new THREE.BoxGeometry(1.9,0.07,0.14),furnWood,0,0.52,zz));
+  for(const yy of [0.72,0.92]) g.add(_fm(new THREE.BoxGeometry(1.9,0.07,0.1),furnWood,0,yy,-0.26));
+  for(const xx of [-0.85,0.85]) g.add(_fm(new THREE.BoxGeometry(0.09,0.5,0.6),furnMetal,xx,0.26,-0.05)); return g; }
+function propTrashCan(){ const g=new THREE.Group();
+  g.add(_fm(new THREE.CylinderGeometry(0.28,0.24,0.92,12),furnMetal,0,0.46,0));
+  g.add(_fm(new THREE.CylinderGeometry(0.3,0.3,0.1,12),furnMetal,0,0.95,0)); return g; }
+function propDumpster(){ const g=new THREE.Group();
+  g.add(_fm(new THREE.BoxGeometry(2.4,1.25,1.25),furnGreenBin,0,0.62,0));
+  g.add(_fm(new THREE.BoxGeometry(2.5,0.12,1.36),furnMetal,0,1.28,0)); return g; }
+function propBush(){ const g=new THREE.Group();
+  const blobs=[[0,0.5,0,0.6],[0.4,0.4,0.12,0.42],[-0.35,0.45,-0.12,0.48],[0.08,0.7,0.22,0.38],[-0.15,0.62,0.25,0.34]];
+  for(let k=0;k<blobs.length;k++){ const b=blobs[k]; g.add(_fm(new THREE.SphereGeometry(b[3],8,7),k%2?furnLeaf2:furnLeaf,b[0],b[1],b[2])); } return g; }
+function propPlanter(){ const g=new THREE.Group();
+  g.add(_fm(new THREE.BoxGeometry(1.5,0.5,0.7),furnWood,0,0.25,0));
+  for(const x of [-0.45,0.05,0.5]) g.add(_fm(new THREE.SphereGeometry(0.32,8,7),furnLeaf2,x,0.72,0));
+  const fc=[0xe23b46,0xe8a13a,0xd86a9a,0xf2e23a];
+  for(let k=0;k<6;k++){ const fx=(((k*97)%100)/100-0.5)*1.1, fz=(((k*53)%100)/100-0.5)*0.4; g.add(_fm(new THREE.SphereGeometry(0.07,6,6),new THREE.MeshStandardMaterial({color:fc[k%4],roughness:0.7}),fx,0.82,fz)); } return g; }
+function propLantern(){ const g=new THREE.Group();
+  g.add(_fm(new THREE.CylinderGeometry(0.1,0.16,3.0,8),furnPole,0,1.5,0));
+  g.add(_fm(new THREE.CylinderGeometry(0.18,0.1,0.16,8),furnPole,0,3.05,0));
+  g.add(_fm(new THREE.BoxGeometry(0.3,0.42,0.3),lampGlowMat,0,3.34,0));
+  g.add(_fm(new THREE.ConeGeometry(0.24,0.22,6),furnPole,0,3.66,0)); return g; }
+const _stTex={};
+function streetSignTex(name){ if(_stTex[name]) return _stTex[name]; const c=document.createElement('canvas'); c.width=256;c.height=56; const x=c.getContext('2d');
+  x.fillStyle='#1d7a3c'; x.fillRect(0,0,256,56); x.strokeStyle='#ffffff'; x.lineWidth=3; x.strokeRect(4,4,248,48);
+  x.fillStyle='#ffffff'; x.font='bold 28px Arial'; x.textAlign='center'; x.textBaseline='middle'; x.fillText(name.toUpperCase(),128,30);
+  const t=new THREE.CanvasTexture(c); t.anisotropy=4; t.encoding=THREE.sRGBEncoding; _stTex[name]=t; return t; }
+const AVE_NAMES=['Harbor Ave','Marina Blvd','Beacon Ave','Pier Ave','Anchor Ave','Coral Ave','Clipper Ave','Lagoon Ave','Mariner Ave','Wharf Ave','Tide Ave'];
+const ST_NAMES =['Bay St','Ocean St','Surf St','Gull St','Reef St','Dune St','Shell St','Drift St','Cove St','Salt St','Breaker St'];
+function buildStreetSign(parent,x,z,av,st){ const g=new THREE.Group(); g.position.set(x,plateauY,z); parent.add(g);
+  g.add(_fm(new THREE.CylinderGeometry(0.08,0.1,4.5,8),furnPole,0,2.25,0));
+  const bg=new THREE.PlaneGeometry(2.5,0.54);
+  const b1=new THREE.Mesh(bg,new THREE.MeshStandardMaterial({map:streetSignTex(av),side:THREE.DoubleSide,roughness:0.8})); b1.position.set(0,4.15,0); g.add(b1);
+  const b2=new THREE.Mesh(bg,new THREE.MeshStandardMaterial({map:streetSignTex(st),side:THREE.DoubleSide,roughness:0.8})); b2.position.set(0,3.78,0); b2.rotation.y=Math.PI/2; g.add(b2); }
+function buildStreetFurniture(parent){
+  const cx=CITY.x, cz=CITY.z, E=17.6, up=new THREE.Vector3(0,1,0), one=new THREE.Vector3(1,1,1);
+  function validBlock(bx,bz){ const cd=Math.hypot(bx-cx,bz-cz);
+    if(cd > cityEdge(Math.atan2(bz-cz,bx-cx))-16) return false;
+    if(bx<PORT.edgeX+20 && bx>PORT.faceX-12 && bz>PORT.z0-16 && bz<PORT.z1+16) return false;
+    const avLat=Math.abs((bx-cx)*DOCK.rx+(bz-cz)*DOCK.rz), avAlong=(bx-cx)*DOCK.dx+(bz-cz)*DOCK.dz;
+    if(avLat<16 && avAlong>30) return false;
+    return !inPlaza(bx,bz); }
+  const M={lamp:[],bench:[],trash:[],bush:[],planter:[],dump:[],traffic:[],stop:[],lantern:[]};
+  function fm(arr,x,z,ry){ arr.push(new THREE.Matrix4().compose(new THREE.Vector3(x,plateauY,z), new THREE.Quaternion().setFromAxisAngle(up,ry||0), one)); }
+  for(let i=-10;i<=10;i++) for(let j=-10;j<=10;j++){
+    const bx=cx+i*GRID, bz=cz+j*GRID; if(!validBlock(bx,bz)) continue;
+    for(const s of [[1,0],[-1,0],[0,1],[0,-1]]){ const nx=s[0],nz=s[1], ax=nz,az=-nx, ry=Math.atan2(nx,nz);   // outward normal + along-edge axis
+      const ox=bx+nx*E, oz=bz+nz*E;                              // sidewalk edge centre, facing the road
+      if(Math.random()<0.5) fm(M.lamp, ox+ax*14, oz+az*14, ry); // a street lamp near the corner (regular lighting)
+      const r=Math.random();                                    // a feature at the edge centre
+      if(r<0.24) fm(M.bench, ox,oz,ry);
+      else if(r<0.42) fm(M.planter, ox,oz,ry);
+      else if(r<0.58) fm(M.trash, ox+ax*4, oz+az*4, ry);
+      for(const t of [-11,11]) if(Math.random()<0.5) fm(M.bush, ox+ax*t, oz+az*t, ry); }   // hedges/bushes along the kerb
+    if(Math.random()<0.12) fm(M.dump, bx-E+1.6, bz-E+1.6, Math.random()*6.28);
+    if(validBlock(bx+GRID,bz) && validBlock(bx,bz+GRID) && Math.random()<0.7){
+      if(i%2===0 && j%2===0) fm(M.traffic, bx+E, bz+E, -2.36);
+      else fm(M.stop, bx+E, bz+E, -2.36);
+      if(i%3===0 && j%3===0) buildStreetSign(parent, bx+E-1.3, bz+E-1.3, AVE_NAMES[((i%11)+11)%11], ST_NAMES[((j%11)+11)%11]);
+    }
+  }
+  for(let k=0;k<80;k++){ const a=k/80*Math.PI*2, r=cityEdge(a)-6, x=cx+Math.cos(a)*r, z=cz+Math.sin(a)*r;
+    if(Math.random()<0.6) fm(M.lantern, x, z, 0); }
+  const protos={lamp:propStreetLamp(),bench:propBench(),trash:propTrashCan(),bush:propBush(),planter:propPlanter(),dump:propDumpster(),traffic:propTrafficLight(),stop:propStopSign(),lantern:propLantern()};
+  const SH={lamp:1,traffic:1,stop:1,dump:1,bench:1,trash:0,bush:0,planter:0,lantern:0};
+  for(const k in protos){ if(M[k].length) parent.add(instanceModel(protos[k], M[k], SH[k])); }
+}
 function buildCity(){
   const cx=CITY.x, cz=CITY.z, grp=new THREE.Group(); scene.add(grp); cityGroup=grp;
   computePlazas();
@@ -616,11 +713,9 @@ function buildCity(){
     pad.position.set(wx,plateauY+0.34-0.36,wz); pad.receiveShadow=true; grp.add(pad);
     fillBlock(grp, wx, wz, cd, treeSlots);
   }
-  // street lamps + trees along the sidewalks at intersections
+  // shade trees along the sidewalks at intersections (lamps & furniture come from buildStreetFurniture)
   for(let i=-10;i<=10;i++) for(let j=-10;j<=10;j++){
     const wx=cx+(i+0.5)*GRID, wz=cz+(j+0.5)*GRID; if(Math.hypot(wx-cx,wz-cz) > cityEdge(Math.atan2(wz-cz,wx-cx))-22) continue;
-    if(Math.random()<0.5){ const post=new THREE.Mesh(new THREE.CylinderGeometry(0.1,0.14,4,8),lampPostMat); post.position.set(wx+8.5,plateauY+2,wz+8.5); post.castShadow=true; grp.add(post);
-      const lamp=new THREE.Mesh(new THREE.SphereGeometry(0.26,8,8),lampGlowMat); lamp.position.set(wx+8.5,plateauY+4,wz+8.5); grp.add(lamp); }
     if(Math.random()<0.4) treeSlots.push({x:wx-8.5,z:wz-8.5,s:0.55+Math.random()*0.25});
   }
   // instance the city trees (small) from the loaded tree model
@@ -628,6 +723,7 @@ function buildCity(){
     const mats=treeSlots.map(function(sl){ const s=(8/th)*sl.s;
       return new THREE.Matrix4().compose(new THREE.Vector3(sl.x, plateauY-minY*s, sl.z), new THREE.Quaternion().setFromAxisAngle(up,sl.rot||0), new THREE.Vector3(s,s,s)); });
     grp.add(instanceModel(treeProto, mats, false)); }
+  buildStreetFurniture(grp);
   buildDock(grp);
   LM_ANIMS=buildLandmarks(grp);
   buildTraffic(grp);
