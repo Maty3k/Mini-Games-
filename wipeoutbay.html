@@ -12222,7 +12222,7 @@ function buildCobbleArea(g, w, d){
   m.rotation.x=-Math.PI/2; m.position.y=0.05; m.receiveShadow=true; g.add(m);
 }
 // ===== village island layout =====
-const VILLAGE_NPCS=[], VILLAGE_SHOPKEEPERS=[], VILLAGE_DUCKS=[], VILLAGE_RIPPLES=[];
+const VILLAGE_NPCS=[], VILLAGE_SHOPKEEPERS=[], VILLAGE_DUCKS=[], VILLAGE_RIPPLES=[]; let VILLAGE_PONDNOR=null;
 // irregular grass cover + tiled grass texture for an island plateau (shared shape with the farm)
 function islandGrassMesh(grp, gy, edgeFn){
   function grassTex(){ const c=document.createElement('canvas'); c.width=128; c.height=128; const x=c.getContext('2d');
@@ -12397,18 +12397,24 @@ function buildVillage(){
   // dock toward the bay centre
   buildIslandDock(grp, VILLAGE.x, VILLAGE.z, villageEdge, gy, 'the village');
   // ---- village duck pond on the south green ----
-  { const pcx=15, pcz=-75, pr=8, pondM=new THREE.MeshStandardMaterial({color:0x2f7fa8,roughness:0.18,transparent:true,opacity:0.85,envMapIntensity:0.6});
-    const pond=new THREE.Mesh(new THREE.CircleGeometry(pr,36),pondM); pond.rotation.x=-Math.PI/2; pond.position.set(pcx,gy-0.18,pcz); pond.receiveShadow=true; grp.add(pond);
-    const rim=new THREE.Mesh(new THREE.RingGeometry(pr-0.4,pr+2.4,36),new THREE.MeshStandardMaterial({color:0x6e5638,roughness:1.0})); rim.rotation.x=-Math.PI/2; rim.position.set(pcx,gy+0.02,pcz); grp.add(rim);
+  { const pcx=15, pcz=-75, pr=8;
+    // reflective water: deep teal, low roughness so it mirrors the sky (scene.environment),
+    // with the shared water normal map (cloned) tiled & slowly drifting for live ripples
+    const pondNor = (typeof waterNormal!=='undefined' && waterNormal) ? waterNormal.clone() : null;
+    if(pondNor){ pondNor.wrapS=pondNor.wrapT=THREE.RepeatWrapping; pondNor.repeat.set(5,5); pondNor.needsUpdate=true; VILLAGE_PONDNOR=pondNor; }
+    const pondM=new THREE.MeshStandardMaterial({color:0x1a5e78, roughness:0.14, metalness:0.0, envMapIntensity:0.85, transparent:true, opacity:0.9});
+    if(pondNor){ pondM.normalMap=pondNor; pondM.normalScale=new THREE.Vector2(0.75,0.75); }
+    const pond=new THREE.Mesh(new THREE.CircleGeometry(pr,48),pondM); pond.rotation.x=-Math.PI/2; pond.position.set(pcx,gy-0.15,pcz); pond.receiveShadow=true; pond.renderOrder=1; grp.add(pond);
+    const rim=new THREE.Mesh(new THREE.RingGeometry(pr-0.4,pr+2.4,40),new THREE.MeshStandardMaterial({color:0x6e5638,roughness:1.0})); rim.rotation.x=-Math.PI/2; rim.position.set(pcx,gy+0.02,pcz); grp.add(rim);
     for(let k=0;k<11;k++){ const a=Math.random()*6.28; place(buildReed, pcx+Math.cos(a)*(pr+0.7), pcz+Math.sin(a)*(pr+0.7), 0); }
     place(buildBarrel, pcx-pr-2.5, pcz+1, 0); place(buildWoodpile, pcx+pr+2, pcz-3, 0.6);   // a barrel & woodpile by the water
     // expanding-ring ripple pool (shared by the ducks)
     for(let k=0;k<28;k++){ const rg=new THREE.Mesh(new THREE.RingGeometry(0.84,1.0,24), new THREE.MeshBasicMaterial({color:0xdcefff,transparent:true,opacity:0,depthWrite:false}));
-      rg.rotation.x=-Math.PI/2; rg.position.set(pcx,gy-0.12,pcz); rg.visible=false; grp.add(rg); VILLAGE_RIPPLES.push({m:rg,t:-1}); }
+      rg.rotation.x=-Math.PI/2; rg.position.set(pcx,gy-0.11,pcz); rg.visible=false; rg.renderOrder=2; grp.add(rg); VILLAGE_RIPPLES.push({m:rg,t:-1}); }
     const dkinds=['white','mallard','mallard','mallardF','white','mallard'], bnd=pr-1.5;
     for(let k=0;k<6;k++){ const dg=new THREE.Group(); buildDuck(dg, dkinds[k]); const a=Math.random()*6.28, r=Math.random()*bnd, lx=pcx+Math.cos(a)*r, lz=pcz+Math.sin(a)*r;
-      dg.position.set(lx, gy+0.04, lz); grp.add(dg);
-      VILLAGE_DUCKS.push({grp:dg, cx:pcx, cz:pcz, bnd:bnd, x:lx, z:lz, tx:lx, tz:lz, heading:a, speed:0, pause:Math.random()*3, step:Math.random()*6, rip:Math.random()*0.4, ph:Math.random()*6.28, by:gy+0.04}); } }
+      dg.position.set(lx, gy-0.1, lz); grp.add(dg);
+      VILLAGE_DUCKS.push({grp:dg, cx:pcx, cz:pcz, bnd:bnd, x:lx, z:lz, tx:lx, tz:lz, heading:a, speed:0, pause:Math.random()*3, step:Math.random()*6, rip:Math.random()*0.4, ph:Math.random()*6.28, by:gy-0.1}); } }
   // ---- village liveliness: yard props, market goods, warmth & greenery ----
   const yardProps=[buildWoodpile,buildGardenPlot,buildFlowerBed,buildPottedPlant,buildCrateStack,buildSackPile,buildBarrel,buildWheelbarrow];
   for(let i=0;i<cot.length;i++){ const dx=(i%2?1:-1)*6.5, dz=((i%3)-1)*5.5; place(yardProps[i%yardProps.length], cot[i][0]+dx, cot[i][1]+dz, Math.random()*6.28); }
@@ -12457,6 +12463,7 @@ function updateVillage(dt){
   for(let i=0;i<VILLAGE_RIPPLES.length;i++){ const rp=VILLAGE_RIPPLES[i]; if(rp.t<0) continue; rp.t+=dt/1.5;
     if(rp.t>=1){ rp.t=-1; rp.m.visible=false; continue; }
     const sc=0.2+rp.t*2.4; rp.m.scale.set(sc,sc,sc); rp.m.material.opacity=(1-rp.t)*0.38; }
+  if(VILLAGE_PONDNOR){ VILLAGE_PONDNOR.offset.x=(gameT*0.013)%1; VILLAGE_PONDNOR.offset.y=(gameT*0.009)%1; }   // drifting surface ripples
 }
 function spawnRipple(x,z){ for(let i=0;i<VILLAGE_RIPPLES.length;i++){ const rp=VILLAGE_RIPPLES[i];
   if(rp.t<0){ rp.t=0; rp.m.position.x=x; rp.m.position.z=z; rp.m.visible=true; rp.m.scale.set(0.2,0.2,0.2); rp.m.material.opacity=0.38; return; } } }
