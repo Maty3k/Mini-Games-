@@ -182,7 +182,7 @@ renderer.setSize(VW,VH);
 
 // atmosphere — warm daylight haze; far plane hidden in it
 const FOG=new THREE.Color(0x9fc4d8);
-scene.fog=new THREE.FogExp2(FOG.getHex(), 0.00055);
+scene.fog=new THREE.FogExp2(FOG.getHex(), 0.00040);
 
 // ---------- sun ----------
 const sunDir=new THREE.Vector3();
@@ -12529,7 +12529,7 @@ function bridgeHeight(x,z){ if(!BRIDGE) return 0; const ax=x-BRIDGE.x0, az=z-BRI
 // ============================================================
 //  AIRPORT — island, runway, AI planes, pilotable plane + passenger round trips
 // ============================================================
-const AIRPORT={x:-470,z:-1080}, airportY=11, RWY={len:250, half:13};
+const AIRPORT={x:-2150,z:-420}, airportY=11, RWY={len:250, half:13};
 function airportEdge(a){ return 248 + 34*Math.sin(a*2+0.5) + 18*Math.cos(a*3-0.4); }   // irregular coastline
 let airportGroup=null, cessna3d=null, airliner3d=null, cessnaProp=null;
 const PLANE={ active:false, model:null, prop:null, auto:false, x:0,z:0,y:0, heading:0, speed:0, pitch:0, roll:0, vy:0, gearY:1, onGround:true, route:null, wp:0, arrived:false, park:null, tag:'' };
@@ -12613,7 +12613,7 @@ function buildAIPlanes(){
   const specs=[{r:760,alt:130,spd:62,big:true ,col:0xeaf0f6,acc:0x2f6fd0,ph:0,dir:1},
                {r:880,alt:175,spd:74,big:true ,col:0xf2eee6,acc:0xd9533b,ph:2.2,dir:-1},
                {r:640,alt:95 ,spd:54,big:false,col:0xf6f6f8,acc:0x3a8a5a,ph:4.1,dir:1}];
-  const cx=-150, cz=-500;   // circuit centre (over the bay near the city/airport)
+  const cx=-1400, cz=-350;   // circuit centre (over the bay between the city and the airport)
   for(const s of specs){ const g=new THREE.Group(); g.rotation.order='YXZ'; const info=buildPlane(g,{airliner:s.big,body:s.col,accent:s.acc}); scene.add(g);
     AIPLANES.push({grp:g, prop:info.prop, cx:cx, cz:cz, r:s.r, alt:s.alt, spd:s.spd, ph:s.ph, dir:s.dir, ang:s.ph}); }
 }
@@ -12636,20 +12636,19 @@ function startPlane(tag){ const isC=(tag==='pilot'); PLANE.tag=tag; PLANE.model=
   if(PLANE.auto){ PLANE.route=planeRoute(pk); PLANE.wp=0; toast('Round trip — sit back and enjoy the flight','#aef0ff'); }
   else toast('Flying ✈  W/S throttle · A/D turn · ↑/↓ climb-dive · land on the runway, F to exit','#aef0ff'); }
 function planeRoute(pk){ const ax=AIRPORT.x, az=AIRPORT.z, G=airportY+pk.gearY;
-  // line up, take off east, scenic loop up past the city skyline, return & land west→east, taxi to the stand
-  return [ {x:ax-RWY.len/2+24, z:az,          alt:G,   spd:16},
-           {x:ax+RWY.len/2-10, z:az,          alt:G,   spd:66},   // rotate / take off east
-           {x:ax+350,          z:az-120,      alt:150, spd:84},   // climb out, bank toward the city
-           {x:ax+120,          z:az-620,      alt:215, spd:88},
-           {x:CITY.x+300,      z:CITY.z+220,  alt:245, spd:90},   // pass the city skyline
-           {x:CITY.x-160,      z:CITY.z-260,  alt:245, spd:90},
-           {x:ax-720,          z:az-440,      alt:185, spd:82},   // turn back toward the field
-           {x:ax-760,          z:az,          alt:G+34,spd:58},   // line up on final, west of the runway
-           {x:ax-RWY.len/2-30, z:az,          alt:G+10,spd:44},
-           {x:ax-RWY.len/2+70, z:az,          alt:G,   spd:30},   // touchdown
-           {x:ax+RWY.len/2-80, z:az,          alt:G,   spd:16},   // roll out east
-           {x:ax+56,           z:az-RWY.half-16, alt:G,spd:14},   // turn off onto the taxiway
-           {x:pk.x,            z:pk.z,        alt:G,   spd:12, last:true} ]; }
+  // back-taxi west, take off east, scenic loop past the city skyline, return & land east→west, taxi to the stand
+  return [ {x:ax-RWY.len/2+24, z:az,             alt:G,   spd:16},
+           {x:ax+RWY.len/2-10, z:az,             alt:G,   spd:66},   // rotate / take off east toward the city
+           {x:ax+520,          z:az-40,          alt:150, spd:84},   // climb out east
+           {x:CITY.x-260,      z:CITY.z+220,     alt:230, spd:90},   // approach the skyline
+           {x:CITY.x+340,      z:CITY.z-40,      alt:245, spd:90},   // pass the city skyline
+           {x:CITY.x-40,       z:CITY.z-440,     alt:235, spd:88},   // bank around north of the city
+           {x:ax+760,          z:az-120,         alt:175, spd:78},   // line up east of the field, heading back west
+           {x:ax+RWY.len/2+40, z:az,             alt:G+12,spd:44},   // short final from the east
+           {x:ax+RWY.len/2-70, z:az,             alt:G,   spd:30},   // touchdown at the east threshold
+           {x:ax+90,           z:az,             alt:G,   spd:16},   // roll out west, slowing
+           {x:ax+56,           z:az-RWY.half-16, alt:G,   spd:13},   // turn off onto the taxiway
+           {x:pk.x,            z:pk.z,           alt:G,   spd:12, last:true} ]; }
 function updatePlane(dt){ const P=PLANE; if(!P.model) return;
   if(P.auto){
     const wp=P.route[P.wp]; const dx=wp.x-P.x, dz=wp.z-P.z, dist=Math.hypot(dx,dz);
@@ -12700,7 +12699,7 @@ function optimizeScene(){
 }
 function buildWorld(){
   // ---- terrain (islands + seabed) ----
-  const TR=1900, TG=440;
+  const TR=2600, TG=540;
   const tGeo=new THREE.PlaneGeometry(TR*2,TR*2,TG,TG); tGeo.rotateX(-Math.PI/2);
   const pos=tGeo.attributes.position;
   for(let i=0;i<pos.count;i++) pos.setY(i, landH(pos.getX(i),pos.getZ(i)));
@@ -12731,7 +12730,7 @@ function buildWorld(){
 // ============================================================
 //  WATER — Gerstner displacement + HDRI reflection + foam + normal detail
 // ============================================================
-const SEG=420, SIZE=2600;
+const SEG=540, SIZE=4400;
 function buildWater(){
   const geo=new THREE.PlaneGeometry(SIZE,SIZE,SEG,SEG); geo.rotateX(-Math.PI/2);
   const mat=new THREE.MeshStandardMaterial({ color:0x0c3346, roughness:0.075, metalness:0.0,
@@ -14437,7 +14436,7 @@ function boostFov(){ return keys['shift']?4:0; }
 // ============================================================
 //  MINIMAP
 // ============================================================
-const MAPR=1700; let mapBase=null;
+const MAPR=2600; let mapBase=null;
 function w2m(x,z){ return [86+x/MAPR*82, 86+z/MAPR*82]; }
 function drawMapBase(){ const s=172, img=mapX.createImageData(s,s);
   for(let py=0;py<s;py++)for(let px=0;px<s;px++){ const wx=(px-86)/82*MAPR, wz=(py-86)/82*MAPR, h=landH(wx,wz);
