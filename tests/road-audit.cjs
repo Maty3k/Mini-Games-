@@ -41,6 +41,11 @@ const AUDIT = `(function(){
     if(sx>60||sz>60) return;                                   // skip terrain / sea / big decks
     // a real obstruction is TALL and has a WIDE footprint (excludes kerbs, signs, masts, antennae)
     if(sy>2.2 && Math.min(sx,sz)>2.5) solids.push({x:(b.min.x+b.max.x)/2,z:(b.min.z+b.max.z)/2,hx:sx/2,hz:sz/2,baseY:b.min.y,sy:sy}); });
+  // also collect whole BUILDING GROUPS — a house built from thin wall panels + a short foundation
+  // never registers as ONE tall+wide mesh, so test its combined footprint too
+  scene.traverse(function(o){ if(!o.isGroup||!o.children||o.children.length<3) return;
+    const b=new THREE.Box3().setFromObject(o); const sy=b.max.y-b.min.y,sx=b.max.x-b.min.x,sz=b.max.z-b.min.z;
+    if(sy>3 && Math.min(sx,sz)>2.5 && Math.max(sx,sz)<18) solids.push({x:(b.min.x+b.max.x)/2,z:(b.min.z+b.max.z)/2,hx:sx/2,hz:sz/2,baseY:b.min.y,sy:sy}); });
   function depth(sol,r){ const dx=sol.x-r.x,dz=sol.z-r.z,c=Math.cos(-r.yaw),s=Math.sin(-r.yaw); const lx=dx*c-dz*s,lz=dx*s+dz*c;
     const penX=(r.hx+sol.hx)-Math.abs(lx), penZ=(r.hz+sol.hz)-Math.abs(lz); return (penX>0&&penZ>0)?Math.min(penX,penZ):0; }
   function reg(x,z){ if(Math.hypot(x-VILLAGE.x,z-VILLAGE.z)<260)return'village'; if(Math.hypot(x-FARM.x,z-FARM.z)<260)return'farm'; if(Math.hypot(x-CITY.x,z-CITY.z)<720)return'city'; return'other'; }
@@ -68,9 +73,24 @@ const AUDIT = `(function(){
       else { if(run===0)runStart=t; run+=4; } }
     if(run>24)gaps.push({off:Math.round(off),from:Math.round(runStart),to:Math.round(hi),len:run,vert}); } }
   gaps.sort((a,b)=>b.len-a.len);
+  // ---- floating / sunk buildings on the FLAT farm & village shelves ----
+  // Only the TOP-LEVEL placed groups (direct children of each island container) are real buildings;
+  // their nested parts (windmill sails, water-tank, roof) legitimately sit high, so don't scan those.
+  function containerAt(px,pz){ let g=null; for(const o of scene.children){ if(!o.isGroup||!o.children||o.children.length<10) continue; const p=new THREE.Vector3(); o.getWorldPosition(p); if(Math.hypot(p.x-px,p.z-pz)<4) g=o; } return g; }
+  const floaters=[];
+  function scanFloat(container, shelf, rg2){ if(!container) return;
+    for(const o of container.children){ if(!o.isGroup) continue; const b=new THREE.Box3().setFromObject(o);
+      const sy=b.max.y-b.min.y,sx=b.max.x-b.min.x,sz=b.max.z-b.min.z;
+      if(sy<3 || Math.min(sx,sz)<2.5 || Math.max(sx,sz)>40) continue;     // a building (not a fence/animal/path/the whole island)
+      // FLOAT only: a building lifted off its shelf. (sunk-below isn't checked — wells & dock pilings legitimately go down.)
+      const gap=b.min.y-shelf; if(gap>1.5) floaters.push({reg:rg2,x:Math.round((b.min.x+b.max.x)/2),z:Math.round((b.min.z+b.max.z)/2),gap:+gap.toFixed(1)}); } }
+  scanFloat(containerAt(FARM.x,FARM.z), farmY, 'farm');
+  scanFloat(containerAt(VILLAGE.x,VILLAGE.z), villageY, 'village');
+  floaters.sort((a,b)=>Math.abs(b.gap)-Math.abs(a.gap));
   return JSON.stringify({roads:roads.length,paths:paths.length,solids:solids.length,roadInPort,
     onRoad:{n:onRoad.length,byReg:byReg(onRoad),items:onRoad.slice(0,20)},
     onPath:{n:onPath.length,byReg:byReg(onPath),items:onPath.slice(0,20)},
+    floating:{n:floaters.length,items:floaters.slice(0,16)},
     coverage:+(100*covLen/Math.max(1,totalLen)).toFixed(1), gaps:gaps.slice(0,12)});
 })()`;
 
@@ -118,6 +138,8 @@ function rpc(ws,method,params){ return new Promise((res,rej)=>{ const i=++id; pe
     if(!c3) fails.push('road-in-port');
     const c4 = a.gaps.length===0; console.log('  ['+(c4?P:F)+'] city road grid is connected (coverage '+a.coverage+'%) — '+a.gaps.length+' gaps');
     if(!c4){ a.gaps.forEach(g=>console.log('         · '+(g.vert?'N-S':'E-W')+' line off '+g.off+': '+g.len+'m gap ('+g.from+'..'+g.to+')')); fails.push('road-gaps'); }
+    const c5 = a.floating.n===0; console.log('  ['+(c5?P:F)+'] no floating/sunk building on the farm or village — '+a.floating.n+' found');
+    if(!c5){ a.floating.items.forEach(v=>console.log('         · '+v.reg+' ('+v.x+','+v.z+') '+(v.gap>0?'floats +'+v.gap:'sunk '+v.gap)+'m')); fails.push('floating-buildings'); }
 
     console.log('');
     if(fails.length){ console.log('\x1b[31m✗ '+fails.length+' check(s) failed: '+fails.join(', ')+'\x1b[0m\n'); process.exit(1); }

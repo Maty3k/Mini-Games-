@@ -3794,7 +3794,7 @@ if (g.userData.beacon){
   g.userData.beacon.scale.setScalar(0.9 + p*0.25);
 }
 }},
-{name:"Port Cargo Cranes", dx:205, dz:150, faceWater:true, clear:46,
+{name:"Port Cargo Cranes", dx:192, dz:144, faceWater:true, clear:46,
 build:function(g){
 // ---- Port cargo cranes (gantry / container cranes) ----
 // Coordinate convention: after faceWater yaw, +Z points toward the water.
@@ -3994,7 +3994,7 @@ function buildCrane(){
 }
 
 // ---------- place a row of 3 cranes along X on the dock ----------
-const craneSpacingX = 46;
+const craneSpacingX = 30;   // tighter so the 3-crane rig (outer legs ±38) fits inside the landmark apron (clear 46)
 const cranes = [];
 for(let i=0;i<3;i++){
   const cr = buildCrane();
@@ -10998,12 +10998,23 @@ function buildFarm(){
     for(let i=1;i<=segs;i++) idx.push(0,i,i+1);
     const gg=new THREE.BufferGeometry(); gg.setAttribute('position',new THREE.Float32BufferAttribute(pos,3)); gg.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2)); gg.setIndex(idx); gg.computeVertexNormals();
     const grass=new THREE.Mesh(gg,grassMat); grass.position.y=gy+0.04; grass.receiveShadow=true; grp.add(grass); }
+  // building footprints (filled as buildings are placed) so dirt lanes route around them, never under
+  const FOBS=[]; const BLD={buildFarmhouse:9, buildBarn:11, buildSilo:5, buildWaterTower:6, buildWindmill:7, buildFarmShop:8};
   // place a builder at local (x,z) facing rotY
   function place(fn,x,z,rotY,arg){ const sg=new THREE.Group(); sg.position.set(x,gy,z); sg.rotation.y=rotY||0;
+    if(fn && BLD[fn.name]!==undefined) FOBS.push({x:x,z:z,r:BLD[fn.name]});
     try{ if(arg!==undefined) return fn(sg,arg)||sg; return fn(sg)||sg; }catch(e){ console.warn('farm:',fn&&fn.name,e&&e.message); } finally{ grp.add(sg); } return sg; }
-  // dirt strip path between two local points
-  function path(x1,z1,x2,z2,w){ const dx=x2-x1,dz=z2-z1,len=Math.hypot(dx,dz)||1; const p=new THREE.Mesh(new THREE.BoxGeometry(w||3.2,0.08,len),dirtMat);
-    p.position.set((x1+x2)/2,gy+0.06,(z1+z2)/2); p.rotation.y=Math.atan2(dx,dz); p.receiveShadow=true; grp.add(p); }
+  // dirt lane between two local points — carved wherever it would pass under a building, and stopped short of its ends
+  function path(x1,z1,x2,z2,w){ const dx=x2-x1,dz=z2-z1,len=Math.hypot(dx,dz)||1, ux=dx/len,uz=dz/len, ry=Math.atan2(dx,dz);
+    const cuts=[];
+    for(const C of FOBS){ const t=(C.x-x1)*ux+(C.z-z1)*uz, px=x1+ux*t, pz=z1+uz*t, perp=Math.hypot(C.x-px,C.z-pz);
+      if(perp<C.r){ const h=Math.sqrt(C.r*C.r-perp*perp); cuts.push([t-h,t+h]); } }
+    cuts.sort((a,b)=>a[0]-b[0]);
+    const segs=[]; let s=2;
+    for(const c of cuts){ const b=Math.min(c[0],len-2); if(b>s+2) segs.push([s,b]); s=Math.max(s,c[1]); }
+    if(s<len-4) segs.push([s,len-2]);
+    for(const sp of segs){ const L=sp[1]-sp[0], mid=(sp[0]+sp[1])/2; const p=new THREE.Mesh(new THREE.BoxGeometry(w||3.2,0.08,L),dirtMat);
+      p.position.set(x1+ux*mid,gy+0.06,z1+uz*mid); p.rotation.y=ry; p.receiveShadow=true; grp.add(p); } }
   // fully-enclosed rectangular post-and-rail pen (a fence on each of the four sides, corners meeting)
   function pen(cx,cz,w,d){
     place(function(s){ buildFence(s,d); }, cx-w/2, cz, 0);          // left  (runs along Z)
