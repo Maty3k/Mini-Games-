@@ -150,8 +150,14 @@
     <p class="keys"><b>W / ↑</b> throttle &nbsp; <b>S / ↓</b> brake &nbsp; <b>A D / ← →</b> steer &nbsp; <b>Shift</b> boost &nbsp; <b>T</b> skip time</p>
     <div id="modes">
       <button id="goTrial" class="modebtn primary">⏱ TIME TRIAL</button>
-      <button id="goFree" class="modebtn">🧭 FREE ROAM</button>
     </div>
+    <p class="keys" style="margin-top:14px"><b>🧭 FREE ROAM</b> — pick your ride:</p>
+    <div id="modes">
+      <button id="goFree" class="modebtn">🌊 JETSKI</button>
+      <button id="spawnCar" class="modebtn">🚗 CAR</button>
+      <button id="spawnJet" class="modebtn">🚀 FIGHTER JET</button>
+    </div>
+    <p class="keys" style="opacity:.7">Fighter jet: <b>W/S</b> forward/back · <b>A/D</b> turn · <b>Space</b> rise · <b>Shift</b> descend · it floats & hovers · <b>F</b> to land &amp; hop out</p>
   </div>
 
 <script>
@@ -298,7 +304,7 @@ const waterNormal=texL.load('assets/textures/water_nor.jpg'); waterNormal.wrapS=
 const sandTex=loadTex('sand_diff.jpg',40), grassTex=loadTex('grass_diff.jpg',60), rockTex=loadTex('gravel_diff.jpg',50);
 const landNor=texL.load('assets/textures/asphalt_nor.jpg'); landNor.wrapS=landNor.wrapT=THREE.RepeatWrapping;   // rock surface detail normal
 
-let WATER=null, seaU=null, started=false, treeProto=null, pierProto=null, pineProto=null, plantProto=null, twistProto=null, airlinerProto=null, built=false, pend=7;
+let WATER=null, seaU=null, started=false, treeProto=null, pierProto=null, pineProto=null, plantProto=null, twistProto=null, airlinerProto=null, fighterProto=null, built=false, pend=8;
 let cityGroup=null, terrainMesh=null, worldCulledState=false, cruiseExtHidden=false;   // for culling the outside world + the ship's own exterior while aboard the cruise
 function assetReady(){ if(--pend===0 && !built){ built=true; buildWorld(); loadingEl.style.display='none'; } }
 new THREE.RGBELoader().load('assets/skies/sky_day.hdr', hdr=>{
@@ -318,6 +324,7 @@ _gltf.load('assets/models/nature/pine.glb',  g=>{ pineProto=g.scene;  assetReady
 _gltf.load('assets/models/nature/plant.glb', g=>{ plantProto=g.scene; assetReady(); }, undefined, ()=>{ console.warn('plant load failed'); assetReady(); });
 _gltf.load('assets/models/nature/twisted.glb',g=>{ twistProto=g.scene; assetReady(); }, undefined, ()=>{ console.warn('twisted load failed');assetReady(); });
 _gltf.load('assets/models/vehicles/airliner.glb',g=>{ airlinerProto=g.scene; assetReady(); }, undefined, ()=>{ console.warn('airliner load failed');assetReady(); });
+_gltf.load('assets/models/vehicles/fighter.glb', g=>{ fighterProto=g.scene; assetReady(); }, undefined, ()=>{ console.warn('fighter load failed'); assetReady(); });
 
 // ============================================================
 //  THE BAY — heightfield islands ringing an open lagoon
@@ -13057,6 +13064,7 @@ function buildWorld(){
   buildAirportBridge();
   buildBridgeTraffic();
   buildLinkNPCs();
+  buildJet();
   optimizeScene();                              // light budget + shadow pruning (perf)
   // pre-render the minimap base (bay silhouette)
   drawMapBase();
@@ -13284,15 +13292,25 @@ function resetRun(){ const g=GATES[0]||{x:0,z:60,fx:0,fz:1};
   if(typeof SFX!=='undefined'&&SFX.heliStop)SFX.heliStop(); if(typeof hideHeliMenu==='function')hideHeliMenu(); if(typeof hideCine==='function')hideCine();
   running=false; gameOver=false; updateHUD(); }
 function recenter(){ B.x=0;B.z=0;B.heading=0;B.speed=0;B.vy=0;B.airborne=false;B.y=seaY(0,0,gameT);prevSurf=B.y; toast('RE-CENTRED','#aef0ff'); }
-function start(m){ if(running) return; mode=m||mode; applyModeUI(); resetRun(); running=true; gameOver=false;
+let spawnVehicle='ski';
+function start(m){ if(running) return; mode=m||mode; applyModeUI(); resetRun();
+  if(mode==='free'){ if(spawnVehicle==='car') spawnInCar(); else if(spawnVehicle==='jet') spawnInJet(); }
+  running=true; gameOver=false;
   panel.style.display='none'; SFX.powerup&&SFX.powerup(); }
+function spawnInCar(){ if(typeof placeCar==='function' && !carReady) placeCar(); pmode='car'; CAR.speed=0; avatar.visible=false;
+  toast('🚗 Driving — explore the city & cross the bridge','#aef0ff'); }
+function spawnInJet(){ pmode='jet'; avatar.visible=false; JET.x=B.x; JET.z=B.z-40; JET.y=heliGround(JET.x,JET.z)+55; JET.heading=B.heading; JET.fwd=0; JET.vy=0; JET.pitch=0; JET.roll=0;
+  if(jet3d){ jet3d.visible=true; jet3d.position.set(JET.x,JET.y,JET.z); jet3d.rotation.set(0,JET.heading,0); } SFX.heliStart&&SFX.heliStart();
+  toast('🚀 Fighter jet — W/S move · A/D turn · Space up · Shift down · F to land & exit','#aef0ff'); }
 function end(){ running=false; gameOver=true;
   if(score>best){ best=score; localStorage.wipeoutBayBest=best; bestEl.textContent=best; }
   el('panel').querySelector('h1').innerHTML='<span>RUN OVER</span>';
   el('ptext').innerHTML='You cleared <b>'+gatesPassed+' gates</b> ('+lap+(lap>1?' laps':' lap')+') and scored <b>'+score+'</b>.'+(score>=best?'  New best!':'')+' &nbsp;Pick a mode to go again.';
   panel.style.display='flex'; SFX.gameover&&SFX.gameover(); }
-el('goTrial').addEventListener('click',()=>{ started=true; start('trial'); });
-el('goFree').addEventListener('click',()=>{ started=true; start('free'); });
+el('goTrial').addEventListener('click',()=>{ started=true; spawnVehicle='ski'; start('trial'); });
+el('goFree').addEventListener('click',()=>{ started=true; spawnVehicle='ski'; start('free'); });
+el('spawnCar').addEventListener('click',()=>{ started=true; spawnVehicle='car'; start('free'); });
+el('spawnJet').addEventListener('click',()=>{ started=true; spawnVehicle='jet'; start('free'); });
 
 function toast(msg,col){ toastEl.textContent=msg; toastEl.style.color=col||'#fff'; toastEl.style.opacity='1';
   clearTimeout(toast._t); toast._t=setTimeout(()=>toastEl.style.opacity='0',900); }
@@ -14131,6 +14149,28 @@ function updateHeli(dt){
   if(heliRotor)heliRotor.rotation.y+=dt*26; if(heliTailRotor)heliTailRotor.rotation.x+=dt*36;
   HELI._rev=(HELI._rev||0)+dt; if(HELI._rev>0.25){ HELI._rev=0; SFX.heliRev&&SFX.heliRev(Math.abs(HELI.fwd)>14 || HELI.vy>2.5); }
 }
+// ===== FIGHTER JET — a hovering VTOL jet you can spawn in (downloaded model) =====
+const JET={ x:0,z:0,y:0,heading:0,fwd:0,vy:0,pitch:0,roll:0 };
+const jet3d=new THREE.Group(); jet3d.rotation.order='YXZ'; jet3d.visible=false; scene.add(jet3d);
+let JET_YAW=0;
+function buildJet(){ if(!fighterProto){ return; } const m=fighterProto.clone(true); m.rotation.y=JET_YAW; m.updateMatrixWorld(true);
+  const b1=new THREE.Box3().setFromObject(m), s1=b1.getSize(new THREE.Vector3()), sc=12/Math.max(s1.x,s1.z,0.01); m.scale.setScalar(sc); m.updateMatrixWorld(true);
+  const b2=new THREE.Box3().setFromObject(m), c=b2.getCenter(new THREE.Vector3()); m.position.sub(c);
+  jet3d.add(m); jet3d.traverse(function(o){ if(o.isMesh) o.castShadow=true; }); }
+function updateJet(dt){
+  const up=keys[' ']?1:0, dn=keys['shift']?1:0;
+  const fwd=(keys['w']||keys['arrowup'])?1:0, bwd=(keys['s']||keys['arrowdown'])?1:0;
+  const yaw=((keys['a']||keys['arrowleft'])?1:0)-((keys['d']||keys['arrowright'])?1:0);
+  JET.heading += yaw*dt*1.5;
+  JET.vy += (((up-dn)*17) - JET.vy)*Math.min(1,dt*2.6); JET.y += JET.vy*dt;
+  JET.fwd += ((fwd-bwd)*80 - JET.fwd)*Math.min(1,dt*1.15);   // fast, jet-like
+  JET.x += Math.sin(JET.heading)*JET.fwd*dt; JET.z += Math.cos(JET.heading)*JET.fwd*dt;
+  const gnd=heliGround(JET.x,JET.z)+2.6; if(JET.y<gnd){ JET.y=gnd; if(JET.vy<0)JET.vy=0; } if(JET.y>620)JET.y=620;
+  JET.pitch += ((-JET.fwd*0.0035) - JET.pitch)*Math.min(1,dt*3);
+  JET.roll  += ((-yaw*0.5) - JET.roll)*Math.min(1,dt*3);   // banks into turns
+  jet3d.position.set(JET.x,JET.y,JET.z); jet3d.rotation.set(JET.pitch,JET.heading,JET.roll);
+  JET._rev=(JET._rev||0)+dt; if(JET._rev>0.25){ JET._rev=0; SFX.heliRev&&SFX.heliRev(Math.abs(JET.fwd)>20 || JET.vy>3); }
+}
 // ---- fly-to-ship cutscene ----
 let cutscene=null, cutsceneSkip=false;
 function showCine(cap){ const c=document.getElementById('cine'); if(c){ c.style.opacity='1'; const cc=document.getElementById('cineCap'); if(cc)cc.textContent=cap||''; } }
@@ -14488,7 +14528,7 @@ function updateCar(dt){
   CAR.y=onABridgeDeck(CAR.x,CAR.z)?abH(CAR.x,CAR.z):(onQuay(CAR.x,CAR.z)?PORT.deckY:landH(CAR.x,CAR.z));
   car3d.position.set(CAR.x,CAR.y,CAR.z); car3d.rotation.y=CAR.heading+carYaw;
 }
-const PROMPTS={dock:'Press  F  — dock & explore on foot', drive:'Press  F  — get in the car', ride:'Press  F  — ride the jetski', exit:'Press  F  — get out of the car', board:'Press  F  — board the boat', land:'Press  F  — tie up at the dock', boardShip:'Press  F  — board the ship', leaveShip:'Press  F  — disembark', landIsland:'Press  F  — step onto the island', elevator:'Press  F  — take the elevator (next deck)', stairUp:'Press  F  — up the stairs', stairDown:'Press  F  — down the stairs', heli:'Press  F  — helicopter', heliExit:'Press  F  — get out of the helicopter', flyPlane:'Press  F  — fly the plane', ridePlane:'Press  F  — board for a round trip', planeExit:'Press  F  — get out of the plane', boardTrain:'Press  F  — ride the shuttle train', trainExit:'Press  F  — step off the train'};
+const PROMPTS={dock:'Press  F  — dock & explore on foot', drive:'Press  F  — get in the car', ride:'Press  F  — ride the jetski', exit:'Press  F  — get out of the car', board:'Press  F  — board the boat', land:'Press  F  — tie up at the dock', boardShip:'Press  F  — board the ship', leaveShip:'Press  F  — disembark', landIsland:'Press  F  — step onto the island', elevator:'Press  F  — take the elevator (next deck)', stairUp:'Press  F  — up the stairs', stairDown:'Press  F  — down the stairs', heli:'Press  F  — helicopter', heliExit:'Press  F  — get out of the helicopter', flyPlane:'Press  F  — fly the plane', ridePlane:'Press  F  — board for a round trip', planeExit:'Press  F  — get out of the plane', boardTrain:'Press  F  — ride the shuttle train', trainExit:'Press  F  — step off the train', flyJet:'Press  F  — fly the fighter jet', jetExit:'Press  F  — land & hop out of the jet'};
 function nearestShip(x,z){ let best=null,bd=1e9; for(const v of VESSELS3D){ if(!v.ship||!v.interior) continue; const d=Math.hypot(v.grp.position.x-x,v.grp.position.z-z); if(d<(v.boardRange||20) && d<bd){bd=d;best=v;} } return best; }
 function updateInteract(){
   let a=null;
@@ -14500,8 +14540,10 @@ function updateInteract(){
     if(dTR<15 && TRAIN && TRAIN.state==='dwell') a='boardTrain';
     else if(dH<11 && dH<=dB && dH<=dC && dH<=dS) a='heli';
     else if(dB<12 && dB<=dC && dB<=dS) a='board'; else if(dC<5 && dC<=dS) a='drive'; else if(dS<6.5) a='ride';
-    else if(dPC<9) a='flyPlane'; else if(dPA<17) a='ridePlane'; }
+    else if(dPC<9) a='flyPlane'; else if(dPA<17) a='ridePlane';
+    else if(jet3d && jet3d.visible && JET.y<heliGround(JET.x,JET.z)+5 && Math.hypot(JET.x-AV.x,JET.z-AV.z)<12) a='flyJet'; }
   else if(pmode==='train'){ if(TRAIN && TRAIN.state==='dwell') a='trainExit'; }
+  else if(pmode==='jet'){ if(JET.y<heliGround(JET.x,JET.z)+4 && Math.abs(JET.fwd)<7) a='jetExit'; }
   else if(pmode==='car'){ const dH=Math.hypot(heli3d.position.x-CAR.x,heli3d.position.z-CAR.z);
     if(dH<13 && Math.abs(CAR.speed)<3) a='heli'; else if(Math.abs(CAR.speed)<2.5) a='exit'; }
   else if(pmode==='boat'){ const sh=Math.abs(BOAT.speed)<7?nearestShip(BOAT.x,BOAT.z):null;
@@ -14551,6 +14593,9 @@ function doAction(a){ if(!a)return; SFX.select&&SFX.select();
   else if(a==='planeExit'){ pmode='foot'; SFX.heliStop&&SFX.heliStop(); const m=PLANE.model;
     AV.x=PLANE.x+Math.cos(PLANE.heading)*6; AV.z=PLANE.z-Math.sin(PLANE.heading)*6; AV.heading=PLANE.heading+Math.PI; AV.speed=0; AV.y=avatarGround(AV.x,AV.z); avatar.visible=true;
     if(m){ PLANE.y=landH(PLANE.x,PLANE.z)+PLANE.gearY; m.position.set(PLANE.x,PLANE.y,PLANE.z); m.rotation.set(0,PLANE.heading,0); } PLANE.model=null; toast('On foot','#aef0ff'); }
+  else if(a==='flyJet'){ pmode='jet'; avatar.visible=false; JET.fwd=0; JET.vy=0; SFX.heliStart&&SFX.heliStart(); toast('🚀 Fighter jet — Space up · Shift down · W/S move · A/D turn','#aef0ff'); }
+  else if(a==='jetExit'){ pmode='foot'; SFX.heliStop&&SFX.heliStop(); JET.y=heliGround(JET.x,JET.z)+2.6; JET.fwd=0; JET.vy=0; jet3d.position.set(JET.x,JET.y,JET.z); jet3d.rotation.set(0,JET.heading,0);
+    AV.x=JET.x+Math.cos(JET.heading)*5; AV.z=JET.z-Math.sin(JET.heading)*5; AV.heading=JET.heading+Math.PI; AV.speed=0; AV.y=avatarGround(AV.x,AV.z); avatar.visible=true; toast('On foot','#aef0ff'); }
   else if(a==='boardTrain'){ pmode='train'; avatar.visible=false; onTrainCar=Math.min(1,TRAIN_CARS.length-1); trainCamMode=0;
     toast('Riding the shuttle — sit back and enjoy the crossing   (V: cinematic view · F to step off at a station)','#aef0ff'); }
   else if(a==='trainExit'){ pmode='foot'; const car=TRAIN_CARS[onTrainCar]||TRAIN_CARS[0], B=ABRIDGE;
@@ -14615,6 +14660,7 @@ function loop(now){
     else if(pmode==='aboard'){ updateAboard(dt); }
     else if(pmode==='heli'){ updateHeli(dt); }
     else if(pmode==='plane'){ updatePlane(dt); }
+    else if(pmode==='jet'){ updateJet(dt); }
     else if(pmode==='train'){ /* the shuttle drives itself; the camera rides along */ }
     else if(pmode==='cutscene'){ updateCutscene(dt); }
     else {
@@ -14697,6 +14743,7 @@ function loop(now){
   else if(pmode==='boat'){ FX=BOAT.x; FZ=BOAT.z; }
   else if(pmode==='heli'){ FX=HELI.x; FZ=HELI.z; }
   else if(pmode==='plane'){ FX=PLANE.x; FZ=PLANE.z; }
+  else if(pmode==='jet'){ FX=JET.x; FZ=JET.z; }
   else if(pmode==='train' && TRAIN_CARS.length){ const tc=TRAIN_CARS[onTrainCar]||TRAIN_CARS[0]; FX=tc.position.x; FZ=tc.position.z; }
   else if(pmode==='cutscene'){ FX=HELI.x; FZ=HELI.z; }
   else if(pmode==='aboard' && aboard){ FX=aboard.entry.grp.position.x; FZ=aboard.entry.grp.position.z; }
@@ -14733,6 +14780,9 @@ function loop(now){
   } else if(running && pmode==='plane'){ const fw=Math.sin(PLANE.heading),fz=Math.cos(PLANE.heading), back=16+Math.abs(PLANE.speed)*0.22, up=5.5;
     chasePos(PLANE.x,PLANE.y,PLANE.z, PLANE.heading, back, up, dt);
     camera.lookAt(PLANE.x+fw*14, PLANE.y+1.5, PLANE.z+fz*14); fovSm+=((64+Math.abs(PLANE.speed)*0.28)-fovSm)*Math.min(1,dt*3); camera.fov=fovSm; camera.updateProjectionMatrix();
+  } else if(running && pmode==='jet'){ const fw=Math.sin(JET.heading),fz=Math.cos(JET.heading), back=13+Math.abs(JET.fwd)*0.12;
+    chasePos(JET.x,JET.y,JET.z, JET.heading, back, 5.2, dt);
+    camera.lookAt(JET.x+fw*12, JET.y+0.6, JET.z+fz*12); fovSm+=((64+Math.abs(JET.fwd)*0.16)-fovSm)*Math.min(1,dt*3); camera.fov=fovSm; camera.updateProjectionMatrix();
   } else if(running && pmode==='train' && TRAIN_CARS.length){ const B=ABRIDGE, lead=TRAIN_CARS[onTrainCar]||TRAIN_CARS[0], p=lead.position;
     const face=(TRAIN.face>0)?Math.atan2(B.dx,B.dz):Math.atan2(-B.dx,-B.dz), fw=Math.sin(face), fz=Math.cos(face);
     if(trainCamMode===1){ camera.position.set(p.x+B.nx*52+fw*10, p.y+18, p.z+B.nz*52+fz*10); camera.lookAt(p.x+fw*8, p.y+1.2, p.z+fz*8); camera.fov=52; }   // cinematic side tracking
