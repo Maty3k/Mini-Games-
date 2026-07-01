@@ -298,7 +298,7 @@ const waterNormal=texL.load('assets/textures/water_nor.jpg'); waterNormal.wrapS=
 const sandTex=loadTex('sand_diff.jpg',40), grassTex=loadTex('grass_diff.jpg',60), rockTex=loadTex('gravel_diff.jpg',50);
 const landNor=texL.load('assets/textures/asphalt_nor.jpg'); landNor.wrapS=landNor.wrapT=THREE.RepeatWrapping;   // rock surface detail normal
 
-let WATER=null, seaU=null, started=false, treeProto=null, pierProto=null, built=false, pend=3;
+let WATER=null, seaU=null, started=false, treeProto=null, pierProto=null, pineProto=null, plantProto=null, twistProto=null, built=false, pend=6;
 let cityGroup=null, terrainMesh=null, worldCulledState=false, cruiseExtHidden=false;   // for culling the outside world + the ship's own exterior while aboard the cruise
 function assetReady(){ if(--pend===0 && !built){ built=true; buildWorld(); loadingEl.style.display='none'; } }
 new THREE.RGBELoader().load('assets/skies/sky_day.hdr', hdr=>{
@@ -314,6 +314,9 @@ new THREE.RGBELoader().load('assets/skies/sky_day.hdr', hdr=>{
 const _gltf=new THREE.GLTFLoader();
 _gltf.load('assets/models/nature/tree.glb', g=>{ treeProto=g.scene; assetReady(); }, undefined, ()=>{ console.warn('tree load failed'); assetReady(); });
 _gltf.load('assets/models/pier/modular_wooden_pier_2k.gltf', g=>{ pierProto=g.scene; assetReady(); }, undefined, ()=>{ console.warn('pier load failed'); assetReady(); });
+_gltf.load('assets/models/nature/pine.glb',  g=>{ pineProto=g.scene;  assetReady(); }, undefined, ()=>{ console.warn('pine load failed');  assetReady(); });
+_gltf.load('assets/models/nature/plant.glb', g=>{ plantProto=g.scene; assetReady(); }, undefined, ()=>{ console.warn('plant load failed'); assetReady(); });
+_gltf.load('assets/models/nature/twisted.glb',g=>{ twistProto=g.scene; assetReady(); }, undefined, ()=>{ console.warn('twisted load failed');assetReady(); });
 
 // ============================================================
 //  THE BAY — heightfield islands ringing an open lagoon
@@ -12726,14 +12729,22 @@ function buildAirport(){
   for(let k=-3;k<=3;k++) M(B(2.2,0.03,11),zebra, ax+k*2.4,y+0.25,termz+30,false);                    // zebra crossing over the forecourt
   for(const fx of [-64,64]){ M(C(0.15,0.18,13,8),steelM, ax+fx,y+6.5,entZ+22,false);                 // flag poles
     M(B(0.1,2.4,4.2),new THREE.MeshStandardMaterial({color:fx<0?0xcf3b30:0x2f6fd0,roughness:0.8,side:THREE.DoubleSide}), ax+fx+2.2,y+11.4,entZ+22,false); }
-  // real TREE model (same as the city) flanking the entrance + dotted through the car park
-  if(treeProto){ const tb=new THREE.Box3().setFromObject(treeProto), tth=Math.max(0.01,tb.max.y-tb.min.y), tmin=tb.min.y, up=new THREE.Vector3(0,1,0), tmats=[];
-    function tree(px,pz,h){ const s=h/tth; tmats.push(new THREE.Matrix4().compose(new THREE.Vector3(px,y-tmin*s,pz), new THREE.Quaternion().setFromAxisAngle(up,(px*0.7+pz)%6.28), new THREE.Vector3(s,s,s))); }
-    for(const px of [-118,-96,-74,74,96,118]) tree(ax+px, entZ+15, 11.5);                            // flanking the entrance plaza
-    for(const pz of [pkZ-24,pkZ+24]) for(const px of [-52,52]) tree(ax+px, pz, 9.5);                 // tree islands in the car park
-    for(const px of [-2400,-2340,-2280,-2220,-2160]) for(const pz of [-648,-588,-528]) tree(px,pz, 8+((px+pz)%3));   // landscaped north lawn behind the car park
-    for(const p of [[-2030,-720],[-1995,-772],[-2015,-826],[-2055,-660],[-1990,-700]]) tree(p[0],p[1], 8);          // east lawn by the bridge landing
-    grp.add(instanceModel(treeProto, tmats, true)); }
+  // varied real TREE models (leafy / pine / twisted — downloaded CC0) flanking the entrance & landscaping the lawns
+  { const protos=[treeProto,pineProto,twistProto].filter(Boolean);
+    if(protos.length){ const up=new THREE.Vector3(0,1,0), mats=protos.map(()=>[]),
+        boxes=protos.map(p=>{ const b=new THREE.Box3().setFromObject(p); return {th:Math.max(0.01,b.max.y-b.min.y),min:b.min.y}; });
+      let ti=0; function tree(px,pz,h){ const pi=ti++%protos.length, bx=boxes[pi], s=h/bx.th; mats[pi].push(new THREE.Matrix4().compose(new THREE.Vector3(px,y-bx.min*s,pz), new THREE.Quaternion().setFromAxisAngle(up,(px*0.7+pz)%6.28), new THREE.Vector3(s,s,s))); }
+      for(const px of [-118,-96,-74,74,96,118]) tree(ax+px, entZ+15, 11.5);                          // flanking the entrance plaza
+      for(const pz of [pkZ-24,pkZ+24]) for(const px of [-52,52]) tree(ax+px, pz, 9.5);               // car-park tree islands
+      for(const px of [-2400,-2340,-2280,-2220,-2160]) for(const pz of [-648,-588,-528]) tree(px,pz, 8+((px+pz)%3));   // north lawn
+      for(const p of [[-2030,-720],[-1995,-772],[-2015,-826],[-2055,-660],[-1990,-700]]) tree(p[0],p[1], 8);          // east lawn
+      for(let pi=0;pi<protos.length;pi++) if(mats[pi].length) grp.add(instanceModel(protos[pi], mats[pi], true)); } }
+  // low shrubs (plant model) as ground cover on the lawns and by the entrance
+  if(plantProto){ const b=new THREE.Box3().setFromObject(plantProto), th=Math.max(0.01,b.max.y-b.min.y), mn=b.min.y, up=new THREE.Vector3(0,1,0), pm=[];
+    function shrub(px,pz,h){ const s=h/th; pm.push(new THREE.Matrix4().compose(new THREE.Vector3(px,y-mn*s,pz), new THREE.Quaternion().setFromAxisAngle(up,(px+pz*2)%6.28), new THREE.Vector3(s,s,s))); }
+    for(const px of [-2370,-2290,-2210,-2150]) for(const pz of [-618,-558]) shrub(px,pz, 1.7);
+    for(const px of [-34,-16,16,34]) shrub(ax+px, entZ+11, 1.3);
+    grp.add(instanceModel(plantProto, pm, false)); }
   // real BENCH prop on the plaza
   for(const bx of [-46,-22,22,46]){ const bn=propBench(); bn.scale.setScalar(1.7); bn.position.set(ax+bx,y,entZ+18); grp.add(bn); }
   // real PLANTER prop (shrubs + flowers) down the walkway and by the doors
