@@ -298,7 +298,7 @@ const waterNormal=texL.load('assets/textures/water_nor.jpg'); waterNormal.wrapS=
 const sandTex=loadTex('sand_diff.jpg',40), grassTex=loadTex('grass_diff.jpg',60), rockTex=loadTex('gravel_diff.jpg',50);
 const landNor=texL.load('assets/textures/asphalt_nor.jpg'); landNor.wrapS=landNor.wrapT=THREE.RepeatWrapping;   // rock surface detail normal
 
-let WATER=null, seaU=null, started=false, treeProto=null, pierProto=null, pineProto=null, plantProto=null, twistProto=null, built=false, pend=6;
+let WATER=null, seaU=null, started=false, treeProto=null, pierProto=null, pineProto=null, plantProto=null, twistProto=null, airlinerProto=null, built=false, pend=7;
 let cityGroup=null, terrainMesh=null, worldCulledState=false, cruiseExtHidden=false;   // for culling the outside world + the ship's own exterior while aboard the cruise
 function assetReady(){ if(--pend===0 && !built){ built=true; buildWorld(); loadingEl.style.display='none'; } }
 new THREE.RGBELoader().load('assets/skies/sky_day.hdr', hdr=>{
@@ -317,6 +317,7 @@ _gltf.load('assets/models/pier/modular_wooden_pier_2k.gltf', g=>{ pierProto=g.sc
 _gltf.load('assets/models/nature/pine.glb',  g=>{ pineProto=g.scene;  assetReady(); }, undefined, ()=>{ console.warn('pine load failed');  assetReady(); });
 _gltf.load('assets/models/nature/plant.glb', g=>{ plantProto=g.scene; assetReady(); }, undefined, ()=>{ console.warn('plant load failed'); assetReady(); });
 _gltf.load('assets/models/nature/twisted.glb',g=>{ twistProto=g.scene; assetReady(); }, undefined, ()=>{ console.warn('twisted load failed');assetReady(); });
+_gltf.load('assets/models/vehicles/airliner.glb',g=>{ airlinerProto=g.scene; assetReady(); }, undefined, ()=>{ console.warn('airliner load failed');assetReady(); });
 
 // ============================================================
 //  THE BAY — heightfield islands ringing an open lagoon
@@ -12587,7 +12588,18 @@ const _pBody=new THREE.MeshStandardMaterial({color:0xeef2f6, roughness:0.42, met
 const _pWin =new THREE.MeshStandardMaterial({color:0x16323f, roughness:0.2, metalness:0.3, emissive:0x21465a, emissiveIntensity:0.35});
 const _pMet =new THREE.MeshStandardMaterial({color:0x6a6e74, roughness:0.5, metalness:0.7});
 const _pTire=new THREE.MeshStandardMaterial({color:0x18181c, roughness:0.85});
+let AIRLINER_YAW=0;   // tuned so the model's nose faces +Z (buildPlane's forward)
+function buildAirlinerModel(g){
+  const m=airlinerProto.clone(true); m.rotation.y=AIRLINER_YAW; m.updateMatrixWorld(true);
+  const b1=new THREE.Box3().setFromObject(m), s1=b1.getSize(new THREE.Vector3());
+  const scale=31/Math.max(s1.x,s1.z,0.01); m.scale.setScalar(scale); m.updateMatrixWorld(true);   // ~31 m long
+  const b2=new THREE.Box3().setFromObject(m), c=b2.getCenter(new THREE.Vector3()); m.position.sub(c); m.updateMatrixWorld(true);
+  const b3=new THREE.Box3().setFromObject(m), gearY=(b3.max.y-b3.min.y)/2;   // centred; wheels sit at -gearY
+  g.add(m); g.traverse(o=>{ if(o.isMesh) o.castShadow=true; });
+  return {prop:null, gearY:gearY};
+}
 function buildPlane(g, opts){ opts=opts||{}; const big=!!opts.airliner;
+  if(big && airlinerProto) return buildAirlinerModel(g);
   const bodyMat=opts.body?new THREE.MeshStandardMaterial({color:opts.body,roughness:0.42,metalness:0.18,envMapIntensity:0.55}):_pBody;
   const accMat=new THREE.MeshStandardMaterial({color:opts.accent||0xd23b46, roughness:0.5});
   const L=big?22:8.5, R=big?1.65:0.72;
