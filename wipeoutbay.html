@@ -12715,7 +12715,7 @@ function updatePlane(dt){ const P=PLANE; if(!P.model) return;
 //  AIRPORT LINK — a big modern CABLE-STAYED road+rail bridge from the city to the
 //  airport island, with a station + shuttle train at each end and an island car park.
 // ============================================================
-let ABRIDGE=null, TRAIN=null; const TRAIN_CARS=[];
+let ABRIDGE=null, TRAIN=null; const TRAIN_CARS=[]; let onTrainCar=1, trainCamMode=0;
 const AB_C={x:-1532,z:-646}, AB_A={x:-2052,z:-697};        // city end / airport end (routed clear of the cargo port)
 const AB_LOT={x:-2098,z:-726};                             // island car park (NE of the runway)
 function _abStrut(g,mat,a,b,rad){ const dx=b[0]-a[0],dy=b[1]-a[1],dz=b[2]-a[2],L=Math.hypot(dx,dy,dz)||0.001;
@@ -12781,7 +12781,7 @@ function buildAirportBridge(){
     for(const off of [-hl+8,0,hl-8]) for(const ps of [8.4,12]){ const col=new THREE.Mesh(new THREE.CylinderGeometry(0.22,0.22,4.5,8),steelW); q=wp(alc+off,ps,y+2.85); col.position.set(q[0],q[1],q[2]); grp.add(col); }
     const box=new THREE.Mesh(new THREE.BoxGeometry(4,3,11),new THREE.MeshStandardMaterial({color:0x7fa3b8,roughness:0.2,metalness:0.3,envMapIntensity:0.8,transparent:true,opacity:0.72})); q=wp(alc,11.2,y+2.3); box.position.set(q[0],q[1],q[2]); box.rotation.y=ang; grp.add(box);
     const sign=new THREE.Mesh(new THREE.BoxGeometry(0.3,1.3,7),new THREE.MeshStandardMaterial({color:0x14202b,emissive:0x24506a,emissiveIntensity:0.7,roughness:0.5})); q=wp(alc,7.4,y+6.5); sign.position.set(q[0],q[1],q[2]); sign.rotation.y=ang; grp.add(sign); }
-  station(46,hAt(46/len)); station(len-46,hAt((len-46)/len));
+  station(42,hAt(42/len)); station(len-42,hAt((len-42)/len));
   // ---- island car park + link road ----
   { const ag=new THREE.Group(); ag.matrixAutoUpdate=false; scene.add(ag); const ay=airportY;
     const rl=Math.hypot(AB_LOT.x-a.x,AB_LOT.z-a.z), rang=Math.atan2(AB_LOT.x-a.x,AB_LOT.z-a.z);
@@ -12808,17 +12808,39 @@ function buildAirportBridge(){
     if(ci===0||ci===NCAR-1){ car.add(new THREE.Mesh(new THREE.BoxGeometry(2.9,2.2,1.6),bodyM)).position.set(0,1.9,(ci===0?1:-1)*(CARLEN/2+0.4));
       const wsh=new THREE.Mesh(new THREE.BoxGeometry(2.4,1.2,0.1),winM); wsh.position.set(0,2.5,(ci===0?1:-1)*(CARLEN/2+1.2)); car.add(wsh); }
     scene.add(car); TRAIN_CARS.push(car); }
-  TRAIN={ s:len-70, target:70, v:0, state:'run', dwell:0, dir:-1, carLen:CARLEN, gap:CARGAP };
+  const HT=(NCAR-1)*(CARLEN+CARGAP)/2, stopCity=70, stopApt=len-42+HT;   // stop so the train centres on each platform
+  TRAIN={ s:stopApt, target:stopCity, v:0, state:'run', dwell:0, dir:-1, face:-1, carLen:CARLEN, gap:CARGAP, stopCity:stopCity, stopApt:stopApt };
 }
 function updateTrain(dt){ if(!TRAIN||!ABRIDGE) return; const T=TRAIN, B=ABRIDGE, ACC=6, VMAX=42;
-  if(T.state==='dwell'){ T.dwell-=dt; if(T.dwell<=0){ T.state='run'; T.target=(T.dir>0? B.len-70 : 70); } }
-  else { const dist=T.target-T.s, ad=Math.abs(dist), decel=T.v*T.v/(2*ACC);
+  if(T.state==='dwell'){ T.dwell-=dt; if(T.dwell<=0){ T.state='run'; T.target=(T.dir>0? T.stopApt : T.stopCity); } }
+  else { const dist=T.target-T.s, ad=Math.abs(dist), decel=T.v*T.v/(2*ACC); T.face=(dist>0?1:-1);
     if(ad<=decel+0.4) T.v-=ACC*dt; else T.v=Math.min(VMAX,T.v+ACC*dt); T.v=Math.max(1.5,T.v); T.s+=Math.sign(dist)*T.v*dt;
-    if(ad<1.2){ T.s=T.target; T.v=0; T.state='dwell'; T.dwell=4.5; T.dir*=-1; } }
+    if(ad<1.2){ T.s=T.target; T.v=0; T.state='dwell'; T.dwell=6; T.dir*=-1; } }
   const ang=Math.atan2(B.dx,B.dz), sp=T.carLen+T.gap;
   for(let i=0;i<TRAIN_CARS.length;i++){ const al=Math.max(2,Math.min(B.len-2,T.s-i*sp)), t=al/B.len;
     const y=B.y0+(B.y1-B.y0)*t+B.arch*Math.sin(t*Math.PI)+1.05, x=B.x0+B.dx*al+B.nx*6.5, z=B.z0+B.dz*al+B.nz*6.5;
     TRAIN_CARS[i].position.set(x,y,z); TRAIN_CARS[i].rotation.y=ang; } }
+// ---- waiting passengers / ground crew at the stations & airport (world-space wander) ----
+const AREA_NPCS=[];
+function spawnAreaNPCs(cx,cz,gy,hx,hz,count,idle){ for(let i=0;i<count;i++){ const grp=new THREE.Group(); grp.rotation.order='YXZ';
+  const p=buildPerson(grp,{shirt:pick(NPC_SHIRT),pants:pick(NPC_PANTS),skin:pick(NPC_SKIN),hair:pick(NPC_HAIR)});
+  const lx=cx+(Math.random()*2-1)*hx, lz=cz+(Math.random()*2-1)*hz; grp.position.set(lx,gy,lz); scene.add(grp);
+  AREA_NPCS.push({grp:grp,lp:p,cx:cx,cz:cz,gy:gy,hx:hx,hz:hz,lx:lx,lz:lz,tx:lx,tz:lz,heading:Math.random()*6.28,speed:0.55+Math.random()*0.5,step:Math.random()*6,pause:Math.random()*3,idle:!!idle}); } }
+function updateAreaNPCs(dt){ for(const c of AREA_NPCS){ const L=c.lp;
+  if(c.pause>0){ c.pause-=dt; if(L){ L.legL.rotation.x*=0.85; L.legR.rotation.x*=0.85; L.armL.rotation.x*=0.85; L.armR.rotation.x*=0.85; } continue; }
+  const dx=c.tx-c.lx, dz=c.tz-c.lz, d=Math.hypot(dx,dz);
+  if(d<0.8){ c.tx=c.cx+(Math.random()*2-1)*c.hx; c.tz=c.cz+(Math.random()*2-1)*c.hz; c.pause=(c.idle?2.5:0.5)+Math.random()*(c.idle?4:2.5); continue; }
+  const want=Math.atan2(dx,dz); let dh=((want-c.heading+Math.PI*3)%(Math.PI*2))-Math.PI; c.heading+=THREE.MathUtils.clamp(dh,-4*dt,4*dt);
+  const sp=Math.min(c.speed,d*1.5); c.lx+=Math.sin(c.heading)*sp*dt; c.lz+=Math.cos(c.heading)*sp*dt;
+  c.step+=sp*dt*2.6; const sw=Math.sin(c.step)*0.5; if(L){ L.legL.rotation.x=sw; L.legR.rotation.x=-sw; L.armL.rotation.x=-sw; L.armR.rotation.x=sw; }
+  c.grp.position.set(c.lx,c.gy,c.lz); c.grp.rotation.y=c.heading; } }
+function buildLinkNPCs(){ if(!ABRIDGE) return; const B=ABRIDGE;
+  function plat(al){ return [B.x0+B.dx*al+B.nx*10.6, B.z0+B.dz*al+B.nz*10.6, B.y0+(B.y1-B.y0)*(al/B.len)+B.arch*Math.sin(al/B.len*Math.PI)+0.95]; }
+  const cs=plat(42), as=plat(B.len-42);
+  spawnAreaNPCs(cs[0],cs[1],cs[2],11,1.7,5,true);                                 // city platform (waiting)
+  spawnAreaNPCs(as[0],as[1],as[2],11,1.7,5,true);                                 // airport platform (waiting)
+  spawnAreaNPCs(AIRPORT.x, AIRPORT.z-RWY.half-52, airportY, 34, 11, 7, false);    // terminal forecourt / crew
+  spawnAreaNPCs(AB_LOT.x, AB_LOT.z, airportY, 20, 12, 3, false); }                // car park
 // ===== performance: dynamic light budget + shadow-caster pruning =====
 const LIGHTS_POOL=[]; const _lp=new THREE.Vector3(); let _lightClock=0; const MAX_LIVE_LIGHTS=4;
 function manageLights(dt){ if(LIGHTS_POOL.length<=MAX_LIVE_LIGHTS) return;   // forward renderer cost scales with live light count → keep only the nearest few lit
@@ -12863,6 +12885,7 @@ function buildWorld(){
   buildBridge();
   buildAirport();
   buildAirportBridge();
+  buildLinkNPCs();
   optimizeScene();                              // light budget + shadow pruning (perf)
   // pre-render the minimap base (bay silhouette)
   drawMapBase();
@@ -14294,7 +14317,7 @@ function updateCar(dt){
   CAR.y=onABridgeDeck(CAR.x,CAR.z)?abH(CAR.x,CAR.z):(onQuay(CAR.x,CAR.z)?PORT.deckY:landH(CAR.x,CAR.z));
   car3d.position.set(CAR.x,CAR.y,CAR.z); car3d.rotation.y=CAR.heading+carYaw;
 }
-const PROMPTS={dock:'Press  F  — dock & explore on foot', drive:'Press  F  — get in the car', ride:'Press  F  — ride the jetski', exit:'Press  F  — get out of the car', board:'Press  F  — board the boat', land:'Press  F  — tie up at the dock', boardShip:'Press  F  — board the ship', leaveShip:'Press  F  — disembark', landIsland:'Press  F  — step onto the island', elevator:'Press  F  — take the elevator (next deck)', stairUp:'Press  F  — up the stairs', stairDown:'Press  F  — down the stairs', heli:'Press  F  — helicopter', heliExit:'Press  F  — get out of the helicopter', flyPlane:'Press  F  — fly the plane', ridePlane:'Press  F  — board for a round trip', planeExit:'Press  F  — get out of the plane'};
+const PROMPTS={dock:'Press  F  — dock & explore on foot', drive:'Press  F  — get in the car', ride:'Press  F  — ride the jetski', exit:'Press  F  — get out of the car', board:'Press  F  — board the boat', land:'Press  F  — tie up at the dock', boardShip:'Press  F  — board the ship', leaveShip:'Press  F  — disembark', landIsland:'Press  F  — step onto the island', elevator:'Press  F  — take the elevator (next deck)', stairUp:'Press  F  — up the stairs', stairDown:'Press  F  — down the stairs', heli:'Press  F  — helicopter', heliExit:'Press  F  — get out of the helicopter', flyPlane:'Press  F  — fly the plane', ridePlane:'Press  F  — board for a round trip', planeExit:'Press  F  — get out of the plane', boardTrain:'Press  F  — ride the shuttle train', trainExit:'Press  F  — step off the train'};
 function nearestShip(x,z){ let best=null,bd=1e9; for(const v of VESSELS3D){ if(!v.ship||!v.interior) continue; const d=Math.hypot(v.grp.position.x-x,v.grp.position.z-z); if(d<(v.boardRange||20) && d<bd){bd=d;best=v;} } return best; }
 function updateInteract(){
   let a=null;
@@ -14302,9 +14325,12 @@ function updateInteract(){
   if(pmode==='ski'){ if(mode==='free' && B.speed<9){ if(dockReach(B.x,B.z)) a='dock'; else { for(let i=0;i<ISLAND_LANDINGS.length;i++){ const d=ISLAND_LANDINGS[i]; if(Math.hypot(B.x-d.x,B.z-d.z)<26){ _landTarget=d; a='landIsland'; break; } } } } }
   else if(pmode==='foot'){ const dC=carReady?Math.hypot(CAR.x-AV.x,CAR.z-AV.z):1e9, dS=Math.hypot(B.x-AV.x,B.z-AV.z), dB=Math.hypot(BOAT.x-AV.x,BOAT.z-AV.z), dH=Math.hypot(heli3d.position.x-AV.x,heli3d.position.z-AV.z),
       dPC=cessna3d?Math.hypot(cessna3d.position.x-AV.x,cessna3d.position.z-AV.z):1e9, dPA=airliner3d?Math.hypot(airliner3d.position.x-AV.x,airliner3d.position.z-AV.z):1e9;
-    if(dH<11 && dH<=dB && dH<=dC && dH<=dS) a='heli';
+    let dTR=1e9; for(const tc of TRAIN_CARS){ const d=Math.hypot(tc.position.x-AV.x,tc.position.z-AV.z); if(d<dTR)dTR=d; }
+    if(dTR<15 && TRAIN && TRAIN.state==='dwell') a='boardTrain';
+    else if(dH<11 && dH<=dB && dH<=dC && dH<=dS) a='heli';
     else if(dB<12 && dB<=dC && dB<=dS) a='board'; else if(dC<5 && dC<=dS) a='drive'; else if(dS<6.5) a='ride';
     else if(dPC<9) a='flyPlane'; else if(dPA<17) a='ridePlane'; }
+  else if(pmode==='train'){ if(TRAIN && TRAIN.state==='dwell') a='trainExit'; }
   else if(pmode==='car'){ const dH=Math.hypot(heli3d.position.x-CAR.x,heli3d.position.z-CAR.z);
     if(dH<13 && Math.abs(CAR.speed)<3) a='heli'; else if(Math.abs(CAR.speed)<2.5) a='exit'; }
   else if(pmode==='boat'){ const sh=Math.abs(BOAT.speed)<7?nearestShip(BOAT.x,BOAT.z):null;
@@ -14354,6 +14380,10 @@ function doAction(a){ if(!a)return; SFX.select&&SFX.select();
   else if(a==='planeExit'){ pmode='foot'; SFX.heliStop&&SFX.heliStop(); const m=PLANE.model;
     AV.x=PLANE.x+Math.cos(PLANE.heading)*6; AV.z=PLANE.z-Math.sin(PLANE.heading)*6; AV.heading=PLANE.heading+Math.PI; AV.speed=0; AV.y=avatarGround(AV.x,AV.z); avatar.visible=true;
     if(m){ PLANE.y=landH(PLANE.x,PLANE.z)+PLANE.gearY; m.position.set(PLANE.x,PLANE.y,PLANE.z); m.rotation.set(0,PLANE.heading,0); } PLANE.model=null; toast('On foot','#aef0ff'); }
+  else if(a==='boardTrain'){ pmode='train'; avatar.visible=false; onTrainCar=Math.min(1,TRAIN_CARS.length-1); trainCamMode=0;
+    toast('Riding the shuttle — sit back and enjoy the crossing   (V: cinematic view · F to step off at a station)','#aef0ff'); }
+  else if(a==='trainExit'){ pmode='foot'; const car=TRAIN_CARS[onTrainCar]||TRAIN_CARS[0], B=ABRIDGE;
+    AV.x=car.position.x+B.nx*4.2; AV.z=car.position.z+B.nz*4.2; AV.heading=Math.atan2(-B.nx,-B.nz); AV.speed=0; AV.y=avatarGround(AV.x,AV.z); avatar.visible=true; toast('Stepped off at the station','#aef0ff'); }
 }
 
 // ===== free orbit camera: drag the mouse to swing around, scroll to zoom, press C to recenter =====
@@ -14366,7 +14396,8 @@ const cam={ yaw:0, pitch:0.0, dist:1.0, drag:false, px:0, py:0, lastDrag:-99 };
   window.addEventListener('pointermove', function(e){ if(!cam.drag) return; const dx=e.clientX-cam.px, dy=e.clientY-cam.py; cam.px=e.clientX; cam.py=e.clientY;
     if(typeof freecam!=='undefined' && freecam){ FC.yaw-=dx*0.005; FC.pitch=THREE.MathUtils.clamp(FC.pitch-dy*0.005,-1.45,1.45); cam.lastDrag=gameT; return; }   // free-cam mouse-look
     cam.yaw-=dx*0.006; cam.pitch=THREE.MathUtils.clamp(cam.pitch+dy*0.005,-0.35,1.15); cam.lastDrag=gameT; });
-  window.addEventListener('keydown', function(e){ if(e.key==='c'||e.key==='C'){ cam.yaw=0; cam.pitch=0; cam.dist=1; } });
+  window.addEventListener('keydown', function(e){ if(e.key==='c'||e.key==='C'){ cam.yaw=0; cam.pitch=0; cam.dist=1; }
+    if((e.key==='v'||e.key==='V') && pmode==='train'){ trainCamMode=trainCamMode?0:1; } });
 })();
 const _camOrb=new THREE.Vector3();
 function chasePos(px,py,pz, baseYaw, baseBack, baseUp, dt, minY){
@@ -14413,6 +14444,7 @@ function loop(now){
     else if(pmode==='aboard'){ updateAboard(dt); }
     else if(pmode==='heli'){ updateHeli(dt); }
     else if(pmode==='plane'){ updatePlane(dt); }
+    else if(pmode==='train'){ /* the shuttle drives itself; the camera rides along */ }
     else if(pmode==='cutscene'){ updateCutscene(dt); }
     else {
     // input (jetski)
@@ -14494,6 +14526,7 @@ function loop(now){
   else if(pmode==='boat'){ FX=BOAT.x; FZ=BOAT.z; }
   else if(pmode==='heli'){ FX=HELI.x; FZ=HELI.z; }
   else if(pmode==='plane'){ FX=PLANE.x; FZ=PLANE.z; }
+  else if(pmode==='train' && TRAIN_CARS.length){ const tc=TRAIN_CARS[onTrainCar]||TRAIN_CARS[0]; FX=tc.position.x; FZ=tc.position.z; }
   else if(pmode==='cutscene'){ FX=HELI.x; FZ=HELI.z; }
   else if(pmode==='aboard' && aboard){ FX=aboard.entry.grp.position.x; FZ=aboard.entry.grp.position.z; }
   else { FX=B.x; FZ=B.z; }
@@ -14529,6 +14562,11 @@ function loop(now){
   } else if(running && pmode==='plane'){ const fw=Math.sin(PLANE.heading),fz=Math.cos(PLANE.heading), back=16+Math.abs(PLANE.speed)*0.22, up=5.5;
     chasePos(PLANE.x,PLANE.y,PLANE.z, PLANE.heading, back, up, dt);
     camera.lookAt(PLANE.x+fw*14, PLANE.y+1.5, PLANE.z+fz*14); fovSm+=((64+Math.abs(PLANE.speed)*0.28)-fovSm)*Math.min(1,dt*3); camera.fov=fovSm; camera.updateProjectionMatrix();
+  } else if(running && pmode==='train' && TRAIN_CARS.length){ const B=ABRIDGE, lead=TRAIN_CARS[onTrainCar]||TRAIN_CARS[0], p=lead.position;
+    const face=(TRAIN.face>0)?Math.atan2(B.dx,B.dz):Math.atan2(-B.dx,-B.dz), fw=Math.sin(face), fz=Math.cos(face);
+    if(trainCamMode===1){ camera.position.set(p.x+B.nx*52+fw*10, p.y+18, p.z+B.nz*52+fz*10); camera.lookAt(p.x+fw*8, p.y+1.2, p.z+fz*8); camera.fov=52; }   // cinematic side tracking
+    else { chasePos(p.x,p.y,p.z, face, 15, 6, dt); camera.lookAt(p.x+fw*14, p.y+2.0, p.z+fz*14); camera.fov=66; }                                    // ride-along (mouse to look around)
+    camera.updateProjectionMatrix();
   } else if(running && pmode==='cutscene'){ /* camera already set by updateCutscene */
   } else if(running && pmode==='car'){ const fw=Math.sin(CAR.heading),fz=Math.cos(CAR.heading), back=9+Math.abs(CAR.speed)*0.22;
     chasePos(CAR.x,CAR.y,CAR.z, CAR.heading, back, 4.0, dt);
@@ -14572,6 +14610,7 @@ function loop(now){
   updateSmoke(dt);   // chimney smoke
   updateAIPlanes(dt);   // airliners circling the bay
   updateTrain(dt);   // airport shuttle train on the bridge
+  updateAreaNPCs(dt);   // station / airport crowds
   if(pmode!=='boat') mooredBoatBob();
   composer.render();
 }
