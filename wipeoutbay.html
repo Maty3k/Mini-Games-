@@ -12726,10 +12726,19 @@ function buildAirport(){
   for(let k=-3;k<=3;k++) M(B(2.2,0.03,11),zebra, ax+k*2.4,y+0.25,termz+30,false);                    // zebra crossing over the forecourt
   for(const fx of [-64,64]){ M(C(0.15,0.18,13,8),steelM, ax+fx,y+6.5,entZ+22,false);                 // flag poles
     M(B(0.1,2.4,4.2),new THREE.MeshStandardMaterial({color:fx<0?0xcf3b30:0x2f6fd0,roughness:0.8,side:THREE.DoubleSide}), ax+fx+2.2,y+11.4,entZ+22,false); }
-  function planter(px,pz,tree){ M(B(3.2,0.9,3.2),potM, px,y+0.45,pz,false); if(tree){ M(C(0.28,0.34,3.4,7),trunkM, px,y+2.2,pz,false); M(new THREE.SphereGeometry(2.5,9,8),shrubM, px,y+4.8,pz,true); } else M(new THREE.SphereGeometry(1.7,8,7),shrubM, px,y+2.2,pz,true); }
-  for(const px of [-72,-50,50,72]) planter(ax+px, entZ+16, true);                                    // trees flanking the plaza
-  for(const px of [-12,12]) for(const pz of [pkZ-30,pkZ,pkZ+28]) planter(ax+px, pz, false);          // shrubs down the walkway
-  for(const bx of [-42,42]){ M(B(4,0.3,1.2),benchM, ax+bx,y+0.7,entZ+18,false); M(B(4,1.0,0.25),benchM, ax+bx,y+1.2,entZ+18.6,false); }   // benches
+  // real TREE model (same as the city) flanking the entrance + dotted through the car park
+  if(treeProto){ const tb=new THREE.Box3().setFromObject(treeProto), tth=Math.max(0.01,tb.max.y-tb.min.y), tmin=tb.min.y, up=new THREE.Vector3(0,1,0), tmats=[];
+    function tree(px,pz,h){ const s=h/tth; tmats.push(new THREE.Matrix4().compose(new THREE.Vector3(px,y-tmin*s,pz), new THREE.Quaternion().setFromAxisAngle(up,(px*0.7+pz)%6.28), new THREE.Vector3(s,s,s))); }
+    for(const px of [-118,-96,-74,74,96,118]) tree(ax+px, entZ+15, 11.5);                            // flanking the entrance plaza
+    for(const pz of [pkZ-24,pkZ+24]) for(const px of [-52,52]) tree(ax+px, pz, 9.5);                 // tree islands in the car park
+    for(const px of [-2400,-2340,-2280,-2220,-2160]) for(const pz of [-648,-588,-528]) tree(px,pz, 8+((px+pz)%3));   // landscaped north lawn behind the car park
+    for(const p of [[-2030,-720],[-1995,-772],[-2015,-826],[-2055,-660],[-1990,-700]]) tree(p[0],p[1], 8);          // east lawn by the bridge landing
+    grp.add(instanceModel(treeProto, tmats, true)); }
+  // real BENCH prop on the plaza
+  for(const bx of [-46,-22,22,46]){ const bn=propBench(); bn.scale.setScalar(1.7); bn.position.set(ax+bx,y,entZ+18); grp.add(bn); }
+  // real PLANTER prop (shrubs + flowers) down the walkway and by the doors
+  for(const px of [-12,12]) for(const pz of [pkZ-28,pkZ,pkZ+26]){ const pl=propPlanter(); pl.scale.setScalar(1.6); pl.position.set(ax+px,y,pz); grp.add(pl); }
+  for(const px of [-60,60]){ const pl=propPlanter(); pl.scale.setScalar(1.7); pl.position.set(ax+px,y,entZ+9); grp.add(pl); }
   for(let k=-9;k<=9;k++) M(C(0.22,0.26,1.1,8),drkM, ax+k*8,y+0.55,entZ+2.4,false);                   // security bollards along the facade
   for(const lx of [-88,-30,30,88]){ M(C(0.18,0.22,7,8),drkM, ax+lx,y+3.5,entZ+12,false); M(B(1.3,0.4,0.5),flood, ax+lx,y+7.1,entZ+12,false); }   // LED lamp columns
   for(const tx of [-24,-2,20]){ const tr=new THREE.Group(); for(let n=0;n<4;n++) tr.add(new THREE.Mesh(B(1.4,0.9,0.7),steelM)).position.set(0,0.7,n*0.5); tr.position.set(ax+tx,y,entZ+9); grp.add(tr); }   // luggage trolley ranks
