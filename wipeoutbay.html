@@ -12786,23 +12786,44 @@ function buildAirport(){
   buildAIPlanes();
 }
 let PLANE_PARK_C=null, PLANE_PARK_A=null;
-function buildAIPlanes(){
-  const specs=[{r:760,alt:130,spd:62,big:true ,col:0xeaf0f6,acc:0x2f6fd0,ph:0,dir:1},
-               {r:880,alt:175,spd:74,big:true ,col:0xf2eee6,acc:0xd9533b,ph:2.2,dir:-1},
-               {r:640,alt:95 ,spd:54,big:false,col:0xf6f6f8,acc:0x3a8a5a,ph:4.1,dir:1}];
-  const cx=-1450, cz=-450;   // circuit centre (over the bay between the city and the airport)
-  for(const s of specs){ const g=new THREE.Group(); g.rotation.order='YXZ'; const info=buildPlane(g,{airliner:s.big,body:s.col,accent:s.acc}); scene.add(g);
-    AIPLANES.push({grp:g, prop:info.prop, cx:cx, cz:cz, r:s.r, alt:s.alt, spd:s.spd, ph:s.ph, dir:s.dir, ang:s.ph}); }
+function buildAIPlanes(){ const ax=AIRPORT.x, rz=RWY.z;
+  // full traffic pattern: approach from the east -> land E->W -> backtrack & take off W->E -> climb -> downwind -> rejoin (closed loop, one landing + one takeoff per lap)
+  function pattern(G){ return [
+    {x:ax+2200,z:rz+460,alt:470,spd:158},{x:ax+1060,z:rz+150,alt:240,spd:120},   // inbound, descend to final
+    {x:ax+440, z:rz,     alt:G+22,spd:80},{x:ax+170,z:rz,alt:G,spd:52},          // short final, touchdown (east threshold)
+    {x:ax-190, z:rz,     alt:G,   spd:15},                                        // roll out to the west end
+    {x:ax+180, z:rz,     alt:G,   spd:90},{x:ax+700,z:rz+55,alt:175,spd:130},     // back-taxi/line up, take off E, climb out
+    {x:ax+1480,z:rz+560, alt:350,spd:150},{x:ax+240,z:rz+930,alt:410,spd:142},    // crosswind + downwind (heading west, N of field)
+    {x:ax+1680,z:rz+680, alt:450,spd:150} ]; }                                    // turn back east to rejoin -> loop
+  // high background circuits (never land)
+  function highloop(al,sp){ return [ {x:ax+980,z:rz+660,alt:al,spd:sp},{x:ax-980,z:rz+900,alt:al+25,spd:sp},{x:ax-1420,z:rz+40,alt:al,spd:sp},{x:ax-360,z:rz-640,alt:al-25,spd:sp},{x:ax+1180,z:rz-400,alt:al,spd:sp},{x:ax+1500,z:rz+240,alt:al+15,spd:sp} ]; }
+  const defs=[
+    {kind:'pat',big:true, col:0xeef2f6,acc:0x2f6fd0,ph:0},
+    {kind:'pat',big:true, col:0xf2eee6,acc:0xd9533b,ph:2.5},
+    {kind:'pat',big:false,col:0xf6f6f8,acc:0x3a8a5a,ph:5},
+    {kind:'pat',big:true, col:0xf3f3f5,acc:0x8a1f27,ph:7.5},
+    {kind:'high',big:true, col:0xeaf0f6,acc:0x2f6fd0,al:300,sp:120,ph:0},
+    {kind:'high',big:false,col:0xffffff, acc:0xd9a441,al:220,sp:104,ph:2},
+    {kind:'high',big:true, col:0xf2eee6,acc:0x2f6fd0,al:380,sp:132,ph:4} ];
+  for(const d of defs){ const g=new THREE.Group(); g.rotation.order='YXZ'; const info=buildPlane(g,{airliner:d.big,body:d.col,accent:d.acc});
+    g.traverse(function(o){ if(o.isMesh) o.castShadow=false; }); scene.add(g);
+    const G=airportY+info.gearY, route=(d.kind==='pat')?pattern(G):highloop(d.al,d.sp), start=Math.floor(d.ph)%route.length;
+    const p={ grp:g, prop:info.prop, route:route, wp:start, x:route[start].x, z:route[start].z, y:route[start].alt, hdg:0, spd:route[start].spd, pitch:0, roll:0 };
+    const nx=route[(start+1)%route.length]; p.hdg=Math.atan2(nx.x-p.x, nx.z-p.z); AIPLANES.push(p); }
 }
-function updateAIPlanes(dt){
-  if(camera.position.x===undefined) return;
-  for(const p of AIPLANES){
-    p.ang += p.dir*(p.spd/p.r)*dt;
-    const ex=Math.cos(p.ang)*p.r, ez=Math.sin(p.ang)*p.r*0.82;   // slightly elliptical circuit
-    const x=p.cx+ex, z=p.cz+ez, y=p.alt+Math.sin(p.ang*1.3+p.ph)*6;
-    const hdg=Math.atan2(p.dir* -Math.sin(p.ang), p.dir*Math.cos(p.ang)*0.82);
-    p.grp.position.set(x,y,z); p.grp.rotation.set(0,hdg,p.dir*-0.32);   // banked into the turn
+function updateAIPlanes(dt){ if(camera.position.x===undefined) return;
+  for(const p of AIPLANES){ const wp=p.route[p.wp], dx=wp.x-p.x, dz=wp.z-p.z, dist=Math.hypot(dx,dz);
+    const want=Math.atan2(dx,dz); let dh=((want-p.hdg+Math.PI*3)%(Math.PI*2))-Math.PI;
+    const rate=THREE.MathUtils.clamp(dh,-0.85*dt,0.85*dt); p.hdg+=rate;
+    p.spd += (wp.spd-p.spd)*Math.min(1,dt*0.6);
+    p.x += Math.sin(p.hdg)*p.spd*dt; p.z += Math.cos(p.hdg)*p.spd*dt;
+    p.y += (wp.alt-p.y)*Math.min(1,dt*0.8);
+    const grounded=p.y<airportY+10;                                              // level on the ground / straights, bank only in turns
+    p.roll += ((grounded?0:(rate/Math.max(dt,0.001))*-0.6) - p.roll)*Math.min(1,dt*2.4); p.roll=THREE.MathUtils.clamp(p.roll,-0.6,0.6);
+    p.pitch += (THREE.MathUtils.clamp((wp.alt-p.y)*0.012,-0.14,0.2) - p.pitch)*Math.min(1,dt*2);
+    p.grp.position.set(p.x,p.y,p.z); p.grp.rotation.set(-p.pitch,p.hdg,p.roll);
     if(p.prop) p.prop.rotation.z += dt*40;
+    if(dist < Math.max(52, p.spd*0.8)) p.wp=(p.wp+1)%p.route.length;
   }
 }
 // ----- pilot / passenger flight -----
