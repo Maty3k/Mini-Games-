@@ -12668,17 +12668,30 @@ function buildAirport(){
   // ===== TERMINAL (big modern hall + concourse piers) =====
   const tW=380, tH=25;
   M(B(tW,tH,28),panelM, ax,y+tH/2,termz,true).receiveShadow=true;
-  M(B(tW+16,2.0,38),roofM, ax,y+tH+0.6,termz,true);                                         // roof overhang
-  M(B(tW-6,15,0.7),glassM, ax,y+8.5,termz+14.3,false); M(B(tW-6,15,0.7),glassM, ax,y+8.5,termz-14.3,false);
-  for(let mx=-tW/2+8;mx<=tW/2-8;mx+=7.5){ M(B(0.5,15,0.5),steelM, ax+mx,y+8.5,termz+14.5,false); M(B(0.5,15,0.5),steelM, ax+mx,y+8.5,termz-14.5,false); }
-  M(B(tW+17,2.4,3),accentM, ax,y+tH-1.4,termz+15.5,false); M(B(tW+17,2.4,3),accentM, ax,y+tH-1.4,termz-15.5,false);
-  M(B(70,0.5,13),roofM, ax,y+6.4,termz+22,true);                                            // entrance canopy (landside)
-  for(const cxo of [-28,-10,10,28]) M(C(0.3,0.3,6.6,8),steelM, ax+cxo,y+3.2,termz+19,false);
-  M(B(30,3,3),new THREE.MeshStandardMaterial({color:0x14202b,emissive:0x24506a,emissiveIntensity:0.7,roughness:0.5}), ax,y+tH+2.2,termz+16,false);   // lit name sign
-  // facade detail: dark base plinth, spandrel bands between window levels, rooftop plant
-  M(B(tW+2,3.4,29.4),cladM, ax,y+1.7,termz,false);
-  for(const zf of [termz+14.6,termz-14.6]){ M(B(tW-4,1.1,0.35),frameM, ax,y+5.6,zf,false); M(B(tW-4,1.1,0.35),frameM, ax,y+11.6,zf,false); M(B(tW-4,0.5,0.35),accentM, ax,y+15.4,zf,false); }
-  for(let k=-6;k<=6;k++) M(B(7,2.6,8),cladM, ax+k*28,y+tH+2.2,termz-4,true);
+  // ---- MODERN CURVED ROOF: barrel vault + exposed ribs + glazed ridge skylight + LED eaves ----
+  const vaultM=new THREE.MeshStandardMaterial({color:0xbcc3cb,roughness:0.48,metalness:0.38,side:THREE.DoubleSide}),
+        finM=new THREE.MeshStandardMaterial({color:0x969ea7,roughness:0.5,metalness:0.42}),
+        ledM=new THREE.MeshStandardMaterial({color:0xc4e8ff,emissive:0x37a2ff,emissiveIntensity:1.3,roughness:0.4});
+  { const v=M(new THREE.CylinderGeometry(16,16,tW+12,30,1,true,0,Math.PI),vaultM, ax,y+tH-2,termz,true); v.rotation.z=Math.PI/2; }
+  for(const ex of [-1,1]){ const gb=M(new THREE.CircleGeometry(16,22,0,Math.PI),glassM, ax+ex*((tW+12)/2-0.2),y+tH-2,termz,false); gb.rotation.y=Math.PI/2; }   // glazed gable ends
+  for(let k=-6;k<=6;k++){ const rib=M(new THREE.CylinderGeometry(16.5,16.5,1.6,16,1,true,0,Math.PI),frameM, ax+k*29,y+tH-2,termz,false); rib.rotation.z=Math.PI/2; }
+  M(B(tW+2,0.5,5.5),glassM, ax,y+tH+13.4,termz,false);                                       // ridge skylight
+  M(B(tW+12,0.45,0.6),ledM, ax,y+tH-1.6,termz+16,false); M(B(tW+12,0.45,0.6),ledM, ax,y+tH-1.6,termz-16,false);   // LED eaves
+  // ---- FULL-HEIGHT GLAZED FACADES: glass, slim mullions, transoms, brise-soleil sun-fins ----
+  for(const zf of [termz+14.4,termz-14.4]){ const out=(zf>termz?1:-1);
+    M(B(tW-4,21,0.6),glassM, ax,y+12.5,zf,false);
+    for(let mx=-tW/2+7;mx<=tW/2-7;mx+=6.2) M(B(0.42,21,0.5),steelM, ax+mx,y+12.5,zf+out*0.25,false);
+    M(B(tW-4,0.7,0.8),frameM, ax,y+17,zf,false); M(B(tW-4,0.7,0.8),frameM, ax,y+8,zf,false);
+    for(let ly=7;ly<=20;ly+=3.4) M(B(tW-2,0.28,2.0),finM, ax,y+ly,zf+out*1.3,false); }
+  M(B(tW+2,4,29.4),cladM, ax,y+2,termz,false);                                                // dark base plinth
+  // ---- CENTRAL GLAZED ATRIUM (departures hall) rising above the roofline & projecting landside ----
+  { const aw=98, aH=tH+9;
+    M(B(aw,aH,22),panelM, ax,y+aH/2,termz+16,true);
+    M(B(aw-6,aH-3,0.7),glassM, ax,y+(aH-3)/2+1.6,termz+27.2,false);                            // big sloped-look glass front
+    for(let mx=-aw/2+6;mx<=aw/2-6;mx+=6) M(B(0.5,aH-3,0.5),steelM, ax+mx,y+(aH-3)/2+1.6,termz+27.4,false);
+    M(B(aw+2,4,22),vaultM, ax,y+aH+1.4,termz+16,true);                                         // atrium crown cap
+    M(B(aw+18,0.5,0.6),ledM, ax,y+aH-0.8,termz+27.6,false);                                    // lit atrium brow
+    M(B(58,4,1.2),new THREE.MeshStandardMaterial({color:0x0d1620,emissive:0x2f6fd0,emissiveIntensity:0.9,roughness:0.5}), ax,y+aH-2,termz+28,false); }   // big lit name sign
   const piers=[-146,-49,49,146];
   for(const px of piers){ M(B(17,8,52),panelM, ax+px,y+4,termz-40,true);
     M(B(16,6,0.6),glassM, ax+px+7.8,y+4,termz-40,false); M(B(16,6,0.6),glassM, ax+px-7.8,y+4,termz-40,false);
