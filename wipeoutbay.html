@@ -14173,14 +14173,14 @@ function updateJet(dt){
   const yaw=((keys['a']||keys['arrowleft'])?1:0)-((keys['d']||keys['arrowright'])?1:0);
   JET.heading += yaw*dt*1.5;
   JET.vy += (((up-dn)*17) - JET.vy)*Math.min(1,dt*2.6); JET.y += JET.vy*dt;
-  JET.fwd += ((fwd-bwd)*80 - JET.fwd)*Math.min(1,dt*1.15);   // fast, jet-like
+  JET.fwd += ((fwd-bwd)*230 - JET.fwd)*Math.min(1,dt*1.35);   // proper fighter speed
   JET.x += Math.sin(JET.heading)*JET.fwd*dt; JET.z += Math.cos(JET.heading)*JET.fwd*dt;
   const gnd=heliGround(JET.x,JET.z)+2.6; if(JET.y<gnd){ JET.y=gnd; if(JET.vy<0)JET.vy=0; } if(JET.y>620)JET.y=620;
   JET.pitch += ((-JET.fwd*0.0035) - JET.pitch)*Math.min(1,dt*3);
   JET.roll  += ((-yaw*0.5) - JET.roll)*Math.min(1,dt*3);   // banks into turns
   jet3d.position.set(JET.x,JET.y,JET.z); jet3d.rotation.set(JET.pitch,JET.heading,JET.roll);
   // afterburner: longer & brighter with forward throttle, flickering
-  if(JET.burners){ const thr=Math.max(0,Math.min(1,JET.fwd/70)), fl=0.78+0.34*Math.sin(gameT*47);
+  if(JET.burners){ const thr=Math.max(0,Math.min(1,JET.fwd/150)), fl=0.78+0.34*Math.sin(gameT*47);
     for(const b of JET.burners){ b.visible=JET.fwd>2; b.scale.set(0.55+thr*0.5,0.55+thr*0.5,(0.3+thr*1.25)*fl); }
     if(JET.burnerCore){ JET.burnerCore.opacity=(0.32+thr*0.6)*fl; JET.burnerGlow.opacity=(0.2+thr*0.45)*fl; } }
   JET._rev=(JET._rev||0)+dt; if(JET._rev>0.25){ JET._rev=0; SFX.heliRev&&SFX.heliRev(Math.abs(JET.fwd)>20 || JET.vy>3); }
