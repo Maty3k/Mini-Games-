@@ -12600,7 +12600,7 @@ let AIRLINER_YAW=0;   // tuned so the model's nose faces +Z (buildPlane's forwar
 function buildAirlinerModel(g){
   const m=airlinerProto.clone(true); m.rotation.y=AIRLINER_YAW; m.updateMatrixWorld(true);
   const b1=new THREE.Box3().setFromObject(m), s1=b1.getSize(new THREE.Vector3());
-  const scale=31/Math.max(s1.x,s1.z,0.01); m.scale.setScalar(scale); m.updateMatrixWorld(true);   // ~31 m long
+  const scale=46/Math.max(s1.x,s1.z,0.01); m.scale.setScalar(scale); m.updateMatrixWorld(true);   // ~46 m — a big airliner
   const b2=new THREE.Box3().setFromObject(m), c=b2.getCenter(new THREE.Vector3()); m.position.sub(c); m.updateMatrixWorld(true);
   const b3=new THREE.Box3().setFromObject(m), gearY=(b3.max.y-b3.min.y)/2;   // centred; wheels sit at -gearY
   g.add(m); g.traverse(o=>{ if(o.isMesh) o.castShadow=true; });
@@ -12800,10 +12800,10 @@ function buildAIPlanes(){ const ax=AIRPORT.x, rz=RWY.z;
   const defs=[
     {kind:'pat',big:true, col:0xeef2f6,acc:0x2f6fd0,ph:0},
     {kind:'pat',big:true, col:0xf2eee6,acc:0xd9533b,ph:2.5},
-    {kind:'pat',big:false,col:0xf6f6f8,acc:0x3a8a5a,ph:5},
+    {kind:'pat',big:true, col:0xf6f6f8,acc:0x3a8a5a,ph:5},
     {kind:'pat',big:true, col:0xf3f3f5,acc:0x8a1f27,ph:7.5},
     {kind:'high',big:true, col:0xeaf0f6,acc:0x2f6fd0,al:300,sp:120,ph:0},
-    {kind:'high',big:false,col:0xffffff, acc:0xd9a441,al:220,sp:104,ph:2},
+    {kind:'high',big:true, col:0xffffff, acc:0xd9a441,al:220,sp:104,ph:2},
     {kind:'high',big:true, col:0xf2eee6,acc:0x2f6fd0,al:380,sp:132,ph:4} ];
   for(const d of defs){ const g=new THREE.Group(); g.rotation.order='YXZ'; const info=buildPlane(g,{airliner:d.big,body:d.col,accent:d.acc});
     g.traverse(function(o){ if(o.isMesh) o.castShadow=false; }); scene.add(g);
