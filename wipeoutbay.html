@@ -12677,6 +12677,114 @@ function updatePlane(dt){ const P=PLANE; if(!P.model) return;
   P.model.position.set(P.x,P.y,P.z); P.model.rotation.set(-P.pitch,P.heading,P.roll);   // +pitch = nose up (climb)
   if(P.prop) P.prop.rotation.z += dt*(20+P.speed*1.2);
 }
+// ============================================================
+//  AIRPORT LINK — a big modern CABLE-STAYED road+rail bridge from the city to the
+//  airport island, with a station + shuttle train at each end and an island car park.
+// ============================================================
+let ABRIDGE=null, TRAIN=null; const TRAIN_CARS=[];
+const AB_C={x:-1532,z:-646}, AB_A={x:-2052,z:-697};        // city end / airport end (routed clear of the cargo port)
+const AB_LOT={x:-2098,z:-726};                             // island car park (NE of the runway)
+function _abStrut(g,mat,a,b,rad){ const dx=b[0]-a[0],dy=b[1]-a[1],dz=b[2]-a[2],L=Math.hypot(dx,dy,dz)||0.001;
+  const m=new THREE.Mesh(new THREE.CylinderGeometry(rad,rad,L,6),mat); m.position.set((a[0]+b[0])/2,(a[1]+b[1])/2,(a[2]+b[2])/2);
+  m.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), new THREE.Vector3(dx,dy,dz).normalize()); m.castShadow=true; g.add(m); return m; }
+function abH(x,z){ const B=ABRIDGE; if(!B) return 15; const ax=x-B.x0,az=z-B.z0,t=Math.max(0,Math.min(1,(ax*B.dx+az*B.dz)/B.len)); return B.y0+(B.y1-B.y0)*t+B.arch*Math.sin(t*Math.PI)+0.55; }
+function onABridgeDeck(x,z){ const B=ABRIDGE; if(!B) return false; const ax=x-B.x0,az=z-B.z0,al=ax*B.dx+az*B.dz; if(al<0.5||al>B.len-0.5) return false; return Math.abs(ax*B.nx+az*B.nz)<12.6; }
+function onAirportGround(x,z){
+  if(x>-2124&&x<-2072&&z>-746&&z<-706) return true;                                    // airport car park
+  const sx=AB_A.x,sz=AB_A.z,ddx=AB_LOT.x-sx,ddz=AB_LOT.z-sz,L2=(ddx*ddx+ddz*ddz)||1;   // link road bridge->park
+  let tt=((x-sx)*ddx+(z-sz)*ddz)/L2; tt=Math.max(0,Math.min(1,tt)); const px=sx+ddx*tt,pz=sz+ddz*tt;
+  return (x-px)*(x-px)+(z-pz)*(z-pz)<49; }
+function onCarBridge(x,z){ if((x-AB_C.x)*(x-AB_C.x)+(z-AB_C.z)*(z-AB_C.z)<256) return true;   // city bridge-foot plaza
+  const B=ABRIDGE; if(B){ const ax=x-B.x0,az=z-B.z0,al=ax*B.dx+az*B.dz; if(al>-2&&al<B.len+2){ const p=ax*B.nx+az*B.nz; if(p>-10&&p<1.6) return true; } }
+  return onAirportGround(x,z); }
+function buildAirportBridge(){
+  const c=AB_C, a=AB_A, len=Math.hypot(a.x-c.x,a.z-c.z), dx=(a.x-c.x)/len, dz=(a.z-c.z)/len, nx=-dz, nz=dx;
+  ABRIDGE={x0:c.x,z0:c.z,x1:a.x,z1:a.z,len:len,dx:dx,dz:dz,nx:nx,nz:nz,y0:15,y1:11,arch:7};
+  const ang=Math.atan2(dx,dz), hAt=(t)=>15+(11-15)*t+7*Math.sin(t*Math.PI), wp=(al,perp,y)=>[c.x+dx*al+nx*perp, y, c.z+dz*al+nz*perp];
+  const grp=new THREE.Group(); grp.matrixAutoUpdate=false; scene.add(grp);
+  const conc=new THREE.MeshStandardMaterial({color:0xc2c6cb,roughness:0.9}),
+        asph=new THREE.MeshStandardMaterial({color:0x33353b,roughness:0.95,polygonOffset:true,polygonOffsetFactor:-2,polygonOffsetUnits:-2}),
+        lineM=new THREE.MeshStandardMaterial({color:0xe9e2c8,roughness:0.6,polygonOffset:true,polygonOffsetFactor:-4,polygonOffsetUnits:-4}),
+        steelW=new THREE.MeshStandardMaterial({color:0xeceef1,roughness:0.5,metalness:0.35,envMapIntensity:0.7}),
+        cableM=new THREE.MeshStandardMaterial({color:0x9aa0a6,roughness:0.5,metalness:0.6}),
+        railS=new THREE.MeshStandardMaterial({color:0xbfc6cc,roughness:0.4,metalness:0.7}),
+        para=new THREE.MeshStandardMaterial({color:0xd3d7db,roughness:0.7}),
+        walkM=new THREE.MeshStandardMaterial({color:0x8b9096,roughness:0.85}),
+        ballast=new THREE.MeshStandardMaterial({color:0x55585d,roughness:0.95}),
+        sleeper=new THREE.MeshStandardMaterial({color:0x3b3f45,roughness:0.9}),
+        lampHead=new THREE.MeshStandardMaterial({color:0xfff2c8,emissive:0xffcc66,emissiveIntensity:2.0,roughness:0.4}),
+        lampDk=new THREE.MeshStandardMaterial({color:0x2a2c31,roughness:0.5,metalness:0.5});
+  const N=26, seg=len/N, ROAD=-4, RAIL=6.5, HALF=13;
+  // paved bridge-foot plaza where the perimeter boulevard meets the ramp
+  { const foot=new THREE.Mesh(new THREE.CylinderGeometry(16,16,0.3,20),asph); foot.position.set(c.x,15.05,c.z); foot.receiveShadow=true; grp.add(foot); }
+  for(let i=0;i<N;i++){ const t0=i/N,t1=(i+1)/N,tm=(t0+t1)/2, py=hAt(tm), tilt=Math.atan2(hAt(t1)-hAt(t0),seg), bx=c.x+dx*(len*tm), bz=c.z+dz*(len*tm);
+    function slab(w,h,perp,yy,mat){ const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,seg+0.3),mat); m.position.set(bx+nx*perp,yy,bz+nz*perp); m.rotation.order='YXZ'; m.rotation.y=ang; m.rotation.x=-tilt; grp.add(m); return m; }
+    slab(HALF*2,0.7,0,py,conc).receiveShadow=true;                       // deck
+    slab(12,0.14,ROAD,py+0.42,asph).receiveShadow=true;                  // roadway
+    slab(2.4,0.16,-11.2,py+0.44,walkM); slab(2.4,0.16,11.2,py+0.44,walkM);// walkways
+    slab(8,0.3,RAIL,py+0.36,ballast);                                    // rail ballast
+    if(i%2===0){ const d=new THREE.Mesh(new THREE.BoxGeometry(0.5,0.05,4),lineM); d.position.set(bx+nx*ROAD,py+0.5,bz+nz*ROAD); d.rotation.y=ang; grp.add(d); }
+    for(const sl of [-seg*0.25,seg*0.25]){ const s=new THREE.Mesh(new THREE.BoxGeometry(7,0.16,0.7),sleeper); s.position.set(bx+dx*sl+nx*RAIL,py+0.54,bz+dz*sl+nz*RAIL); s.rotation.y=ang; grp.add(s); }
+    for(const ro of [-1.6,1.6]){ const r=new THREE.Mesh(new THREE.BoxGeometry(0.18,0.22,seg+0.3),railS); r.position.set(bx+nx*(RAIL+ro),py+0.66,bz+nz*(RAIL+ro)); r.rotation.order='YXZ'; r.rotation.y=ang; r.rotation.x=-tilt; grp.add(r); }
+    for(const sgn of [-1,1]){ const p=new THREE.Mesh(new THREE.BoxGeometry(0.4,1.15,seg+0.3),para); p.position.set(bx+nx*HALF*sgn,py+0.9,bz+nz*HALF*sgn); p.rotation.order='YXZ'; p.rotation.y=ang; p.rotation.x=-tilt; grp.add(p); }
+    const md=new THREE.Mesh(new THREE.BoxGeometry(0.3,0.7,seg+0.3),para); md.position.set(bx+nx*2.2,py+0.75,bz+nz*2.2); md.rotation.order='YXZ'; md.rotation.y=ang; md.rotation.x=-tilt; grp.add(md);
+    if(i%4===0){ const sgn=((i/4)%2)?1:-1, lx=bx+nx*(HALF-0.6)*sgn, lz=bz+nz*(HALF-0.6)*sgn;
+      const mast=new THREE.Mesh(new THREE.CylinderGeometry(0.12,0.16,6,8),lampDk); mast.position.set(lx,py+3,lz); grp.add(mast);
+      const hd=new THREE.Mesh(new THREE.BoxGeometry(0.7,0.2,0.4),lampHead); hd.position.set(lx-nx*sgn*1.8,py+5.9,lz-nz*sgn*1.8); grp.add(hd);
+      _abStrut(grp,lampDk,[lx,py+6,lz],[lx-nx*sgn*1.8,py+5.9,lz-nz*sgn*1.8],0.06); } }
+  // ---- two cable-stayed pylons ----
+  for(const pt of [0.32,0.68]){ const pa=len*pt, hd=hAt(pt), topY=hd+48;
+    for(const sgn of [-1,1]){ const apex=wp(pa,3*sgn,topY); _abStrut(grp,steelW,wp(pa,12*sgn,hd-0.4),apex,1.3);
+      for(let k=1;k<=5;k++){ const A1=Math.min(len-4,pa+seg*3.2*k), A2=Math.max(4,pa-seg*3.2*k);
+        _abStrut(grp,cableM,apex,wp(A1,11*sgn,hAt(A1/len)+0.9),0.13); _abStrut(grp,cableM,apex,wp(A2,11*sgn,hAt(A2/len)+0.9),0.13); } }
+    _abStrut(grp,steelW,wp(pa,-3,topY-4),wp(pa,3,topY-4),1.0);
+    const pier=new THREE.Mesh(new THREE.CylinderGeometry(3.4,4.2,hd+6,10),conc); pier.position.set(c.x+dx*pa,hd/2-3,c.z+dz*pa); pier.castShadow=true; grp.add(pier); }
+  for(const pt of [0.16,0.5,0.84]){ const pa=len*pt, hd=hAt(pt); const pr=new THREE.Mesh(new THREE.CylinderGeometry(1.8,2.4,hd+6,8),conc); pr.position.set(c.x+dx*pa,hd/2-3,c.z+dz*pa); grp.add(pr); }
+  // ---- stations at each end ----
+  function station(alc,y){ const hl=38;
+    const pf=new THREE.Mesh(new THREE.BoxGeometry(4,0.5,hl*2),new THREE.MeshStandardMaterial({color:0xcbcfd3,roughness:0.8})); let q=wp(alc,10.6,y+0.9); pf.position.set(q[0],q[1],q[2]); pf.rotation.y=ang; grp.add(pf);
+    const roof=new THREE.Mesh(new THREE.BoxGeometry(6.5,0.4,hl*2-6),new THREE.MeshStandardMaterial({color:0xe4e8eb,roughness:0.5,metalness:0.2})); q=wp(alc,10.2,y+5.4); roof.position.set(q[0],q[1],q[2]); roof.rotation.y=ang; roof.castShadow=true; grp.add(roof);
+    for(const off of [-hl+8,0,hl-8]) for(const ps of [8.4,12]){ const col=new THREE.Mesh(new THREE.CylinderGeometry(0.22,0.22,4.5,8),steelW); q=wp(alc+off,ps,y+2.85); col.position.set(q[0],q[1],q[2]); grp.add(col); }
+    const box=new THREE.Mesh(new THREE.BoxGeometry(4,3,11),new THREE.MeshStandardMaterial({color:0x7fa3b8,roughness:0.2,metalness:0.3,envMapIntensity:0.8,transparent:true,opacity:0.72})); q=wp(alc,11.2,y+2.3); box.position.set(q[0],q[1],q[2]); box.rotation.y=ang; grp.add(box);
+    const sign=new THREE.Mesh(new THREE.BoxGeometry(0.3,1.3,7),new THREE.MeshStandardMaterial({color:0x14202b,emissive:0x24506a,emissiveIntensity:0.7,roughness:0.5})); q=wp(alc,7.4,y+6.5); sign.position.set(q[0],q[1],q[2]); sign.rotation.y=ang; grp.add(sign); }
+  station(46,hAt(46/len)); station(len-46,hAt((len-46)/len));
+  // ---- island car park + link road ----
+  { const ag=new THREE.Group(); ag.matrixAutoUpdate=false; scene.add(ag); const ay=airportY;
+    const rl=Math.hypot(AB_LOT.x-a.x,AB_LOT.z-a.z), rang=Math.atan2(AB_LOT.x-a.x,AB_LOT.z-a.z);
+    const road=new THREE.Mesh(new THREE.BoxGeometry(12,0.2,rl+10),asph); road.position.set((a.x+AB_LOT.x)/2,ay+0.12,(a.z+AB_LOT.z)/2); road.rotation.y=rang; road.receiveShadow=true; ag.add(road);
+    const lot=new THREE.Mesh(new THREE.BoxGeometry(52,0.2,40),asph); lot.position.set(AB_LOT.x,ay+0.1,AB_LOT.z); lot.receiveShadow=true; ag.add(lot);
+    const bay=new THREE.MeshStandardMaterial({color:0xe9e2c8,roughness:0.6,polygonOffset:true,polygonOffsetFactor:-4,polygonOffsetUnits:-4});
+    for(let r=-1;r<=1;r+=2) for(let k=-2;k<=2;k++){ const bl=new THREE.Mesh(new THREE.BoxGeometry(0.2,0.03,10),bay); bl.position.set(AB_LOT.x+k*10.5,ay+0.22,AB_LOT.z+r*13); ag.add(bl); }
+    const cCol=[0xcf3b3b,0x2f6fd0,0xe4e7ea,0x2b2f36,0x2f9e5a,0xd9a441];
+    for(let k=-2;k<=2;k++){ if(k===1) continue; const cc=cCol[(k+2)%6], pc=new THREE.Group();
+      pc.add(new THREE.Mesh(new THREE.BoxGeometry(4.4,1.3,2.0),new THREE.MeshStandardMaterial({color:cc,roughness:0.4,metalness:0.3}))).position.y=0.85;
+      pc.add(new THREE.Mesh(new THREE.BoxGeometry(2.6,1.0,1.8),new THREE.MeshStandardMaterial({color:cc,roughness:0.4,metalness:0.3}))).position.set(-0.2,1.65,0);
+      pc.position.set(AB_LOT.x+k*10.5,ay+0.2,AB_LOT.z-13); pc.rotation.y=Math.PI/2; ag.add(pc); } }
+  // ---- the shuttle train ----
+  const bodyM=new THREE.MeshStandardMaterial({color:0xf4f6f8,roughness:0.4,metalness:0.2,envMapIntensity:0.6}),
+        stripeM=new THREE.MeshStandardMaterial({color:0x2f6fd0,roughness:0.5}), winM=new THREE.MeshStandardMaterial({color:0x16323f,roughness:0.2,metalness:0.4,emissive:0x1a3a4a,emissiveIntensity:0.25}),
+        roofM=new THREE.MeshStandardMaterial({color:0xcdd2d7,roughness:0.6}), bogieM=new THREE.MeshStandardMaterial({color:0x1a1c20,roughness:0.8});
+  const NCAR=4, CARLEN=15, CARGAP=3.5;
+  for(let ci=0;ci<NCAR;ci++){ const car=new THREE.Group(); car.rotation.order='YXZ';
+    const body=new THREE.Mesh(new THREE.BoxGeometry(2.9,2.7,CARLEN),bodyM); body.position.y=1.9; body.castShadow=true; car.add(body);
+    car.add(new THREE.Mesh(new THREE.BoxGeometry(2.5,0.5,CARLEN-0.6),roofM)).position.y=3.35;
+    car.add(new THREE.Mesh(new THREE.BoxGeometry(2.94,0.5,CARLEN),stripeM)).position.y=1.15;
+    for(const s of [-1,1]){ const win=new THREE.Mesh(new THREE.BoxGeometry(0.04,0.9,CARLEN-2),winM); win.position.set(s*1.46,2.4,0); car.add(win); }
+    for(const bz of [-CARLEN*0.3,CARLEN*0.3]){ const bog=new THREE.Mesh(new THREE.BoxGeometry(2.2,0.7,3),bogieM); bog.position.set(0,0.55,bz); car.add(bog); }
+    if(ci===0||ci===NCAR-1){ car.add(new THREE.Mesh(new THREE.BoxGeometry(2.9,2.2,1.6),bodyM)).position.set(0,1.9,(ci===0?1:-1)*(CARLEN/2+0.4));
+      const wsh=new THREE.Mesh(new THREE.BoxGeometry(2.4,1.2,0.1),winM); wsh.position.set(0,2.5,(ci===0?1:-1)*(CARLEN/2+1.2)); car.add(wsh); }
+    scene.add(car); TRAIN_CARS.push(car); }
+  TRAIN={ s:len-70, target:70, v:0, state:'run', dwell:0, dir:-1, carLen:CARLEN, gap:CARGAP };
+}
+function updateTrain(dt){ if(!TRAIN||!ABRIDGE) return; const T=TRAIN, B=ABRIDGE, ACC=6, VMAX=42;
+  if(T.state==='dwell'){ T.dwell-=dt; if(T.dwell<=0){ T.state='run'; T.target=(T.dir>0? B.len-70 : 70); } }
+  else { const dist=T.target-T.s, ad=Math.abs(dist), decel=T.v*T.v/(2*ACC);
+    if(ad<=decel+0.4) T.v-=ACC*dt; else T.v=Math.min(VMAX,T.v+ACC*dt); T.v=Math.max(1.5,T.v); T.s+=Math.sign(dist)*T.v*dt;
+    if(ad<1.2){ T.s=T.target; T.v=0; T.state='dwell'; T.dwell=4.5; T.dir*=-1; } }
+  const ang=Math.atan2(B.dx,B.dz), sp=T.carLen+T.gap;
+  for(let i=0;i<TRAIN_CARS.length;i++){ const al=Math.max(2,Math.min(B.len-2,T.s-i*sp)), t=al/B.len;
+    const y=B.y0+(B.y1-B.y0)*t+B.arch*Math.sin(t*Math.PI)+1.05, x=B.x0+B.dx*al+B.nx*6.5, z=B.z0+B.dz*al+B.nz*6.5;
+    TRAIN_CARS[i].position.set(x,y,z); TRAIN_CARS[i].rotation.y=ang; } }
 // ===== performance: dynamic light budget + shadow-caster pruning =====
 const LIGHTS_POOL=[]; const _lp=new THREE.Vector3(); let _lightClock=0; const MAX_LIVE_LIGHTS=4;
 function manageLights(dt){ if(LIGHTS_POOL.length<=MAX_LIVE_LIGHTS) return;   // forward renderer cost scales with live light count → keep only the nearest few lit
@@ -12720,6 +12828,7 @@ function buildWorld(){
   if(typeof buildVillage==='function') buildVillage();
   buildBridge();
   buildAirport();
+  buildAirportBridge();
   optimizeScene();                              // light budget + shadow pruning (perf)
   // pre-render the minimap base (bay silhouette)
   drawMapBase();
@@ -12984,7 +13093,7 @@ const DOCK=(function(){ const d=new THREE.Vector2(-CITY.x,-CITY.z).normalize();
   return {cx:CITY.x,cz:CITY.z,dx:d.x,dz:d.y,rx:d.y,rz:-d.x,ang:Math.atan2(d.x,d.y),start:430,len:104,width:15,deckTop:3.35,endCd:534}; })();
 function onDock(x,z){ const ax=x-DOCK.cx,az=z-DOCK.cz, al=ax*DOCK.dx+az*DOCK.dz, lt=Math.abs(ax*DOCK.rx+az*DOCK.rz); return al>DOCK.start-3 && al<DOCK.endCd+3 && lt<DOCK.width/2; }
 function dockReach(x,z){ const ax=x-DOCK.cx,az=z-DOCK.cz, al=ax*DOCK.dx+az*DOCK.dz, lt=Math.abs(ax*DOCK.rx+az*DOCK.rz); return al>DOCK.start-8 && al<DOCK.endCd+8 && lt<DOCK.width/2+9; }
-function avatarGround(x,z){ return onBridge(x,z)?bridgeHeight(x,z):onQuay(x,z)?PORT.deckY:onDock(x,z)?DOCK.deckTop:landH(x,z); }
+function avatarGround(x,z){ return onABridgeDeck(x,z)?abH(x,z):onBridge(x,z)?bridgeHeight(x,z):onQuay(x,z)?PORT.deckY:onDock(x,z)?DOCK.deckTop:landH(x,z); }
 // the drivable road network — keeps the car on the streets (grid lanes, avenues, roundabout rings,
 // the perimeter boulevard and the harbour causeway) instead of bumping over sidewalks, parks & blocks
 function onCityRoad(x,z){
@@ -14129,7 +14238,7 @@ function updateFoot(dt){
   const tgt=(fwd?3.4*(keys['shift']?1.95:1):0)-(bwd?2.0:0);   // walk ~12 km/h, run (Shift) ~24 km/h
   AV.speed += (tgt-AV.speed)*Math.min(1,dt*9);
   const nx=AV.x+Math.sin(AV.heading)*AV.speed*dt, nz=AV.z+Math.cos(AV.heading)*AV.speed*dt;
-  if(onDock(nx,nz)||onQuay(nx,nz)||onBridge(nx,nz)||landH(nx,nz)>0.4){ AV.x=nx; AV.z=nz; } else AV.speed=0;   // don't walk into deep water (but do cross the bridge)
+  if(onDock(nx,nz)||onQuay(nx,nz)||onBridge(nx,nz)||onABridgeDeck(nx,nz)||onCarBridge(nx,nz)||landH(nx,nz)>0.4){ AV.x=nx; AV.z=nz; } else AV.speed=0;   // don't walk into deep water (but do cross the bridges)
   AV.y=avatarGround(AV.x,AV.z);
   AV.step += Math.abs(AV.speed)*dt*2.4;
   const sw=Math.sin(AV.step)*0.5*Math.min(1,Math.abs(AV.speed)/4), L=avatar.userData;
@@ -14143,12 +14252,12 @@ function updateCar(dt){
   CAR.heading += steer*dt*1.5*Math.min(1,Math.abs(CAR.speed)/5)*(CAR.speed>=0?1:-1);
   const nx=CAR.x+Math.sin(CAR.heading)*CAR.speed*dt, nz=CAR.z+Math.cos(CAR.heading)*CAR.speed*dt;
   // keep the car on the road network (+ the drivable quay); slide along the kerb rather than dead-stop
-  function drv(px,pz){ return onQuay(px,pz)||onCityRoad(px,pz); }
+  function drv(px,pz){ return onQuay(px,pz)||onCityRoad(px,pz)||onCarBridge(px,pz); }
   if(drv(nx,nz)){ CAR.x=nx; CAR.z=nz; }
   else if(drv(nx,CAR.z)){ CAR.x=nx; CAR.speed*=0.6; }        // slide along X
   else if(drv(CAR.x,nz)){ CAR.z=nz; CAR.speed*=0.6; }        // slide along Z
   else CAR.speed*=-0.3;                                       // nose into a kerb head-on → nudge back
-  CAR.y=onQuay(CAR.x,CAR.z)?PORT.deckY:landH(CAR.x,CAR.z);
+  CAR.y=onABridgeDeck(CAR.x,CAR.z)?abH(CAR.x,CAR.z):(onQuay(CAR.x,CAR.z)?PORT.deckY:landH(CAR.x,CAR.z));
   car3d.position.set(CAR.x,CAR.y,CAR.z); car3d.rotation.y=CAR.heading+carYaw;
 }
 const PROMPTS={dock:'Press  F  — dock & explore on foot', drive:'Press  F  — get in the car', ride:'Press  F  — ride the jetski', exit:'Press  F  — get out of the car', board:'Press  F  — board the boat', land:'Press  F  — tie up at the dock', boardShip:'Press  F  — board the ship', leaveShip:'Press  F  — disembark', landIsland:'Press  F  — step onto the island', elevator:'Press  F  — take the elevator (next deck)', stairUp:'Press  F  — up the stairs', stairDown:'Press  F  — down the stairs', heli:'Press  F  — helicopter', heliExit:'Press  F  — get out of the helicopter', flyPlane:'Press  F  — fly the plane', ridePlane:'Press  F  — board for a round trip', planeExit:'Press  F  — get out of the plane'};
@@ -14428,6 +14537,7 @@ function loop(now){
   if(typeof updateVillage==='function') updateVillage(dt);   // villagers wander
   updateSmoke(dt);   // chimney smoke
   updateAIPlanes(dt);   // airliners circling the bay
+  updateTrain(dt);   // airport shuttle train on the bridge
   if(pmode!=='boat') mooredBoatBob();
   composer.render();
 }
