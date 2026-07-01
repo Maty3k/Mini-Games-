@@ -711,6 +711,7 @@ function buildCity(){
   const cx=CITY.x, cz=CITY.z, grp=new THREE.Group(); scene.add(grp); cityGroup=grp;
   computePlazas();
   LM_PLAZAS.push({x:HELIPAD.x, z:HELIPAD.z, r:13});   // clear an apron so no road/building runs across the helipad
+  LM_PLAZAS.push({x:-1532, z:-646, r:32});            // clear a plaza where the airport bridge lands (AB_C) so it meets a road, not buildings
   buildStreets(grp);
   buildCauseway(grp);
   const csx=cx+DOCK.dx*290, csz=cz+DOCK.dz*290;                   // the car parks here, in the open by the harbour cove
@@ -12574,8 +12575,8 @@ function bridgeHeight(x,z){ if(!BRIDGE) return 0; const ax=x-BRIDGE.x0, az=z-BRI
 // ============================================================
 //  AIRPORT — island, runway, AI planes, pilotable plane + passenger round trips
 // ============================================================
-const AIRPORT={x:-2280,z:-720}, airportY=11, RWY={len:250, half:13};
-function airportEdge(a){ return 215 + 26*Math.sin(a*2+0.5) + 14*Math.cos(a*3-0.4); }   // irregular coastline
+const AIRPORT={x:-2280,z:-800}, airportY=11, RWY={len:360, half:22, z:-960};
+function airportEdge(a){ return 320 + 34*Math.sin(a+0.4) + 18*Math.cos(a*2-0.5); }   // bigger irregular island
 let airportGroup=null, cessna3d=null, airliner3d=null, cessnaProp=null;
 const PLANE={ active:false, model:null, prop:null, auto:false, x:0,z:0,y:0, heading:0, speed:0, pitch:0, roll:0, vy:0, gearY:1, onGround:true, route:null, wp:0, arrived:false, park:null, tag:'' };
 const AIPLANES=[];
@@ -12610,81 +12611,101 @@ function buildPlane(g, opts){ opts=opts||{}; const big=!!opts.airliner;
   return {prop:prop, gearY:R+gh};
 }
 function buildAirport(){
-  const grp=new THREE.Group(); airportGroup=grp; grp.matrixAutoUpdate=false;   // identity transform, never moved
-  scene.add(grp);
-  const ax=AIRPORT.x, az=AIRPORT.z, y=airportY;
-  const asph=new THREE.MeshStandardMaterial({color:0x2c2e33,roughness:0.92,polygonOffset:true,polygonOffsetFactor:-2,polygonOffsetUnits:-2}), apronM=new THREE.MeshStandardMaterial({color:0x45484e,roughness:0.93,polygonOffset:true,polygonOffsetFactor:-2,polygonOffsetUnits:-2}), taxiM=new THREE.MeshStandardMaterial({color:0x3a3d43,roughness:0.92,polygonOffset:true,polygonOffsetFactor:-2,polygonOffsetUnits:-2});
-  const line=new THREE.MeshStandardMaterial({color:0xe8e0c4,roughness:0.6,polygonOffset:true,polygonOffsetFactor:-4,polygonOffsetUnits:-4}), yellow=new THREE.MeshStandardMaterial({color:0xd9b531,roughness:0.6,polygonOffset:true,polygonOffsetFactor:-4,polygonOffsetUnits:-4});
-  // runway (along world +X)
-  const rw=new THREE.Mesh(new THREE.BoxGeometry(RWY.len,0.3,RWY.half*2),asph); rw.position.set(ax,y+0.05,az); rw.receiveShadow=true; grp.add(rw);
-  for(let t=-RWY.len/2+12;t<RWY.len/2-10;t+=14){ const d=new THREE.Mesh(new THREE.BoxGeometry(6,0.04,0.7),line); d.position.set(ax+t,y+0.22,az); grp.add(d); }
-  for(const e of [-1,1]) for(let k=-3;k<=3;k++){ const th=new THREE.Mesh(new THREE.BoxGeometry(4,0.04,1.0),line); th.position.set(ax+e*(RWY.len/2-6),y+0.22,az+k*2.2); grp.add(th); }
-  // taxiway + apron south of the runway
-  const apZ=az-RWY.half-40;
-  const apron=new THREE.Mesh(new THREE.BoxGeometry(150,0.28,68),apronM); apron.position.set(ax,y+0.04,apZ); apron.receiveShadow=true; grp.add(apron);
-  const taxi=new THREE.Mesh(new THREE.BoxGeometry(20,0.26,46),taxiM); taxi.position.set(ax+66,y+0.045,az-RWY.half-20); grp.add(taxi);
-  // terminal + jet bridge stubs
-  const term=new THREE.Mesh(new THREE.BoxGeometry(96,19,30),new THREE.MeshStandardMaterial({color:0xdfe4ea,roughness:0.7})); term.position.set(ax,y+9.5,apZ-42); term.castShadow=term.receiveShadow=true; grp.add(term);
-  const glass=new THREE.Mesh(new THREE.BoxGeometry(88,13,0.5),new THREE.MeshStandardMaterial({color:0x6f93a8,roughness:0.2,metalness:0.3,envMapIntensity:0.8})); glass.position.set(ax,y+8.5,apZ-27); grp.add(glass);
-  const roof=new THREE.Mesh(new THREE.BoxGeometry(102,1.0,34),new THREE.MeshStandardMaterial({color:0xb9bfc6,roughness:0.6})); roof.position.set(ax,y+19.4,apZ-42); grp.add(roof);
-  // control tower
-  const twr=new THREE.Mesh(new THREE.CylinderGeometry(4.2,5.2,34,14),new THREE.MeshStandardMaterial({color:0xcfd4da,roughness:0.7})); twr.position.set(ax+58,y+17,apZ-36); twr.castShadow=true; grp.add(twr);
-  const cab=new THREE.Mesh(new THREE.CylinderGeometry(7.2,5.6,7.5,14),new THREE.MeshStandardMaterial({color:0x21323f,roughness:0.25,metalness:0.4,envMapIntensity:0.9})); cab.position.set(ax+58,y+37,apZ-36); cab.castShadow=true; grp.add(cab);
-  grp.add(new THREE.Mesh(new THREE.ConeGeometry(7.6,3,14),new THREE.MeshStandardMaterial({color:0x9aa0a6,roughness:0.6}))).position.set(ax+58,y+42,apZ-36);
-  // hangar (open arch)
-  const hg=new THREE.Mesh(new THREE.CylinderGeometry(18,18,44,18,1,true,0,Math.PI),new THREE.MeshStandardMaterial({color:0xa6acb3,roughness:0.6,metalness:0.2,side:THREE.DoubleSide})); hg.rotation.z=Math.PI/2; hg.position.set(ax-74,y+0.1,apZ-4); hg.castShadow=true; grp.add(hg);
-  const hgBack=new THREE.Mesh(new THREE.CircleGeometry(18,18,0,Math.PI),new THREE.MeshStandardMaterial({color:0x8a9099,roughness:0.7})); hgBack.rotation.y=-Math.PI/2; hgBack.position.set(ax-96,y+0.1,apZ-4); grp.add(hgBack);
-  // windsock
-  const wsPole=new THREE.Mesh(new THREE.CylinderGeometry(0.12,0.14,8,8),_pMet); wsPole.position.set(ax-RWY.len/2-8,y+4,az+RWY.half+6); grp.add(wsPole);
-  const sock=new THREE.Mesh(new THREE.ConeGeometry(0.9,3.0,10,1,true),new THREE.MeshStandardMaterial({color:0xe8732a,roughness:0.8,side:THREE.DoubleSide})); sock.rotation.z=-Math.PI/2; sock.position.set(ax-RWY.len/2-4,y+7.4,az+RWY.half+6); grp.add(sock);
-  // a couple of taxi/apron edge lights spots (emissive)
-  // parked planes — pilotable Cessna + passenger airliner
-  cessna3d=new THREE.Group(); cessna3d.rotation.order='YXZ'; const ci=buildPlane(cessna3d,{body:0xeef2f6,accent:0x2f6fd0}); cessnaProp=ci.prop;
-  PLANE_PARK_C={x:ax-42,z:apZ+14,hdg:Math.PI/2,gearY:ci.gearY}; cessna3d.position.set(PLANE_PARK_C.x,y+ci.gearY,PLANE_PARK_C.z); cessna3d.rotation.y=PLANE_PARK_C.hdg; scene.add(cessna3d);
-  airliner3d=new THREE.Group(); airliner3d.rotation.order='YXZ'; const ai=buildPlane(airliner3d,{airliner:true,body:0xf3f3f5,accent:0xd23b46});
-  PLANE_PARK_A={x:ax+34,z:apZ+16,hdg:Math.PI/2,gearY:ai.gearY}; airliner3d.position.set(PLANE_PARK_A.x,y+ai.gearY,PLANE_PARK_A.z); airliner3d.rotation.y=PLANE_PARK_A.hdg; scene.add(airliner3d);
-  // ----- modern terminal detailing + apron life -----
-  const mull=new THREE.MeshStandardMaterial({color:0xaeb4bb,roughness:0.5,metalness:0.4}),
+  const grp=new THREE.Group(); airportGroup=grp; grp.matrixAutoUpdate=false; scene.add(grp);
+  const ax=AIRPORT.x, az=AIRPORT.z, y=airportY, rz=RWY.z, txz=rz+46, apz=rz+92, termz=-820;
+  function M(geo,mat,X,Y,Z,cast){ const m=new THREE.Mesh(geo,mat); m.position.set(X,Y,Z); if(cast)m.castShadow=true; grp.add(m); return m; }
+  const B=(w,h,d)=>new THREE.BoxGeometry(w,h,d), C=(a,b,h,s)=>new THREE.CylinderGeometry(a,b,h,s||12);
+  const asph=new THREE.MeshStandardMaterial({color:0x303338,roughness:0.94,polygonOffset:true,polygonOffsetFactor:-2,polygonOffsetUnits:-2}),
+        apronM=new THREE.MeshStandardMaterial({color:0x494d53,roughness:0.93,polygonOffset:true,polygonOffsetFactor:-2,polygonOffsetUnits:-2}),
+        taxiM=new THREE.MeshStandardMaterial({color:0x3c4046,roughness:0.92,polygonOffset:true,polygonOffsetFactor:-2,polygonOffsetUnits:-2}),
+        line=new THREE.MeshStandardMaterial({color:0xeae6d2,roughness:0.6,polygonOffset:true,polygonOffsetFactor:-4,polygonOffsetUnits:-4}),
+        yellow=new THREE.MeshStandardMaterial({color:0xd9b531,roughness:0.6,polygonOffset:true,polygonOffsetFactor:-4,polygonOffsetUnits:-4}),
+        glassM=new THREE.MeshStandardMaterial({color:0x8fb3cb,roughness:0.12,metalness:0.35,envMapIntensity:1.0,transparent:true,opacity:0.62}),
+        panelM=new THREE.MeshStandardMaterial({color:0xeaeef2,roughness:0.55,metalness:0.15}),
+        steelM=new THREE.MeshStandardMaterial({color:0xc3c8ce,roughness:0.5,metalness:0.4}),
+        roofM=new THREE.MeshStandardMaterial({color:0xccd1d6,roughness:0.5,metalness:0.3}),
+        accentM=new THREE.MeshStandardMaterial({color:0x2f6fd0,roughness:0.5}),
         drkM=new THREE.MeshStandardMaterial({color:0x2a2c31,roughness:0.5,metalness:0.5}),
-        yl=new THREE.MeshStandardMaterial({color:0xd9b531,roughness:0.6,polygonOffset:true,polygonOffsetFactor:-4,polygonOffsetUnits:-4}),
         flood=new THREE.MeshStandardMaterial({color:0xfff2c8,emissive:0xffe08a,emissiveIntensity:1.6,roughness:0.4});
-  for(let mx=-42;mx<=42;mx+=6){ const f=new THREE.Mesh(new THREE.BoxGeometry(0.4,13,0.5),mull); f.position.set(ax+mx,y+8.5,apZ-26.7); grp.add(f); }   // curtain-wall mullions
-  const band=new THREE.Mesh(new THREE.BoxGeometry(97,1.8,31),new THREE.MeshStandardMaterial({color:0x2f6fd0,roughness:0.5})); band.position.set(ax,y+17.6,apZ-42); grp.add(band);   // roofline accent
-  const can=new THREE.Mesh(new THREE.BoxGeometry(34,0.5,9),new THREE.MeshStandardMaterial({color:0xe4e8eb,roughness:0.5,metalness:0.2})); can.position.set(ax,y+5.2,apZ-21.5); can.castShadow=true; grp.add(can);   // entrance canopy
-  for(const cxo of [-15,0,15]){ const cc=new THREE.Mesh(new THREE.CylinderGeometry(0.22,0.22,5,8),mull); cc.position.set(ax+cxo,y+2.6,apZ-18); grp.add(cc); }
-  // jet bridge from the terminal to the airliner's forward door
-  { const jbM=new THREE.MeshStandardMaterial({color:0xd7dbe0,roughness:0.5,metalness:0.15});
-    const a1=[ax+28,apZ-24], a2=[PLANE_PARK_A.x-1.5,PLANE_PARK_A.z-6], dxj=a2[0]-a1[0],dzj=a2[1]-a1[1],Lj=Math.hypot(dxj,dzj);
-    const tube=new THREE.Mesh(new THREE.BoxGeometry(3,3,Lj),jbM); tube.position.set((a1[0]+a2[0])/2,y+5.4,(a1[1]+a2[1])/2); tube.rotation.y=Math.atan2(dxj,dzj); tube.castShadow=true; grp.add(tube);
-    const rot=new THREE.Mesh(new THREE.CylinderGeometry(2.4,2.4,4,12),jbM); rot.position.set(a1[0],y+5.4,a1[1]); grp.add(rot);
-    grp.add(new THREE.Mesh(new THREE.CylinderGeometry(0.4,0.5,5,8),mull)).position.set(a2[0],y+2.6,a2[1]); }
-  // yellow lead-in lines to each stand
-  for(const sx of [PLANE_PARK_C.x, PLANE_PARK_A.x]) for(let k=0;k<9;k++){ const d=new THREE.Mesh(new THREE.BoxGeometry(0.4,0.03,2),yl); d.position.set(sx,y+0.2,apZ+26-k*4); grp.add(d); }
-  // ground service vehicles
+  // ===== RUNWAY (E-W, south of the island) + markings =====
+  M(B(RWY.len,0.3,RWY.half*2),asph, ax,y+0.05,rz,false).receiveShadow=true;
+  for(let t=-RWY.len/2+16;t<RWY.len/2-14;t+=16) M(B(7,0.04,0.9),line, ax+t,y+0.23,rz,false);                 // centreline
+  for(const e of [-1,1]){ for(let k=-4;k<=4;k++) M(B(5,0.04,1.1),line, ax+e*(RWY.len/2-8),y+0.23,rz+k*2.4,false);   // threshold bars
+    for(const s of [-1,1]) M(B(14,0.04,2.2),line, ax+e*(RWY.len/2-44),y+0.23,rz+s*4.5,false); }                    // aiming point
+  for(const s of [-1,1]) M(B(RWY.len-6,0.04,0.7),line, ax,y+0.23,rz+s*(RWY.half-1),false);                    // edge lines
+  // ===== TAXIWAY (parallel) + end connectors =====
+  M(B(RWY.len,0.26,26),taxiM, ax,y+0.045,txz,false);
+  for(const e of [-1,1]) M(B(26,0.26,RWY.half*2+56),taxiM, ax+e*(RWY.len/2-16),y+0.045,(rz+txz)/2,false);
+  for(let t=-RWY.len/2+18;t<RWY.len/2;t+=18) M(B(6,0.05,0.5),yellow, ax+t,y+0.2,txz,false);
+  // ===== APRON + stand markings =====
+  M(B(384,0.24,74),apronM, ax,y+0.04,apz,false).receiveShadow=true;
+  for(let t=-RWY.len/2+18;t<RWY.len/2;t+=18) M(B(6,0.05,0.5),yellow, ax+t,y+0.2,apz+32,false);
+  // ===== TERMINAL (big modern hall + concourse piers) =====
+  const tW=300, tH=22;
+  M(B(tW,tH,28),panelM, ax,y+tH/2,termz,true).receiveShadow=true;
+  M(B(tW+16,2.0,38),roofM, ax,y+tH+0.6,termz,true);                                         // roof overhang
+  M(B(tW-6,15,0.7),glassM, ax,y+8.5,termz+14.3,false); M(B(tW-6,15,0.7),glassM, ax,y+8.5,termz-14.3,false);
+  for(let mx=-tW/2+8;mx<=tW/2-8;mx+=7.5){ M(B(0.5,15,0.5),steelM, ax+mx,y+8.5,termz+14.5,false); M(B(0.5,15,0.5),steelM, ax+mx,y+8.5,termz-14.5,false); }
+  M(B(tW+17,2.4,3),accentM, ax,y+tH-1.4,termz+15.5,false); M(B(tW+17,2.4,3),accentM, ax,y+tH-1.4,termz-15.5,false);
+  M(B(70,0.5,13),roofM, ax,y+6.4,termz+22,true);                                            // entrance canopy (landside)
+  for(const cxo of [-28,-10,10,28]) M(C(0.3,0.3,6.6,8),steelM, ax+cxo,y+3.2,termz+19,false);
+  M(B(30,3,3),new THREE.MeshStandardMaterial({color:0x14202b,emissive:0x24506a,emissiveIntensity:0.7,roughness:0.5}), ax,y+tH+2.2,termz+16,false);   // lit name sign
+  const piers=[-104,0,104];
+  for(const px of piers){ M(B(16,8,48),panelM, ax+px,y+4,termz-38,true);
+    M(B(15,6,0.6),glassM, ax+px+7.3,y+4,termz-38,false); M(B(15,6,0.6),glassM, ax+px-7.3,y+4,termz-38,false);
+    M(B(22,5,12),panelM, ax+px,y+2.5,termz-64,true); M(B(20,3.5,0.6),glassM, ax+px,y+2.5,termz-70.2,false); }   // gate lounge
+  // ===== CONTROL TOWER =====
+  const twx=ax+152, twz=termz+2;
+  M(C(3.4,4.8,56,16),panelM, twx,y+28,twz,true);
+  M(C(6.8,4.2,8.5,16),new THREE.MeshStandardMaterial({color:0x1d2c38,roughness:0.2,metalness:0.5,envMapIntensity:1.0}), twx,y+58,twz,true);
+  M(C(7.1,7.1,1.4,16),roofM, twx,y+62.6,twz,false); M(C(0.2,0.2,8,6),steelM, twx,y+67,twz,false);
+  // ===== HANGARS (west of the apron) =====
+  for(let hi=0;hi<2;hi++){ const hx=ax-166, hz=apz-4-hi*56;
+    const hg=M(new THREE.CylinderGeometry(23,23,54,20,1,true,0,Math.PI),new THREE.MeshStandardMaterial({color:0xaeb4bb,roughness:0.6,metalness:0.2,side:THREE.DoubleSide}), hx,y+0.1,hz,true); hg.rotation.z=Math.PI/2;
+    const bk=M(new THREE.CircleGeometry(23,20,0,Math.PI),new THREE.MeshStandardMaterial({color:0x8a9099,roughness:0.7}), hx-27,y+0.1,hz,false); bk.rotation.y=-Math.PI/2; }
+  // ===== PARKED PLANES (Cessna to pilot, airliner for round trips) =====
+  cessna3d=new THREE.Group(); cessna3d.rotation.order='YXZ'; const ci=buildPlane(cessna3d,{body:0xeef2f6,accent:0x2f6fd0}); cessnaProp=ci.prop;
+  PLANE_PARK_C={x:ax-118,z:apz+6,hdg:Math.PI/2,gearY:ci.gearY}; cessna3d.position.set(PLANE_PARK_C.x,y+ci.gearY,PLANE_PARK_C.z); cessna3d.rotation.y=PLANE_PARK_C.hdg; scene.add(cessna3d);
+  airliner3d=new THREE.Group(); airliner3d.rotation.order='YXZ'; const ai=buildPlane(airliner3d,{airliner:true,body:0xf3f3f5,accent:0xd23b46});
+  PLANE_PARK_A={x:ax+8,z:apz+8,hdg:Math.PI/2,gearY:ai.gearY}; airliner3d.position.set(PLANE_PARK_A.x,y+ai.gearY,PLANE_PARK_A.z); airliner3d.rotation.y=PLANE_PARK_A.hdg; scene.add(airliner3d);
+  { const jbM=new THREE.MeshStandardMaterial({color:0xd7dbe0,roughness:0.5,metalness:0.15});   // jet bridge to the airliner
+    const a1=[ax+0,termz-70], a2=[PLANE_PARK_A.x-2,PLANE_PARK_A.z+4], dxj=a2[0]-a1[0],dzj=a2[1]-a1[1],Lj=Math.hypot(dxj,dzj);
+    const tb=M(B(3,3,Lj),jbM,(a1[0]+a2[0])/2,y+5.2,(a1[1]+a2[1])/2,true); tb.rotation.y=Math.atan2(dxj,dzj); M(C(2.4,2.4,4,12),jbM,a1[0],y+5.2,a1[1],false); }
+  for(const sx of [PLANE_PARK_C.x, PLANE_PARK_A.x]) for(let k=0;k<8;k++) M(B(0.4,0.03,2),yellow, sx,y+0.2,apz+30-k*4,false);   // lead-in lines
+  // ===== GROUND VEHICLES + STAIRS + FLOODLIGHTS =====
   function gveh(px,pz,ry,col,w,h,l){ const g2=new THREE.Group(); const m=new THREE.MeshStandardMaterial({color:col,roughness:0.5,metalness:0.25});
-    g2.add(new THREE.Mesh(new THREE.BoxGeometry(w,h,l),m)).position.y=h/2+0.35;
-    g2.add(new THREE.Mesh(new THREE.BoxGeometry(w*0.9,h*0.7,l*0.4),m)).position.set(0,h+0.45,l*0.28);
-    for(const wx of [-1,1]) for(const wz of [-1,1]){ const wh=new THREE.Mesh(new THREE.CylinderGeometry(0.35,0.35,0.3,8),drkM); wh.rotation.z=Math.PI/2; wh.position.set(wx*w*0.42,0.35,wz*l*0.34); g2.add(wh); }
-    g2.position.set(px,y,pz); g2.rotation.y=ry; grp.add(g2); return g2; }
-  gveh(ax+50,apZ+18,0,0xe0e3e6,3.4,2.2,6.2);                       // fuel bowser
-  gveh(ax-6,apZ+22,0.5,0xd9a441,1.8,1.4,3.4);                      // baggage tug
-  gveh(ax+18,apZ+24,-0.4,0x2f9e5a,1.8,1.4,3.4);                    // pushback tug
-  for(let k=0;k<3;k++){ const cart=new THREE.Mesh(new THREE.BoxGeometry(1.6,1.0,2.2),new THREE.MeshStandardMaterial({color:0xb9bec4,roughness:0.7})); cart.position.set(ax-6+Math.sin(0.5)*(4+k*2.6),y+0.9,apZ+22+Math.cos(0.5)*(4+k*2.6)); grp.add(cart); }
-  // mobile passenger stairs by the airliner
+    g2.add(new THREE.Mesh(B(w,h,l),m)).position.y=h/2+0.35; g2.add(new THREE.Mesh(B(w*0.9,h*0.7,l*0.4),m)).position.set(0,h+0.45,l*0.28);
+    for(const wx of [-1,1]) for(const wz of [-1,1]){ const wh=new THREE.Mesh(C(0.35,0.35,0.3,8),drkM); wh.rotation.z=Math.PI/2; wh.position.set(wx*w*0.42,0.35,wz*l*0.34); g2.add(wh); }
+    g2.position.set(px,y,pz); g2.rotation.y=ry; grp.add(g2); }
+  gveh(ax+34,apz+20,0,0xe0e3e6,3.4,2.2,6.2); gveh(ax-14,apz+24,0.5,0xd9a441,1.8,1.4,3.4); gveh(ax-100,apz+18,-0.3,0x2f9e5a,1.8,1.4,3.4);
   { const st=new THREE.Group(), sm=new THREE.MeshStandardMaterial({color:0xdadfe4,roughness:0.6,metalness:0.3});
-    for(let s=0;s<7;s++) st.add(new THREE.Mesh(new THREE.BoxGeometry(2.4,0.2,0.7),sm)).position.set(0,0.6+s*0.42,s*0.62);
-    st.position.set(PLANE_PARK_A.x-5,y,PLANE_PARK_A.z+3.5); st.rotation.y=Math.PI/2; grp.add(st); }
-  // apron floodlight masts
-  for(const fp of [[-72,28],[72,28],[-72,-30],[72,-30]]){ grp.add(new THREE.Mesh(new THREE.CylinderGeometry(0.3,0.4,16,8),drkM)).position.set(ax+fp[0],y+8,apZ+fp[1]);
-    grp.add(new THREE.Mesh(new THREE.BoxGeometry(4,0.6,1.2),flood)).position.set(ax+fp[0],y+16,apZ+fp[1]); }
-  // a dock on the bay-facing shore so you can arrive by jetski/boat (or fly the heli in & land)
-  { const au={x:-ax,z:-az}, L=Math.hypot(au.x,au.z); au.x/=L; au.z/=L; const fE=airportEdge(Math.atan2(au.z,au.x)), ang=Math.atan2(au.x,au.z);
-    const dk=new THREE.Group(); dk.position.set(ax+au.x*(fE+20),0,az+au.z*(fE+20)); dk.rotation.y=ang; grp.add(dk);
+    for(let s=0;s<7;s++) st.add(new THREE.Mesh(B(2.4,0.2,0.7),sm)).position.set(0,0.6+s*0.42,s*0.62);
+    st.position.set(PLANE_PARK_A.x-6,y,PLANE_PARK_A.z+4); st.rotation.y=Math.PI/2; grp.add(st); }
+  for(const fp of [[-150,20],[150,20],[-150,-34],[150,-34]]){ M(C(0.3,0.4,17,8),drkM, ax+fp[0],y+8.5,apz+fp[1],false); M(B(4,0.6,1.2),flood, ax+fp[0],y+17,apz+fp[1],false); }
+  // windsock by the runway
+  M(C(0.12,0.14,8,8),steelM, ax-RWY.len/2-10,y+4,rz+RWY.half+7,false);
+  { const sk=M(new THREE.ConeGeometry(0.9,3,10,1,true),new THREE.MeshStandardMaterial({color:0xe8732a,roughness:0.8,side:THREE.DoubleSide}), ax-RWY.len/2-6,y+7.4,rz+RWY.half+7,false); sk.rotation.z=-Math.PI/2; }
+  // ===== LANDSIDE: forecourt + BIG CAR PARK + access road to the bridge =====
+  const pkZ=-745, pkX=ax+20;
+  M(B(300,0.2,15),asph, ax,y+0.12,termz+30,false).receiveShadow=true;                       // forecourt drop-off
+  M(B(288,0.2,82),asph, pkX,y+0.1,pkZ,false).receiveShadow=true;                             // car park slab
+  const bayM=new THREE.MeshStandardMaterial({color:0xeae6d2,roughness:0.6,polygonOffset:true,polygonOffsetFactor:-4,polygonOffsetUnits:-4});
+  for(let r=-1;r<=1;r+=2) for(let k=-12;k<=12;k++) M(B(0.25,0.03,11),bayM, pkX+k*11,y+0.22,pkZ+r*19,false);
+  const cCol=[0xcf3b3b,0x2f6fd0,0xe4e7ea,0x2b2f36,0x2f9e5a,0xd9a441,0x8a8f96];
+  for(let r=-1;r<=1;r+=2) for(let k=-11;k<=11;k++){ if((k*7+r)%3===0) continue; const cc=cCol[((k+11)*2+ (r>0?1:0))%7], pc=new THREE.Group();
+    pc.add(new THREE.Mesh(B(4.4,1.3,2.0),new THREE.MeshStandardMaterial({color:cc,roughness:0.4,metalness:0.3}))).position.y=0.85;
+    pc.add(new THREE.Mesh(B(2.6,1.0,1.8),new THREE.MeshStandardMaterial({color:cc,roughness:0.4,metalness:0.3}))).position.set(-0.2,1.6,0);
+    pc.position.set(pkX+k*11+(r>0?2.4:-2.4),y+0.2,pkZ+r*13); pc.rotation.y=Math.PI/2; grp.add(pc); }
+  { const s=AB_A, ex=-2140, ez=pkZ, mx=(s.x+ex)/2, mz=(s.z+ez)/2, L=Math.hypot(ex-s.x,ez-s.z), a=Math.atan2(ex-s.x,ez-s.z);   // access road bridge->park
+    const rd=M(B(14,0.2,L+14),asph, mx,y+0.12,mz,false); rd.rotation.y=a; rd.receiveShadow=true; }
+  // ===== DOCK on the east shore (arrive by boat/jetski) =====
+  { const au={x:1,z:0}, fE=airportEdge(0), ang=Math.PI/2;
+    const dk=new THREE.Group(); dk.position.set(ax+(fE+20),0,az); dk.rotation.y=ang; grp.add(dk);
     const plank=new THREE.MeshStandardMaterial({color:0x9a7748,roughness:0.9}), post=new THREE.MeshStandardMaterial({color:0x6e5230,roughness:0.95});
-    const deck=new THREE.Mesh(new THREE.BoxGeometry(5,0.35,22),plank); deck.position.set(0,2.4,9); deck.receiveShadow=true; dk.add(deck);
-    for(let z=2;z<=18;z+=4) for(const px of [-2.1,2.1]){ const pl=new THREE.Mesh(new THREE.CylinderGeometry(0.18,0.18,9,8),post); pl.position.set(px,-1.6,z); dk.add(pl); }
-    const ramp=new THREE.Mesh(new THREE.BoxGeometry(4,0.3,28),plank); ramp.position.set(0,(2.4+y)/2,-12); ramp.rotation.x=Math.atan2(y-2.4,26); dk.add(ramp);
-    ISLAND_LANDINGS.push({ x:ax+au.x*(fE+28), z:az+au.z*(fE+28), lx:ax+au.x*(fE-6), lz:az+au.z*(fE-6), cx:ax, cz:az, name:'the airport' }); }
+    dk.add(new THREE.Mesh(B(5,0.35,22),plank)).position.set(0,2.4,9);
+    for(let z=2;z<=18;z+=4) for(const px of [-2.1,2.1]) dk.add(new THREE.Mesh(C(0.18,0.18,9,8),post)).position.set(px,-1.6,z);
+    const ramp=dk.add(new THREE.Mesh(B(4,0.3,28),plank)); ramp.position.set(0,(2.4+y)/2,-12); ramp.rotation.x=Math.atan2(y-2.4,26);
+    ISLAND_LANDINGS.push({ x:ax+fE+28, z:az, lx:ax+fE-6, lz:az, cx:ax, cz:az, name:'the airport' }); }
   buildAIPlanes();
 }
 let PLANE_PARK_C=null, PLANE_PARK_A=null;
@@ -12714,19 +12735,19 @@ function startPlane(tag){ const isC=(tag==='pilot'); PLANE.tag=tag; PLANE.model=
   pmode='plane'; avatar.visible=false; SFX.heliStart&&SFX.heliStart();
   if(PLANE.auto){ PLANE.route=planeRoute(pk); PLANE.wp=0; toast('Round trip — sit back and enjoy the flight','#aef0ff'); }
   else toast('Flying ✈  W/S throttle · A/D turn · ↑/↓ climb-dive · land on the runway, F to exit','#aef0ff'); }
-function planeRoute(pk){ const ax=AIRPORT.x, az=AIRPORT.z, G=airportY+pk.gearY;
-  // back-taxi west, take off east, scenic loop past the city skyline, return & land east→west, taxi to the stand
-  return [ {x:ax-RWY.len/2+24, z:az,             alt:G,   spd:16},
-           {x:ax+RWY.len/2-10, z:az,             alt:G,   spd:66},   // rotate / take off east toward the city
-           {x:ax+520,          z:az-40,          alt:150, spd:84},   // climb out east
+function planeRoute(pk){ const ax=AIRPORT.x, rz=RWY.z, G=airportY+pk.gearY;
+  // back-taxi to the west threshold, take off east, scenic loop past the city, land east→west, taxi to the stand
+  return [ {x:ax-RWY.len/2+24, z:rz,             alt:G,   spd:16},
+           {x:ax+RWY.len/2-10, z:rz,             alt:G,   spd:66},   // rotate / take off east toward the city
+           {x:ax+520,          z:rz+40,          alt:150, spd:84},   // climb out east
            {x:CITY.x-260,      z:CITY.z+220,     alt:230, spd:90},   // approach the skyline
            {x:CITY.x+340,      z:CITY.z-40,      alt:245, spd:90},   // pass the city skyline
            {x:CITY.x-40,       z:CITY.z-440,     alt:235, spd:88},   // bank around north of the city
-           {x:ax+760,          z:az-120,         alt:175, spd:78},   // line up east of the field, heading back west
-           {x:ax+RWY.len/2+40, z:az,             alt:G+12,spd:44},   // short final from the east
-           {x:ax+RWY.len/2-70, z:az,             alt:G,   spd:30},   // touchdown at the east threshold
-           {x:ax+90,           z:az,             alt:G,   spd:16},   // roll out west, slowing
-           {x:ax+56,           z:az-RWY.half-16, alt:G,   spd:13},   // turn off onto the taxiway
+           {x:ax+760,          z:rz-120,         alt:175, spd:78},   // line up east of the field, heading back west
+           {x:ax+RWY.len/2+40, z:rz,             alt:G+12,spd:44},   // short final from the east
+           {x:ax+RWY.len/2-70, z:rz,             alt:G,   spd:30},   // touchdown at the east threshold
+           {x:ax+90,           z:rz,             alt:G,   spd:16},   // roll out west, slowing
+           {x:ax+RWY.len/2-110,z:rz+46,          alt:G,   spd:14},   // turn off onto the taxiway
            {x:pk.x,            z:pk.z,           alt:G,   spd:12, last:true} ]; }
 function updatePlane(dt){ const P=PLANE; if(!P.model) return;
   if(P.auto){
@@ -12762,18 +12783,18 @@ function updatePlane(dt){ const P=PLANE; if(!P.model) return;
 // ============================================================
 let ABRIDGE=null, TRAIN=null; const TRAIN_CARS=[]; let onTrainCar=1, trainCamMode=0;
 const AB_C={x:-1532,z:-646}, AB_A={x:-2052,z:-697};        // city end / airport end (routed clear of the cargo port)
-const AB_LOT={x:-2098,z:-726};                             // island car park (NE of the runway)
+const AB_LOT={x:-2260,z:-745};                             // airport car park (landside, built in buildAirport)
 function _abStrut(g,mat,a,b,rad){ const dx=b[0]-a[0],dy=b[1]-a[1],dz=b[2]-a[2],L=Math.hypot(dx,dy,dz)||0.001;
   const m=new THREE.Mesh(new THREE.CylinderGeometry(rad,rad,L,6),mat); m.position.set((a[0]+b[0])/2,(a[1]+b[1])/2,(a[2]+b[2])/2);
   m.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), new THREE.Vector3(dx,dy,dz).normalize()); m.castShadow=true; g.add(m); return m; }
 function abH(x,z){ const B=ABRIDGE; if(!B) return 15; const ax=x-B.x0,az=z-B.z0,t=Math.max(0,Math.min(1,(ax*B.dx+az*B.dz)/B.len)); return B.y0+(B.y1-B.y0)*t+B.arch*Math.sin(t*Math.PI)+0.55; }
 function onABridgeDeck(x,z){ const B=ABRIDGE; if(!B) return false; const ax=x-B.x0,az=z-B.z0,al=ax*B.dx+az*B.dz; if(al<0.5||al>B.len-0.5) return false; return Math.abs(ax*B.nx+az*B.nz)<12.6; }
 function onAirportGround(x,z){
-  if(x>-2124&&x<-2072&&z>-746&&z<-706) return true;                                    // airport car park
-  const sx=AB_A.x,sz=AB_A.z,ddx=AB_LOT.x-sx,ddz=AB_LOT.z-sz,L2=(ddx*ddx+ddz*ddz)||1;   // link road bridge->park
+  if(x>-2402&&x<-2118&&z>-788&&z<-702) return true;                                    // big airport car park + forecourt
+  const sx=AB_A.x,sz=AB_A.z,ddx=-2140-sx,ddz=AB_LOT.z-sz,L2=(ddx*ddx+ddz*ddz)||1;      // access road bridge->park
   let tt=((x-sx)*ddx+(z-sz)*ddz)/L2; tt=Math.max(0,Math.min(1,tt)); const px=sx+ddx*tt,pz=sz+ddz*tt;
-  return (x-px)*(x-px)+(z-pz)*(z-pz)<49; }
-function onCarBridge(x,z){ if((x-AB_C.x)*(x-AB_C.x)+(z-AB_C.z)*(z-AB_C.z)<256) return true;   // city bridge-foot plaza
+  return (x-px)*(x-px)+(z-pz)*(z-pz)<64; }
+function onCarBridge(x,z){ if((x-AB_C.x)*(x-AB_C.x)+(z-AB_C.z)*(z-AB_C.z)<841) return true;   // city bridge-foot plaza (r29)
   const B=ABRIDGE; if(B){ const ax=x-B.x0,az=z-B.z0,al=ax*B.dx+az*B.dz; if(al>-2&&al<B.len+2){ const p=ax*B.nx+az*B.nz; if(p>-10&&p<1.6) return true; } }
   return onAirportGround(x,z); }
 function buildAirportBridge(){
@@ -12795,7 +12816,9 @@ function buildAirportBridge(){
         lampDk=new THREE.MeshStandardMaterial({color:0x2a2c31,roughness:0.5,metalness:0.5});
   const N=26, seg=len/N, ROAD=-4, RAIL=6.5, HALF=13;
   // paved bridge-foot plaza where the perimeter boulevard meets the ramp
-  { const foot=new THREE.Mesh(new THREE.CylinderGeometry(16,16,0.3,20),asph); foot.position.set(c.x,15.05,c.z); foot.receiveShadow=true; grp.add(foot); }
+  { const foot=new THREE.Mesh(new THREE.CylinderGeometry(28,28,0.4,32),asph); foot.position.set(c.x,15.02,c.z); foot.receiveShadow=true; grp.add(foot);
+    const ring=new THREE.Mesh(new THREE.TorusGeometry(19,0.45,6,44),lineM); ring.rotation.x=Math.PI/2; ring.position.set(c.x,15.26,c.z); grp.add(ring);   // roundabout marking
+    for(let a=0;a<6.283;a+=Math.PI/2){ const stub=new THREE.Mesh(new THREE.BoxGeometry(0.5,0.05,10),lineM); stub.position.set(c.x+Math.cos(a)*24,15.26,c.z+Math.sin(a)*24); stub.rotation.y=a; grp.add(stub); } }
   for(let i=0;i<N;i++){ const t0=i/N,t1=(i+1)/N,tm=(t0+t1)/2, py=hAt(tm), tilt=Math.atan2(hAt(t1)-hAt(t0),seg), bx=c.x+dx*(len*tm), bz=c.z+dz*(len*tm);
     function slab(w,h,perp,yy,mat){ const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,seg+0.3),mat); m.position.set(bx+nx*perp,yy,bz+nz*perp); m.rotation.order='YXZ'; m.rotation.y=ang; m.rotation.x=-tilt; grp.add(m); return m; }
     slab(HALF*2,0.7,0,py,conc).receiveShadow=true;                       // deck
@@ -12861,18 +12884,7 @@ function buildAirportBridge(){
     for(let o=-hl+12;o<=hl-12;o+=24){ put(new THREE.CylinderGeometry(0.1,0.14,4,8),lampDk,alc+o,12.6,y+2.9,false); put(new THREE.BoxGeometry(0.5,0.2,0.5),lampHead,alc+o,12.6,y+5.0,false); }
   }
   station(42,hAt(42/len),-1); station(len-42,hAt((len-42)/len),1);
-  // ---- island car park + link road ----
-  { const ag=new THREE.Group(); ag.matrixAutoUpdate=false; scene.add(ag); const ay=airportY;
-    const rl=Math.hypot(AB_LOT.x-a.x,AB_LOT.z-a.z), rang=Math.atan2(AB_LOT.x-a.x,AB_LOT.z-a.z);
-    const road=new THREE.Mesh(new THREE.BoxGeometry(12,0.2,rl+10),asph); road.position.set((a.x+AB_LOT.x)/2,ay+0.12,(a.z+AB_LOT.z)/2); road.rotation.y=rang; road.receiveShadow=true; ag.add(road);
-    const lot=new THREE.Mesh(new THREE.BoxGeometry(52,0.2,40),asph); lot.position.set(AB_LOT.x,ay+0.1,AB_LOT.z); lot.receiveShadow=true; ag.add(lot);
-    const bay=new THREE.MeshStandardMaterial({color:0xe9e2c8,roughness:0.6,polygonOffset:true,polygonOffsetFactor:-4,polygonOffsetUnits:-4});
-    for(let r=-1;r<=1;r+=2) for(let k=-2;k<=2;k++){ const bl=new THREE.Mesh(new THREE.BoxGeometry(0.2,0.03,10),bay); bl.position.set(AB_LOT.x+k*10.5,ay+0.22,AB_LOT.z+r*13); ag.add(bl); }
-    const cCol=[0xcf3b3b,0x2f6fd0,0xe4e7ea,0x2b2f36,0x2f9e5a,0xd9a441];
-    for(let k=-2;k<=2;k++){ if(k===1) continue; const cc=cCol[(k+2)%6], pc=new THREE.Group();
-      pc.add(new THREE.Mesh(new THREE.BoxGeometry(4.4,1.3,2.0),new THREE.MeshStandardMaterial({color:cc,roughness:0.4,metalness:0.3}))).position.y=0.85;
-      pc.add(new THREE.Mesh(new THREE.BoxGeometry(2.6,1.0,1.8),new THREE.MeshStandardMaterial({color:cc,roughness:0.4,metalness:0.3}))).position.set(-0.2,1.65,0);
-      pc.position.set(AB_LOT.x+k*10.5,ay+0.2,AB_LOT.z-13); pc.rotation.y=Math.PI/2; ag.add(pc); } }
+  // (the airport car park + access road are built in buildAirport, on the landside by the bridge)
   // ---- the shuttle train ----
   const bodyM=new THREE.MeshStandardMaterial({color:0xf4f6f8,roughness:0.4,metalness:0.2,envMapIntensity:0.6}),
         stripeM=new THREE.MeshStandardMaterial({color:0x2f6fd0,roughness:0.5}), winM=new THREE.MeshStandardMaterial({color:0x16323f,roughness:0.2,metalness:0.4,emissive:0x1a3a4a,emissiveIntensity:0.25}),
