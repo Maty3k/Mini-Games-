@@ -489,7 +489,7 @@ function makeTrafficCar(col){ const g=new THREE.Group();
 const TCOLS=[0xd23b30,0x2f6fd0,0xe8e6e1,0x2a2c2e,0xd9b531,0x3a8a5a,0x9a4bd0,0xdd7a2a];
 function buildTraffic(parent){
   const DIRS=[[1,0],[-1,0],[0,1],[0,-1]];
-  for(let k=0;k<10;k++){ const g=makeTrafficCar(TCOLS[k%TCOLS.length]); parent.add(g);
+  for(let k=0;k<20;k++){ const g=makeTrafficCar(TCOLS[k%TCOLS.length]); parent.add(g);
     let si,sj,tries=0; do{ si=(Math.random()*(NHI-NLO)|0)+NLO; sj=(Math.random()*(NHI-NLO)|0)+NLO; }while(!nodeInCity(si,sj)&&++tries<40);
     const dr=DIRS[(Math.random()*4)|0];
     TRAFFIC.push({grp:g, si:si, sj:sj, di:dr[0], dj:dr[1], t:Math.random(), speed:7+Math.random()*5, x:0, z:0, heading:0}); }
@@ -8400,6 +8400,40 @@ function buildCruiseInterior(g){
 }
 
 const VESSELS3D=[];
+// ---- lightweight ambient craft (face +Z, waterline at y=0) ----
+function _boatBow(mat,z,w,hy){ const b=new THREE.Mesh(new THREE.ConeGeometry(w,z*0.62,4),mat); b.rotation.x=-Math.PI/2; b.rotation.y=Math.PI/4; b.position.z=z; b.scale.set(1,hy,1); return b; }
+function buildSailboat(g){ const hull=new THREE.MeshStandardMaterial({color:[0xf2f2f4,0x203a5a,0x8a1f27][(Math.random()*3)|0],roughness:0.4,metalness:0.1}), wood=new THREE.MeshStandardMaterial({color:0x9a6b3a,roughness:0.75}), sail=new THREE.MeshStandardMaterial({color:0xf6f4ee,roughness:0.75,side:THREE.DoubleSide});
+  g.add(new THREE.Mesh(new THREE.BoxGeometry(2.1,1.0,6.6),hull));
+  const bow=_boatBow(hull,4.0,1.05,0.42); g.add(bow);
+  g.add(new THREE.Mesh(new THREE.BoxGeometry(1.7,0.18,5.8),wood)).position.y=0.5;
+  g.add(new THREE.Mesh(new THREE.CylinderGeometry(0.09,0.12,9,8),wood)).position.set(0,5,0.2);
+  g.add(new THREE.Mesh(new THREE.BoxGeometry(0.05,6.0,3.2),sail)).position.set(0.05,3.6,-1.2);
+  g.add(new THREE.Mesh(new THREE.BoxGeometry(0.05,4.4,2.0),sail)).position.set(-0.05,3.0,1.7);
+  g.traverse(function(o){if(o.isMesh)o.castShadow=true;}); }
+function buildMotorboat(g){ const c=[0xffffff,0x2f6fd0,0xd23b30,0x14171c][(Math.random()*4)|0];
+  const hull=new THREE.MeshStandardMaterial({color:c,roughness:0.3,metalness:0.3,envMapIntensity:0.9}), white=new THREE.MeshStandardMaterial({color:0xf4f6f8,roughness:0.3}), glass=new THREE.MeshStandardMaterial({color:0x16323f,roughness:0.15,metalness:0.4});
+  g.add(new THREE.Mesh(new THREE.BoxGeometry(2.4,1.0,6.2),hull));
+  g.add(_boatBow(hull,3.8,1.2,0.42));
+  g.add(new THREE.Mesh(new THREE.BoxGeometry(2.0,0.15,5.2),white)).position.y=0.5;
+  g.add(new THREE.Mesh(new THREE.BoxGeometry(1.7,0.9,2.2),white)).position.set(0,1.0,-0.4);
+  g.add(new THREE.Mesh(new THREE.BoxGeometry(1.65,0.7,0.1),glass)).position.set(0,1.1,0.75);
+  g.traverse(function(o){if(o.isMesh)o.castShadow=true;}); }
+function buildTrawler(g){ const hull=new THREE.MeshStandardMaterial({color:[0x2f5d4a,0x6b2f2f,0x244a6b][(Math.random()*3)|0],roughness:0.7}), wood=new THREE.MeshStandardMaterial({color:0x8a5a34,roughness:0.8}), white=new THREE.MeshStandardMaterial({color:0xd8dad8,roughness:0.6}), rust=new THREE.MeshStandardMaterial({color:0xb2662f,roughness:0.9});
+  g.add(new THREE.Mesh(new THREE.BoxGeometry(3.2,1.6,8.6),hull)).position.y=-0.1;
+  g.add(_boatBow(hull,5.0,1.55,0.5));
+  g.add(new THREE.Mesh(new THREE.BoxGeometry(2.9,0.2,7.6),wood)).position.y=0.7;
+  g.add(new THREE.Mesh(new THREE.BoxGeometry(2.4,2.0,3),white)).position.set(0,1.8,-2);
+  g.add(new THREE.Mesh(new THREE.CylinderGeometry(0.1,0.12,6,6),rust)).position.set(0,4,0.5);
+  g.add(new THREE.Mesh(new THREE.BoxGeometry(0.15,0.15,5),rust)).position.set(0,3,2);
+  g.traverse(function(o){if(o.isMesh)o.castShadow=true;}); }
+function buildFerry(g){ const hull=new THREE.MeshStandardMaterial({color:0x22456b,roughness:0.5,metalness:0.2}), white=new THREE.MeshStandardMaterial({color:0xeef1f4,roughness:0.5}), glass=new THREE.MeshStandardMaterial({color:0x18323f,roughness:0.2,metalness:0.4}), red=new THREE.MeshStandardMaterial({color:0xcf3b30,roughness:0.5});
+  g.add(new THREE.Mesh(new THREE.BoxGeometry(6,2.4,20),hull)).position.y=-0.2;
+  g.add(_boatBow(hull,12,3,0.4));
+  g.add(new THREE.Mesh(new THREE.BoxGeometry(5.6,2.4,16),white)).position.set(0,2.2,-1);
+  for(const s of [-1,1]) g.add(new THREE.Mesh(new THREE.BoxGeometry(0.05,1.0,14),glass)).position.set(s*2.85,2.4,-1);
+  g.add(new THREE.Mesh(new THREE.BoxGeometry(4.6,1.8,10),white)).position.set(0,4.3,-2);
+  g.add(new THREE.Mesh(new THREE.CylinderGeometry(0.9,1.1,2.6,10),red)).position.set(0,6.2,-4);
+  g.traverse(function(o){if(o.isMesh)o.castShadow=true;}); }
 function buildWaterTraffic(){
   function add(fn, cx,cz, rad, ang0, lin, bob, tilt, scale, ship, interiorFn, boardRange){ const grp=new THREE.Group(); grp.rotation.order='YXZ'; let parts=null;
     try{ parts=fn(grp)||{}; }catch(e){ console.warn('vessel build failed:',e.message); return null; }
@@ -8425,6 +8459,17 @@ function buildWaterTraffic(){
     try{ buildAIJetski(grp); }catch(e){ continue; } scene.add(grp);
     const a=Math.random()*6.283, cr=120+Math.random()*260;
     VESSELS3D.push({grp:grp, cx:Math.cos(a)*cr*0.5+90, cz:Math.sin(a)*cr*0.5+120, rad:55+Math.random()*150, ang:Math.random()*6.283, lin:12+Math.random()*8, bob:1.0, tilt:0.55, rotor:null}); }
+  // scatter sailboats / motorboats / trawlers across every stretch of open water, bay-wide
+  function _loopClear(cx,cz,rad){ for(let a=0;a<6.283;a+=0.28){ if(landH(cx+Math.cos(a)*rad,cz+Math.sin(a)*rad)>-1.6) return false; } return true; }
+  const _btypes=[buildSailboat,buildSailboat,buildSailboat,buildMotorboat,buildMotorboat,buildTrawler], _used=[]; let _placed=0;
+  for(let cxx=-2200; cxx<=1500 && _placed<15; cxx+=170) for(let czz=-1150; czz<=1300 && _placed<15; czz+=170){
+    const rad=140+((_placed*67)%150); if(!_loopClear(cxx,czz,rad)) continue;
+    let near=false; for(const u of _used){ if(Math.hypot(u[0]-cxx,u[1]-czz)<340){near=true;break;} } if(near) continue; _used.push([cxx,czz]);
+    const grp=new THREE.Group(); grp.rotation.order='YXZ'; _btypes[_placed%_btypes.length](grp); grp.traverse(function(o){o.castShadow=false;}); scene.add(grp);
+    VESSELS3D.push({grp:grp, cx:cxx, cz:czz, rad:rad, ang:Math.random()*6.283, lin:3.5+Math.random()*4, bob:1, tilt:0.28+Math.random()*0.18, rotor:null}); _placed++; }
+  // a passenger ferry on the first big clear loop we can find
+  for(const cd of [[-700,-100,360],[200,-200,440],[-400,500,380],[500,300,520]]){ if(_loopClear(cd[0],cd[1],cd[2])){ const grp=new THREE.Group(); grp.rotation.order='YXZ'; buildFerry(grp); scene.add(grp);
+    VESSELS3D.push({grp:grp, cx:cd[0], cz:cd[1], rad:cd[2], ang:Math.random()*6.28, lin:6, bob:1, tilt:0.1, rotor:null}); break; } }
 }
 function updateWaterTraffic(dt){
   for(const v of VESSELS3D){
@@ -12854,6 +12899,16 @@ function updateTrain(dt){ if(!TRAIN||!ABRIDGE) return; const T=TRAIN, B=ABRIDGE,
   for(let i=0;i<TRAIN_CARS.length;i++){ const al=Math.max(2,Math.min(B.len-2,T.s-i*sp)), t=al/B.len;
     const y=B.y0+(B.y1-B.y0)*t+B.arch*Math.sin(t*Math.PI)+1.05, x=B.x0+B.dx*al+B.nx*6.5, z=B.z0+B.dz*al+B.nz*6.5;
     TRAIN_CARS[i].position.set(x,y,z); TRAIN_CARS[i].rotation.y=ang; } }
+// ---- ambient road traffic flowing across the airport bridge (two one-way streams) ----
+const BRIDGE_CARS=[];
+function buildBridgeTraffic(){ if(!ABRIDGE) return; const B=ABRIDGE;
+  for(let k=0;k<8;k++){ const g=makeTrafficCar(TCOLS[(k+3)%TCOLS.length]); scene.add(g);
+    BRIDGE_CARS.push({grp:g, s:Math.random()*B.len, dir:(k%2?1:-1), speed:9+Math.random()*7}); } }
+function updateBridgeTraffic(dt){ if(!ABRIDGE||!BRIDGE_CARS.length) return; const B=ABRIDGE, ang=Math.atan2(B.dx,B.dz);
+  for(const c of BRIDGE_CARS){ c.s+=c.dir*c.speed*dt;
+    if(c.dir>0 && c.s>B.len) c.s-=B.len; else if(c.dir<0 && c.s<0) c.s+=B.len;    // wrap round for a continuous flow
+    const perp=-4+c.dir*2.6, t=c.s/B.len, y=B.y0+(B.y1-B.y0)*t+B.arch*Math.sin(t*Math.PI)+0.55;
+    c.grp.position.set(B.x0+B.dx*c.s+B.nx*perp, y, B.z0+B.dz*c.s+B.nz*perp); c.grp.rotation.y=c.dir>0?ang:ang+Math.PI; } }
 // ---- waiting passengers / ground crew at the stations & airport (world-space wander) ----
 const AREA_NPCS=[];
 function spawnAreaNPCs(cx,cz,gy,hx,hz,count,idle){ for(let i=0;i<count;i++){ const grp=new THREE.Group(); grp.rotation.order='YXZ';
@@ -12919,6 +12974,7 @@ function buildWorld(){
   buildBridge();
   buildAirport();
   buildAirportBridge();
+  buildBridgeTraffic();
   buildLinkNPCs();
   optimizeScene();                              // light budget + shadow pruning (perf)
   // pre-render the minimap base (bay silhouette)
@@ -14644,6 +14700,7 @@ function loop(now){
   updateSmoke(dt);   // chimney smoke
   updateAIPlanes(dt);   // airliners circling the bay
   updateTrain(dt);   // airport shuttle train on the bridge
+  updateBridgeTraffic(dt);   // cars crossing the airport bridge
   updateAreaNPCs(dt);   // station / airport crowds
   if(pmode!=='boat') mooredBoatBob();
   composer.render();
