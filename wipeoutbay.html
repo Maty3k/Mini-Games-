@@ -14156,7 +14156,17 @@ let JET_YAW=0;
 function buildJet(){ if(!fighterProto){ return; } const m=fighterProto.clone(true); m.rotation.y=JET_YAW; m.updateMatrixWorld(true);
   const b1=new THREE.Box3().setFromObject(m), s1=b1.getSize(new THREE.Vector3()), sc=12/Math.max(s1.x,s1.z,0.01); m.scale.setScalar(sc); m.updateMatrixWorld(true);
   const b2=new THREE.Box3().setFromObject(m), c=b2.getCenter(new THREE.Vector3()); m.position.sub(c);
-  jet3d.add(m); jet3d.traverse(function(o){ if(o.isMesh) o.castShadow=true; }); }
+  jet3d.add(m); jet3d.traverse(function(o){ if(o.isMesh) o.castShadow=true; });
+  // ---- twin AFTERBURNER flames at the tail (additive glow, driven by throttle) ----
+  m.updateMatrixWorld(true); const b3=new THREE.Box3().setFromObject(m);
+  const rearZ=b3.min.z+0.6, engY=(b3.min.y+b3.max.y)/2-0.15, ex=Math.max(0.8,(b3.max.x-b3.min.x)*0.11);
+  JET.burnerGlow=new THREE.MeshBasicMaterial({color:0xff7a1e,transparent:true,opacity:0.35,blending:THREE.AdditiveBlending,depthWrite:false});
+  JET.burnerCore=new THREE.MeshBasicMaterial({color:0xfff0bc,transparent:true,opacity:0.55,blending:THREE.AdditiveBlending,depthWrite:false});
+  JET.burners=[];
+  for(const bx of [-ex,ex]){ const g2=new THREE.Group();
+    const glow=new THREE.Mesh(new THREE.ConeGeometry(0.78,4.6,12),JET.burnerGlow); glow.rotation.x=-Math.PI/2; glow.position.z=-2.3; g2.add(glow);
+    const core=new THREE.Mesh(new THREE.ConeGeometry(0.38,2.9,12),JET.burnerCore); core.rotation.x=-Math.PI/2; core.position.z=-1.45; g2.add(core);
+    g2.position.set(bx,engY,rearZ); g2.visible=false; jet3d.add(g2); JET.burners.push(g2); } }
 function updateJet(dt){
   const up=keys[' ']?1:0, dn=keys['shift']?1:0;
   const fwd=(keys['w']||keys['arrowup'])?1:0, bwd=(keys['s']||keys['arrowdown'])?1:0;
@@ -14169,6 +14179,10 @@ function updateJet(dt){
   JET.pitch += ((-JET.fwd*0.0035) - JET.pitch)*Math.min(1,dt*3);
   JET.roll  += ((-yaw*0.5) - JET.roll)*Math.min(1,dt*3);   // banks into turns
   jet3d.position.set(JET.x,JET.y,JET.z); jet3d.rotation.set(JET.pitch,JET.heading,JET.roll);
+  // afterburner: longer & brighter with forward throttle, flickering
+  if(JET.burners){ const thr=Math.max(0,Math.min(1,JET.fwd/70)), fl=0.78+0.34*Math.sin(gameT*47);
+    for(const b of JET.burners){ b.visible=JET.fwd>2; b.scale.set(0.55+thr*0.5,0.55+thr*0.5,(0.3+thr*1.25)*fl); }
+    if(JET.burnerCore){ JET.burnerCore.opacity=(0.32+thr*0.6)*fl; JET.burnerGlow.opacity=(0.2+thr*0.45)*fl; } }
   JET._rev=(JET._rev||0)+dt; if(JET._rev>0.25){ JET._rev=0; SFX.heliRev&&SFX.heliRev(Math.abs(JET.fwd)>20 || JET.vy>3); }
 }
 // ---- fly-to-ship cutscene ----
