@@ -12529,8 +12529,8 @@ function bridgeHeight(x,z){ if(!BRIDGE) return 0; const ax=x-BRIDGE.x0, az=z-BRI
 // ============================================================
 //  AIRPORT — island, runway, AI planes, pilotable plane + passenger round trips
 // ============================================================
-const AIRPORT={x:-2150,z:-420}, airportY=11, RWY={len:250, half:13};
-function airportEdge(a){ return 248 + 34*Math.sin(a*2+0.5) + 18*Math.cos(a*3-0.4); }   // irregular coastline
+const AIRPORT={x:-2280,z:-720}, airportY=11, RWY={len:250, half:13};
+function airportEdge(a){ return 215 + 26*Math.sin(a*2+0.5) + 14*Math.cos(a*3-0.4); }   // irregular coastline
 let airportGroup=null, cessna3d=null, airliner3d=null, cessnaProp=null;
 const PLANE={ active:false, model:null, prop:null, auto:false, x:0,z:0,y:0, heading:0, speed:0, pitch:0, roll:0, vy:0, gearY:1, onGround:true, route:null, wp:0, arrived:false, park:null, tag:'' };
 const AIPLANES=[];
@@ -12575,29 +12575,29 @@ function buildAirport(){
   for(let t=-RWY.len/2+12;t<RWY.len/2-10;t+=14){ const d=new THREE.Mesh(new THREE.BoxGeometry(6,0.04,0.7),line); d.position.set(ax+t,y+0.22,az); grp.add(d); }
   for(const e of [-1,1]) for(let k=-3;k<=3;k++){ const th=new THREE.Mesh(new THREE.BoxGeometry(4,0.04,1.0),line); th.position.set(ax+e*(RWY.len/2-6),y+0.22,az+k*2.2); grp.add(th); }
   // taxiway + apron south of the runway
-  const apZ=az-RWY.half-34;
-  const apron=new THREE.Mesh(new THREE.BoxGeometry(120,0.28,54),apronM); apron.position.set(ax,y+0.04,apZ); apron.receiveShadow=true; grp.add(apron);
-  const taxi=new THREE.Mesh(new THREE.BoxGeometry(16,0.26,40),taxiM); taxi.position.set(ax+58,y+0.045,az-RWY.half-18); grp.add(taxi);
+  const apZ=az-RWY.half-40;
+  const apron=new THREE.Mesh(new THREE.BoxGeometry(150,0.28,68),apronM); apron.position.set(ax,y+0.04,apZ); apron.receiveShadow=true; grp.add(apron);
+  const taxi=new THREE.Mesh(new THREE.BoxGeometry(20,0.26,46),taxiM); taxi.position.set(ax+66,y+0.045,az-RWY.half-20); grp.add(taxi);
   // terminal + jet bridge stubs
-  const term=new THREE.Mesh(new THREE.BoxGeometry(64,11,18),new THREE.MeshStandardMaterial({color:0xdfe4ea,roughness:0.7})); term.position.set(ax,y+5.5,apZ-34); term.castShadow=term.receiveShadow=true; grp.add(term);
-  const glass=new THREE.Mesh(new THREE.BoxGeometry(58,7,0.4),new THREE.MeshStandardMaterial({color:0x6f93a8,roughness:0.2,metalness:0.3,envMapIntensity:0.8})); glass.position.set(ax,y+5,apZ-25.2); grp.add(glass);
-  const roof=new THREE.Mesh(new THREE.BoxGeometry(66,0.6,20),new THREE.MeshStandardMaterial({color:0xb9bfc6,roughness:0.6})); roof.position.set(ax,y+11.3,apZ-34); grp.add(roof);
+  const term=new THREE.Mesh(new THREE.BoxGeometry(96,19,30),new THREE.MeshStandardMaterial({color:0xdfe4ea,roughness:0.7})); term.position.set(ax,y+9.5,apZ-42); term.castShadow=term.receiveShadow=true; grp.add(term);
+  const glass=new THREE.Mesh(new THREE.BoxGeometry(88,13,0.5),new THREE.MeshStandardMaterial({color:0x6f93a8,roughness:0.2,metalness:0.3,envMapIntensity:0.8})); glass.position.set(ax,y+8.5,apZ-27); grp.add(glass);
+  const roof=new THREE.Mesh(new THREE.BoxGeometry(102,1.0,34),new THREE.MeshStandardMaterial({color:0xb9bfc6,roughness:0.6})); roof.position.set(ax,y+19.4,apZ-42); grp.add(roof);
   // control tower
-  const twr=new THREE.Mesh(new THREE.CylinderGeometry(3,3.6,20,12),new THREE.MeshStandardMaterial({color:0xcfd4da,roughness:0.7})); twr.position.set(ax+44,y+10,apZ-30); twr.castShadow=true; grp.add(twr);
-  const cab=new THREE.Mesh(new THREE.CylinderGeometry(5,4,5,12),new THREE.MeshStandardMaterial({color:0x21323f,roughness:0.25,metalness:0.4,envMapIntensity:0.9})); cab.position.set(ax+44,y+22,apZ-30); cab.castShadow=true; grp.add(cab);
-  grp.add(new THREE.Mesh(new THREE.ConeGeometry(5.2,2,12),new THREE.MeshStandardMaterial({color:0x9aa0a6,roughness:0.6}))).position.set(ax+44,y+25.5,apZ-30);
+  const twr=new THREE.Mesh(new THREE.CylinderGeometry(4.2,5.2,34,14),new THREE.MeshStandardMaterial({color:0xcfd4da,roughness:0.7})); twr.position.set(ax+58,y+17,apZ-36); twr.castShadow=true; grp.add(twr);
+  const cab=new THREE.Mesh(new THREE.CylinderGeometry(7.2,5.6,7.5,14),new THREE.MeshStandardMaterial({color:0x21323f,roughness:0.25,metalness:0.4,envMapIntensity:0.9})); cab.position.set(ax+58,y+37,apZ-36); cab.castShadow=true; grp.add(cab);
+  grp.add(new THREE.Mesh(new THREE.ConeGeometry(7.6,3,14),new THREE.MeshStandardMaterial({color:0x9aa0a6,roughness:0.6}))).position.set(ax+58,y+42,apZ-36);
   // hangar (open arch)
-  const hg=new THREE.Mesh(new THREE.CylinderGeometry(13,13,30,16,1,true,0,Math.PI),new THREE.MeshStandardMaterial({color:0xa6acb3,roughness:0.6,metalness:0.2,side:THREE.DoubleSide})); hg.rotation.z=Math.PI/2; hg.position.set(ax-60,y+0.1,apZ-2); hg.castShadow=true; grp.add(hg);
-  const hgBack=new THREE.Mesh(new THREE.CircleGeometry(13,16,0,Math.PI),new THREE.MeshStandardMaterial({color:0x8a9099,roughness:0.7})); hgBack.rotation.y=-Math.PI/2; hgBack.position.set(ax-75,y+0.1,apZ-2); grp.add(hgBack);
+  const hg=new THREE.Mesh(new THREE.CylinderGeometry(18,18,44,18,1,true,0,Math.PI),new THREE.MeshStandardMaterial({color:0xa6acb3,roughness:0.6,metalness:0.2,side:THREE.DoubleSide})); hg.rotation.z=Math.PI/2; hg.position.set(ax-74,y+0.1,apZ-4); hg.castShadow=true; grp.add(hg);
+  const hgBack=new THREE.Mesh(new THREE.CircleGeometry(18,18,0,Math.PI),new THREE.MeshStandardMaterial({color:0x8a9099,roughness:0.7})); hgBack.rotation.y=-Math.PI/2; hgBack.position.set(ax-96,y+0.1,apZ-4); grp.add(hgBack);
   // windsock
-  const wsPole=new THREE.Mesh(new THREE.CylinderGeometry(0.1,0.12,6,8),_pMet); wsPole.position.set(ax-RWY.len/2-8,y+3,az+RWY.half+6); grp.add(wsPole);
-  const sock=new THREE.Mesh(new THREE.ConeGeometry(0.7,2.4,10,1,true),new THREE.MeshStandardMaterial({color:0xe8732a,roughness:0.8,side:THREE.DoubleSide})); sock.rotation.z=-Math.PI/2; sock.position.set(ax-RWY.len/2-5,y+5.6,az+RWY.half+6); grp.add(sock);
+  const wsPole=new THREE.Mesh(new THREE.CylinderGeometry(0.12,0.14,8,8),_pMet); wsPole.position.set(ax-RWY.len/2-8,y+4,az+RWY.half+6); grp.add(wsPole);
+  const sock=new THREE.Mesh(new THREE.ConeGeometry(0.9,3.0,10,1,true),new THREE.MeshStandardMaterial({color:0xe8732a,roughness:0.8,side:THREE.DoubleSide})); sock.rotation.z=-Math.PI/2; sock.position.set(ax-RWY.len/2-4,y+7.4,az+RWY.half+6); grp.add(sock);
   // a couple of taxi/apron edge lights spots (emissive)
   // parked planes — pilotable Cessna + passenger airliner
   cessna3d=new THREE.Group(); cessna3d.rotation.order='YXZ'; const ci=buildPlane(cessna3d,{body:0xeef2f6,accent:0x2f6fd0}); cessnaProp=ci.prop;
-  PLANE_PARK_C={x:ax-26,z:apZ+8,hdg:Math.PI/2,gearY:ci.gearY}; cessna3d.position.set(PLANE_PARK_C.x,y+ci.gearY,PLANE_PARK_C.z); cessna3d.rotation.y=PLANE_PARK_C.hdg; scene.add(cessna3d);
+  PLANE_PARK_C={x:ax-42,z:apZ+14,hdg:Math.PI/2,gearY:ci.gearY}; cessna3d.position.set(PLANE_PARK_C.x,y+ci.gearY,PLANE_PARK_C.z); cessna3d.rotation.y=PLANE_PARK_C.hdg; scene.add(cessna3d);
   airliner3d=new THREE.Group(); airliner3d.rotation.order='YXZ'; const ai=buildPlane(airliner3d,{airliner:true,body:0xf3f3f5,accent:0xd23b46});
-  PLANE_PARK_A={x:ax+20,z:apZ+10,hdg:Math.PI/2,gearY:ai.gearY}; airliner3d.position.set(PLANE_PARK_A.x,y+ai.gearY,PLANE_PARK_A.z); airliner3d.rotation.y=PLANE_PARK_A.hdg; scene.add(airliner3d);
+  PLANE_PARK_A={x:ax+34,z:apZ+16,hdg:Math.PI/2,gearY:ai.gearY}; airliner3d.position.set(PLANE_PARK_A.x,y+ai.gearY,PLANE_PARK_A.z); airliner3d.rotation.y=PLANE_PARK_A.hdg; scene.add(airliner3d);
   // a dock on the bay-facing shore so you can arrive by jetski/boat (or fly the heli in & land)
   { const au={x:-ax,z:-az}, L=Math.hypot(au.x,au.z); au.x/=L; au.z/=L; const fE=airportEdge(Math.atan2(au.z,au.x)), ang=Math.atan2(au.x,au.z);
     const dk=new THREE.Group(); dk.position.set(ax+au.x*(fE+20),0,az+au.z*(fE+20)); dk.rotation.y=ang; grp.add(dk);
@@ -12613,7 +12613,7 @@ function buildAIPlanes(){
   const specs=[{r:760,alt:130,spd:62,big:true ,col:0xeaf0f6,acc:0x2f6fd0,ph:0,dir:1},
                {r:880,alt:175,spd:74,big:true ,col:0xf2eee6,acc:0xd9533b,ph:2.2,dir:-1},
                {r:640,alt:95 ,spd:54,big:false,col:0xf6f6f8,acc:0x3a8a5a,ph:4.1,dir:1}];
-  const cx=-1400, cz=-350;   // circuit centre (over the bay between the city and the airport)
+  const cx=-1450, cz=-450;   // circuit centre (over the bay between the city and the airport)
   for(const s of specs){ const g=new THREE.Group(); g.rotation.order='YXZ'; const info=buildPlane(g,{airliner:s.big,body:s.col,accent:s.acc}); scene.add(g);
     AIPLANES.push({grp:g, prop:info.prop, cx:cx, cz:cz, r:s.r, alt:s.alt, spd:s.spd, ph:s.ph, dir:s.dir, ang:s.ph}); }
 }
@@ -12699,7 +12699,7 @@ function optimizeScene(){
 }
 function buildWorld(){
   // ---- terrain (islands + seabed) ----
-  const TR=2600, TG=540;
+  const TR=2800, TG=580;
   const tGeo=new THREE.PlaneGeometry(TR*2,TR*2,TG,TG); tGeo.rotateX(-Math.PI/2);
   const pos=tGeo.attributes.position;
   for(let i=0;i<pos.count;i++) pos.setY(i, landH(pos.getX(i),pos.getZ(i)));
