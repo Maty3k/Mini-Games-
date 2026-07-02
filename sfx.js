@@ -92,11 +92,47 @@ const SFX = (function () {
   }
   function applyHum() { if (humDesired && !muted) buildHum(); else teardownHum(); }
 
+  // ---- helicopter rotor loop (blade-pass "whomp-whomp" noise + engine drone) ----
+  let heli = null, heliDesired = false;
+  function buildHeli() {
+    if (heli || muted) return; init(); if (!ctx) return; if (ctx.state === 'suspended') ctx.resume();
+    const out = ctx.createGain(); out.gain.value = 0.0001; out.connect(master);
+    // looping noise = the rotor wash
+    const buf = ctx.createBuffer(1, Math.floor(ctx.sampleRate * 2), ctx.sampleRate);
+    const d = buf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    const src = ctx.createBufferSource(); src.buffer = buf; src.loop = true;
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 440; lp.Q.value = 2.2;
+    const nG = ctx.createGain(); nG.gain.value = 0.42; src.connect(lp); lp.connect(nG); nG.connect(out);
+    // blade-pass LFO chops the noise → the characteristic whomp-whomp
+    const lfo = ctx.createOscillator(); lfo.type = 'square'; lfo.frequency.value = 14;
+    const lfoG = ctx.createGain(); lfoG.gain.value = 0.5; lfo.connect(lfoG); lfoG.connect(nG.gain);
+    // engine / turbine drone
+    const eng = ctx.createOscillator(); eng.type = 'sawtooth'; eng.frequency.value = 68;
+    const engLp = ctx.createBiquadFilter(); engLp.type = 'lowpass'; engLp.frequency.value = 520;
+    const engG = ctx.createGain(); engG.gain.value = 0.12; eng.connect(engLp); engLp.connect(engG); engG.connect(out);
+    const whine = ctx.createOscillator(); whine.type = 'sine'; whine.frequency.value = 320;
+    const whineG = ctx.createGain(); whineG.gain.value = 0.04; whine.connect(whineG); whineG.connect(out);
+    src.start(); lfo.start(); eng.start(); whine.start();
+    out.gain.setValueAtTime(0.0001, t());
+    out.gain.exponentialRampToValueAtTime(0.55, t() + 1.4); // spool up
+    heli = { out, lfo, eng, whine, nodes: [src, lfo, eng, whine] };
+  }
+  function teardownHeli() {
+    if (!heli || !ctx) return; const h = heli; heli = null;
+    try { h.out.gain.cancelScheduledValues(t()); h.out.gain.setTargetAtTime(0.0001, t(), 0.35); } catch (e) {}
+    setTimeout(() => { try { h.nodes.forEach(n => n.stop()); } catch (e) {} }, 1100);
+  }
+  function applyHeli() { if (heliDesired && !muted) buildHeli(); else teardownHeli(); }
+
   const api = {
     get muted() { return muted; },
-    toggle() { muted = !muted; localStorage.setItem('neonSfxMuted', muted ? '1' : '0'); applyHum(); return muted; },
+    toggle() { muted = !muted; localStorage.setItem('neonSfxMuted', muted ? '1' : '0'); applyHum(); applyHeli(); return muted; },
     startHum() { humDesired = true; applyHum(); },
     stopHum() { humDesired = false; teardownHum(); },
+    // helicopter rotor loop
+    heliStart() { heliDesired = true; applyHeli(); },
+    heliStop()  { heliDesired = false; teardownHeli(); },
+    heliRev(fast) { if (heli && ctx) try { heli.lfo.frequency.setTargetAtTime(fast ? 17.5 : 13.5, t(), 0.25); heli.eng.frequency.setTargetAtTime(fast ? 84 : 66, t(), 0.25); } catch (e) {} },
     // generic
     blip, noise,
     // UI

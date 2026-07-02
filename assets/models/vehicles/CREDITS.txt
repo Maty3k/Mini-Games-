@@ -1,0 +1,2 @@
+Downloaded vehicle models (via poly.pizza, mirror of Google Poly).
+- helicopter.glb — "Helicopter" by jeremy (CC-BY), https://poly.pizza/m/eb7b31pjGtQ
