@@ -179,7 +179,8 @@ const DPR=Math.min(1.5,window.devicePixelRatio||1);   // cap pixel ratio (Retina
 renderer.setPixelRatio(DPR);
 renderer.outputEncoding=THREE.sRGBEncoding;
 renderer.toneMapping=THREE.ACESFilmicToneMapping; renderer.toneMappingExposure=1.02;
-renderer.shadowMap.enabled=true; renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+renderer.shadowMap.enabled=true; renderer.shadowMap.type=THREE.PCFShadowMap;   // plain PCF — Soft cost ~2x for a subtle difference
+renderer.shadowMap.autoUpdate=false;   // the loop re-renders shadows every OTHER frame (the shadow pass re-draws every caster)
 const scene=new THREE.Scene();
 let VW=window.innerWidth, VH=window.innerHeight;
 const camera=new THREE.PerspectiveCamera(62, VW/VH, 0.5, 12000);
@@ -427,7 +428,7 @@ function instanceModel(proto, mats, shadow){ proto.updateMatrixWorld(true);
 function buildTrees(){
   const slots=[];
   for(const is of ISLANDS){ if(is.h<60) continue;                 // only the big mountain islands
-    const n=Math.floor(is.s*0.75);
+    const n=Math.floor(is.s*0.32);                                // density capped — the downloaded tree model is high-poly, and every instance renders its full poly count (0.75 ≈ 19M tris/frame in some views)
     for(let k=0;k<n;k++){ const a=Math.random()*6.283, r=Math.sqrt(Math.random())*is.s*1.04;
       const x=is.x+Math.cos(a)*r, z=is.z+Math.sin(a)*r, h=landH(x,z);
       if(h<6||h>135) continue; if(slopeAt(x,z)<0.78) continue;     // skip beaches & cliffs
@@ -462,30 +463,49 @@ const lampGlowMat=new THREE.MeshStandardMaterial({color:0xfff2c0, emissive:0xffd
 // the boxes extend well below grade so you never see daylight underneath — it reads as a solid
 // graded embankment / raised road.
 function buildCauseway(parent){
-  const cx=CITY.x,cz=CITY.z, c0=290,c1=430, RW=14, SW=4.6, step=7;
-  function segAt(a){ const x=cx+DOCK.dx*a, z=cz+DOCK.dz*a; return {x:x,z:z,y:landH(x,z)}; }
+  const cx=CITY.x,cz=CITY.z, c0=268,c1=430, RW=14, SW=4.6, step=7;
+  // deck height comes from causewayTop(): it follows the shelf then RAMPS down to the pier
+  // deck — the old landH-following deck dove underwater (shore drops to -17 by the pier).
+  // Inside al<250 the corridor is the pedestrian harbour esplanade (open pavement, still
+  // drivable); the built-up road starts where the city blocks end.
+  function segAt(a){ const x=cx+DOCK.dx*a, z=cz+DOCK.dz*a; return {x:x,z:z,y:causewayTop(x,z)-0.12}; }
+  // break sidewalks/dashes/lamps where a grid lane crosses the avenue (real intersections)
+  function nearLane(x,z){ const dx=x-cx, dz=z-cz;
+    const dvx=Math.abs(dx/GRID-0.5-Math.round(dx/GRID-0.5))*GRID, dvz=Math.abs(dz/GRID-0.5-Math.round(dz/GRID-0.5))*GRID;
+    return Math.min(dvx,dvz)<10; }
   for(let a=c0;a<c1-0.01;a+=step){
     const run=Math.min(step,c1-a), p0=segAt(a), p1=segAt(a+run);
     const mx=(p0.x+p1.x)/2, mz=(p0.z+p1.z)/2, my=(p0.y+p1.y)/2;
+    if(inPlaza(mx,mz)) continue;                                 // open into landmark plazas like the grid roads do
     const len=Math.hypot(run, p1.y-p0.y)+0.5, tilt=-Math.atan2(p1.y-p0.y, run);
     // road deck — thick box, top surface seated at terrain+0.12, bottom buried
     const road=new THREE.Mesh(new THREE.BoxGeometry(RW,3.0,len), roadMat);
     road.rotation.order='YXZ'; road.rotation.y=DOCK.ang; road.rotation.x=tilt;
     road.position.set(mx, my+0.12-1.5, mz); road.receiveShadow=true; parent.add(road);
-    // raised sidewalk curbs either side
-    for(let sg=-1;sg<=1;sg+=2){ const sw=new THREE.Mesh(new THREE.BoxGeometry(SW,3.1,len), sidewalkMat);
+    // raised sidewalk curbs either side (broken at grid-lane crossings)
+    if(!nearLane(mx,mz)) for(let sg=-1;sg<=1;sg+=2){ const sw=new THREE.Mesh(new THREE.BoxGeometry(SW,3.1,len), sidewalkMat);
       sw.rotation.order='YXZ'; sw.rotation.y=DOCK.ang; sw.rotation.x=tilt;
       const off=RW/2+SW/2-0.4; sw.position.set(mx+DOCK.rx*off*sg, my+0.27-1.55, mz+DOCK.rz*off*sg);
       sw.receiveShadow=true; parent.add(sw); }
   }
   // centre dashes, seated just above the deck along the path
   for(let a=c0+5;a<c1-3;a+=7){ const x=cx+DOCK.dx*a, z=cz+DOCK.dz*a;
-    const d=new THREE.Mesh(new THREE.BoxGeometry(0.4,0.06,3.2),roadLineMat); d.rotation.y=DOCK.ang; d.position.set(x,landH(x,z)+0.18,z); parent.add(d); }
+    if(nearLane(x,z)||inPlaza(x,z)) continue;
+    const d=new THREE.Mesh(new THREE.BoxGeometry(0.4,0.06,3.2),roadLineMat); d.rotation.y=DOCK.ang; d.position.set(x,causewayTop(x,z)+0.06,z); parent.add(d); }
   // lamp posts along the curbs
   for(let a=c0+9;a<c1;a+=18){ for(let sg=-1;sg<=1;sg+=2){ const off=RW/2+SW-0.8;
-    const x=cx+DOCK.dx*a+DOCK.rx*off*sg, z=cz+DOCK.dz*a+DOCK.rz*off*sg, y=landH(x,z);
+    const x=cx+DOCK.dx*a+DOCK.rx*off*sg, z=cz+DOCK.dz*a+DOCK.rz*off*sg, y=causewayTop(x,z)-0.12;
+    if(nearLane(x,z)||inPlaza(x,z)) continue;
     const post=new THREE.Mesh(new THREE.CylinderGeometry(0.12,0.16,4,8),lampPostMat); post.position.set(x,y+2,z); post.castShadow=true; parent.add(post);
     const lamp=new THREE.Mesh(new THREE.SphereGeometry(0.3,10,8),lampGlowMat); lamp.position.set(x,y+4,z); parent.add(lamp); } }
+  // concrete trestle pilings under the over-water stretch so the raised deck reads as a real viaduct
+  const pileMat=new THREE.MeshStandardMaterial({color:0x9aa0a4,roughness:0.9});
+  for(let a=c0+42;a<c1;a+=14){ const x=cx+DOCK.dx*a, z=cz+DOCK.dz*a, gy=landH(x,z), dy=causewayTop(x,z)-0.12;
+    if(dy-gy<3.4) continue;                                     // still resting on ground here
+    for(let sg=-1;sg<=1;sg+=2){ const px=x+DOCK.rx*(RW/2-1.2)*sg, pz=z+DOCK.rz*(RW/2-1.2)*sg;
+      const top=dy-2.4, bot=gy-2, h=top-bot;
+      const pile=new THREE.Mesh(new THREE.CylinderGeometry(0.55,0.7,h,10),pileMat);
+      pile.position.set(px,(top+bot)/2,pz); pile.castShadow=true; parent.add(pile); } }
 }
 // ---- traffic: cars driving the road grid ----
 const TRAFFIC=[]; const NLO=-8, NHI=7;
@@ -547,7 +567,7 @@ function buildStreets(parent){
   // paved ground: an irregular polygon hugging the shoreline (no perfect circle)
   { const seg=120, pos=[0,0,0], uv=[0.5,0.5], idx=[];
     for(let i=0;i<=seg;i++){ const a=i/seg*Math.PI*2, r=cityEdge(a)-2, px=Math.cos(a)*r, pz=Math.sin(a)*r; pos.push(px,0,pz); uv.push(px/24,pz/24); }
-    for(let i=1;i<=seg;i++) idx.push(0,i,i+1);
+    for(let i=1;i<=seg;i++) idx.push(0,i+1,i);   // wound so the face points UP (0,i,i+1 faced down → the pavement was invisible)
     const pg=new THREE.BufferGeometry(); pg.setAttribute('position',new THREE.Float32BufferAttribute(pos,3)); pg.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2)); pg.setIndex(idx); pg.computeVertexNormals();
     const pav=new THREE.Mesh(pg,pavementMat); pav.position.set(cx,plateauY+0.03,cz); pav.receiveShadow=true; parent.add(pav); }
   const dashGeo=new THREE.BoxGeometry(0.4,0.02,3.4);
@@ -584,7 +604,7 @@ function buildStreets(parent){
   // tying the grid ends together instead of dead-ending at the shore
   { const seg=120, pos=[], idx=[];
     for(let i=0;i<=seg;i++){ const a=i/seg*Math.PI*2, r=cityEdge(a)-15, ca=Math.cos(a), sa=Math.sin(a); pos.push(ca*(r-6),0,sa*(r-6), ca*(r+6),0,sa*(r+6)); }
-    for(let i=0;i<seg;i++){ const k=i*2; idx.push(k,k+1,k+2, k+1,k+3,k+2); }
+    for(let i=0;i<seg;i++){ const k=i*2; idx.push(k,k+2,k+1, k+1,k+2,k+3); }   // up-facing winding (was inverted → the perimeter boulevard never rendered)
     const rg=new THREE.BufferGeometry(); rg.setAttribute('position',new THREE.Float32BufferAttribute(pos,3)); rg.setIndex(idx); rg.computeVertexNormals();
     const pr=new THREE.Mesh(rg,roadMat); pr.position.set(cx,plateauY+0.078,cz); pr.receiveShadow=true; parent.add(pr); }
 }
@@ -11161,11 +11181,11 @@ function buildFarm(){
     const g0=x.createLinearGradient(0,0,128,128); g0.addColorStop(0,'#6f9c41'); g0.addColorStop(1,'#5c8a36'); x.fillStyle=g0; x.fillRect(0,0,128,128);
     for(let i=0;i<55;i++){ x.fillStyle='rgba('+(90+Math.random()*40|0)+','+(140+Math.random()*50|0)+',60,0.22)'; x.beginPath(); x.arc(Math.random()*128,Math.random()*128,8+Math.random()*22,0,7); x.fill(); }
     for(let i=0;i<1100;i++){ const px=Math.random()*128, py=Math.random()*128, l=2+Math.random()*4; x.strokeStyle='rgba('+(70+Math.random()*60|0)+','+(120+Math.random()*70|0)+','+(40+Math.random()*30|0)+',0.55)'; x.lineWidth=1; x.beginPath(); x.moveTo(px,py); x.lineTo(px+(Math.random()-0.5)*3, py-l); x.stroke(); }
-    const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; t.anisotropy=4; return t; }
+    const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; t.anisotropy=4; t.encoding=THREE.sRGBEncoding; return t; }   // sRGB — untagged it rendered washed-out cream
   grassMat.map=grassTex(); grassMat.color.setHex(0xffffff); grassMat.needsUpdate=true;
   { const segs=84, pos=[0,0,0], uv=[0.5,0.5], idx=[];
     for(let i=0;i<=segs;i++){ const a=i/segs*Math.PI*2, r=farmEdge(a)-2, px=Math.cos(a)*r, pz=Math.sin(a)*r; pos.push(px,0,pz); uv.push(px/9, pz/9); }
-    for(let i=1;i<=segs;i++) idx.push(0,i,i+1);
+    for(let i=1;i<=segs;i++) idx.push(0,i+1,i);   // up-facing winding (was inverted → the grass layer never rendered)
     const gg=new THREE.BufferGeometry(); gg.setAttribute('position',new THREE.Float32BufferAttribute(pos,3)); gg.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2)); gg.setIndex(idx); gg.computeVertexNormals();
     const grass=new THREE.Mesh(gg,grassMat); grass.position.y=gy+0.04; grass.receiveShadow=true; grp.add(grass); }
   // building footprints (filled as buildings are placed) so dirt lanes route around them, never under
@@ -11308,6 +11328,10 @@ function buildFarm(){
   path(  6,-13,   6,-56, 3);    // -> pond
   path(-40,-13, -45,-26, 3);    // -> west crop fields (stops at the gate)
   path( 12,-13,  12,-43, 3);    // -> south silo battery
+  // -> the village bridge landing (SE corner of the loop, dog-leg to the coast) — the bridge
+  //    used to land on bare grass ~120 m from the nearest lane
+  path( 54,-13,  78,-60, 3.5);
+  path( 78,-60,  99,-103, 3.5);
 
   // ---- trees: the SAME downloaded model as the other islands (instanced), in varied sizes ----
   const ftSlots=[];                                          // {x,z,s,rot} in farm-local coords
@@ -12297,11 +12321,11 @@ function islandGrassMesh(grp, gy, edgeFn){
     const g0=x.createLinearGradient(0,0,128,128); g0.addColorStop(0,'#6f9c41'); g0.addColorStop(1,'#5c8a36'); x.fillStyle=g0; x.fillRect(0,0,128,128);
     for(let i=0;i<55;i++){ x.fillStyle='rgba('+(90+Math.random()*40|0)+','+(140+Math.random()*50|0)+',60,0.22)'; x.beginPath(); x.arc(Math.random()*128,Math.random()*128,8+Math.random()*22,0,7); x.fill(); }
     for(let i=0;i<1100;i++){ const px=Math.random()*128, py=Math.random()*128, l=2+Math.random()*4; x.strokeStyle='rgba('+(70+Math.random()*60|0)+','+(120+Math.random()*70|0)+',40,0.55)'; x.lineWidth=1; x.beginPath(); x.moveTo(px,py); x.lineTo(px+(Math.random()-0.5)*3, py-l); x.stroke(); }
-    const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; t.anisotropy=4; return t; }
+    const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; t.anisotropy=4; t.encoding=THREE.sRGBEncoding; return t; }   // sRGB — untagged it rendered washed-out cream
   const gm=new THREE.MeshStandardMaterial({map:grassTex(),roughness:0.97});
   const segs=80,pos=[0,0,0],uv=[0.5,0.5],idx=[];
   for(let i=0;i<=segs;i++){ const a=i/segs*Math.PI*2,r=edgeFn(a)-2,px=Math.cos(a)*r,pz=Math.sin(a)*r; pos.push(px,0,pz); uv.push(px/9,pz/9); }
-  for(let i=1;i<=segs;i++) idx.push(0,i,i+1);
+  for(let i=1;i<=segs;i++) idx.push(0,i+1,i);   // up-facing winding (was inverted → the grass layer never rendered)
   const bg=new THREE.BufferGeometry(); bg.setAttribute('position',new THREE.Float32BufferAttribute(pos,3)); bg.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2)); bg.setIndex(idx); bg.computeVertexNormals();
   const m=new THREE.Mesh(bg,gm); m.position.y=gy+0.04; m.receiveShadow=true; grp.add(m);
 }
@@ -12560,7 +12584,7 @@ function buildBridge(){
   function hAt(t){ return BRIDGE.y0+(BRIDGE.y1-BRIDGE.y0)*t + BRIDGE.arch*Math.sin(t*Math.PI); }
   const plankMat=new THREE.MeshStandardMaterial({color:0x9a7748,roughness:0.92}), postMat=new THREE.MeshStandardMaterial({color:0x6e5230,roughness:0.95});
   const lampDk=new THREE.MeshStandardMaterial({color:0x24242a,roughness:0.5,metalness:0.6}), lampGlow=new THREE.MeshStandardMaterial({color:0xffe6a8,emissive:0xffb340,emissiveIntensity:2.0,roughness:0.4});
-  const N=Math.max(14,Math.round(len/5)), lampEvery=Math.max(3,Math.round(N/11)), ang=Math.atan2(BRIDGE.dx,BRIDGE.dz), seg=len/N, grp=new THREE.Group(); scene.add(grp);
+  const N=Math.max(14,Math.round(len/5)), lampEvery=Math.max(3,Math.round(N/11)), ang=Math.atan2(BRIDGE.dx,BRIDGE.dz), seg=len/N, grp=new THREE.Group(); grp.userData.staticMerge=true; scene.add(grp);
   for(let i=0;i<N;i++){ const t0=i/N,t1=(i+1)/N,tm=(t0+t1)/2, px=x0+(x1-x0)*tm, pz=z0+(z1-z0)*tm, py=hAt(tm), tilt=Math.atan2(hAt(t1)-hAt(t0),seg);
     const deck=new THREE.Mesh(new THREE.BoxGeometry(HALF*2+0.4,0.34,seg+0.3),plankMat); deck.position.set(px,py,pz); deck.rotation.order='YXZ'; deck.rotation.y=ang; deck.rotation.x=-tilt; deck.castShadow=deck.receiveShadow=true; grp.add(deck);
     // trestle piers every other segment: a pair of legs + a cross-brace between them
@@ -12642,20 +12666,24 @@ function buildAirport(){
   const ax=AIRPORT.x, az=AIRPORT.z, y=airportY, rz=RWY.z, txz=rz+46, apz=rz+92, termz=-820;
   function M(geo,mat,X,Y,Z,cast){ const m=new THREE.Mesh(geo,mat); m.position.set(X,Y,Z); if(cast)m.castShadow=true; grp.add(m); return m; }
   const B=(w,h,d)=>new THREE.BoxGeometry(w,h,d), C=(a,b,h,s)=>new THREE.CylinderGeometry(a,b,h,s||12);
-  const asph=new THREE.MeshStandardMaterial({color:0x303338,roughness:0.94,polygonOffset:true,polygonOffsetFactor:-2,polygonOffsetUnits:-2}),
-        apronM=new THREE.MeshStandardMaterial({color:0x494d53,roughness:0.93,polygonOffset:true,polygonOffsetFactor:-2,polygonOffsetUnits:-2}),
-        taxiM=new THREE.MeshStandardMaterial({color:0x3c4046,roughness:0.92,polygonOffset:true,polygonOffsetFactor:-2,polygonOffsetUnits:-2}),
-        line=new THREE.MeshStandardMaterial({color:0xeae6d2,roughness:0.6,polygonOffset:true,polygonOffsetFactor:-4,polygonOffsetUnits:-4}),
-        yellow=new THREE.MeshStandardMaterial({color:0xd9b531,roughness:0.6,polygonOffset:true,polygonOffsetFactor:-4,polygonOffsetUnits:-4}),
+  // NOTE: every ground/panel material caps envMapIntensity — left at the default (1.0) the HDRI
+  // sky reflection washed the whole airport near-white (dark asphalt read as white at any angle)
+  const asph=new THREE.MeshStandardMaterial({color:0x303338,roughness:0.94,envMapIntensity:0.12,polygonOffset:true,polygonOffsetFactor:-2,polygonOffsetUnits:-2}),
+        apronM=new THREE.MeshStandardMaterial({color:0x494d53,roughness:0.93,envMapIntensity:0.12,polygonOffset:true,polygonOffsetFactor:-2,polygonOffsetUnits:-2}),
+        taxiM=new THREE.MeshStandardMaterial({color:0x3c4046,roughness:0.92,envMapIntensity:0.12,polygonOffset:true,polygonOffsetFactor:-2,polygonOffsetUnits:-2}),
+        line=new THREE.MeshStandardMaterial({color:0xeae6d2,roughness:0.6,envMapIntensity:0.2,polygonOffset:true,polygonOffsetFactor:-4,polygonOffsetUnits:-4}),
+        yellow=new THREE.MeshStandardMaterial({color:0xd9b531,roughness:0.6,envMapIntensity:0.2,polygonOffset:true,polygonOffsetFactor:-4,polygonOffsetUnits:-4}),
         glassM=new THREE.MeshStandardMaterial({color:0x5c8194,roughness:0.14,metalness:0.45,envMapIntensity:0.85,transparent:true,opacity:0.6}),
-        panelM=new THREE.MeshStandardMaterial({color:0xbcc3cb,roughness:0.62,metalness:0.12}),
-        cladM=new THREE.MeshStandardMaterial({color:0x969ea7,roughness:0.66,metalness:0.16}),
-        frameM=new THREE.MeshStandardMaterial({color:0x3b414a,roughness:0.5,metalness:0.5}),
-        steelM=new THREE.MeshStandardMaterial({color:0x8d949c,roughness:0.5,metalness:0.45}),
-        roofM=new THREE.MeshStandardMaterial({color:0x8f969f,roughness:0.55,metalness:0.28}),
-        accentM=new THREE.MeshStandardMaterial({color:0x2f6fd0,roughness:0.5}),
-        drkM=new THREE.MeshStandardMaterial({color:0x2a2c31,roughness:0.5,metalness:0.5}),
+        panelM=new THREE.MeshStandardMaterial({color:0xbcc3cb,roughness:0.62,metalness:0.12,envMapIntensity:0.25}),
+        cladM=new THREE.MeshStandardMaterial({color:0x969ea7,roughness:0.66,metalness:0.16,envMapIntensity:0.25}),
+        frameM=new THREE.MeshStandardMaterial({color:0x3b414a,roughness:0.5,metalness:0.5,envMapIntensity:0.35}),
+        steelM=new THREE.MeshStandardMaterial({color:0x8d949c,roughness:0.5,metalness:0.45,envMapIntensity:0.4}),
+        roofM=new THREE.MeshStandardMaterial({color:0x8f969f,roughness:0.55,metalness:0.28,envMapIntensity:0.25}),
+        accentM=new THREE.MeshStandardMaterial({color:0x2f6fd0,roughness:0.5,envMapIntensity:0.3}),
+        drkM=new THREE.MeshStandardMaterial({color:0x2a2c31,roughness:0.5,metalness:0.5,envMapIntensity:0.3}),
         flood=new THREE.MeshStandardMaterial({color:0xfff2c8,emissive:0xffe08a,emissiveIntensity:1.6,roughness:0.4});
+  // ===== GRASSY ISLAND SURFACE — same bright lawn as the farm & village (was bare mossy terrain) =====
+  { const ig=new THREE.Group(); ig.position.set(ax,0,az); grp.add(ig); islandGrassMesh(ig, y, airportEdge); }
   // ===== RUNWAY (E-W, south of the island) + markings =====
   M(B(RWY.len,0.3,RWY.half*2),asph, ax,y+0.05,rz,false).receiveShadow=true;
   for(let t=-RWY.len/2+16;t<RWY.len/2-14;t+=16) M(B(7,0.04,0.9),line, ax+t,y+0.23,rz,false);                 // centreline
@@ -12679,9 +12707,9 @@ function buildAirport(){
   const tW=520, tH=26;
   M(B(tW,tH,28),panelM, ax,y+tH/2,termz,true).receiveShadow=true;
   // ---- MODERN CURVED ROOF: barrel vault + exposed ribs + glazed ridge skylight + LED eaves ----
-  const vaultM=new THREE.MeshStandardMaterial({color:0xbcc3cb,roughness:0.48,metalness:0.38,side:THREE.DoubleSide}),
-        finM=new THREE.MeshStandardMaterial({color:0x969ea7,roughness:0.5,metalness:0.42}),
-        ledM=new THREE.MeshStandardMaterial({color:0xc4e8ff,emissive:0x37a2ff,emissiveIntensity:1.3,roughness:0.4});
+  const vaultM=new THREE.MeshStandardMaterial({color:0xbcc3cb,roughness:0.48,metalness:0.38,envMapIntensity:0.3,side:THREE.DoubleSide}),
+        finM=new THREE.MeshStandardMaterial({color:0x969ea7,roughness:0.5,metalness:0.42,envMapIntensity:0.3}),
+        ledM=new THREE.MeshStandardMaterial({color:0xc4e8ff,emissive:0x37a2ff,emissiveIntensity:0.55,roughness:0.4});   // was 1.3 — blinding in daylight
   { const v=M(new THREE.CylinderGeometry(16,16,tW+12,30,1,true,0,Math.PI),vaultM, ax,y+tH-2,termz,true); v.rotation.z=Math.PI/2; }
   for(const ex of [-1,1]){ const gb=M(new THREE.CircleGeometry(16,22,0,Math.PI),glassM, ax+ex*((tW+12)/2-0.2),y+tH-2,termz,false); gb.rotation.y=Math.PI/2; }   // glazed gable ends
   for(let k=-8;k<=8;k++){ const rib=M(new THREE.CylinderGeometry(16.5,16.5,1.6,16,1,true,0,Math.PI),frameM, ax+k*30,y+tH-2,termz,false); rib.rotation.z=Math.PI/2; }
@@ -12713,14 +12741,14 @@ function buildAirport(){
   M(C(7.7,7.7,1.5,16),roofM, twx,y+71,twz,false); M(C(0.2,0.2,9,6),steelM, twx,y+76,twz,false);
   // ===== HANGARS (west of the apron) =====
   for(let hi=0;hi<3;hi++){ const hx=ax-362, hz=apz+24-hi*62;
-    const hg=M(new THREE.CylinderGeometry(27,27,62,20,1,true,0,Math.PI),new THREE.MeshStandardMaterial({color:0xaeb4bb,roughness:0.6,metalness:0.2,side:THREE.DoubleSide}), hx,y+0.1,hz,true); hg.rotation.z=Math.PI/2;
-    const bk=M(new THREE.CircleGeometry(27,20,0,Math.PI),new THREE.MeshStandardMaterial({color:0x8a9099,roughness:0.7}), hx-31,y+0.1,hz,false); bk.rotation.y=-Math.PI/2; }
+    const hg=M(new THREE.CylinderGeometry(27,27,62,20,1,true,0,Math.PI),new THREE.MeshStandardMaterial({color:0xaeb4bb,roughness:0.6,metalness:0.2,envMapIntensity:0.25,side:THREE.DoubleSide}), hx,y+0.1,hz,true); hg.rotation.z=Math.PI/2;
+    const bk=M(new THREE.CircleGeometry(27,20,0,Math.PI),new THREE.MeshStandardMaterial({color:0x8a9099,roughness:0.7,envMapIntensity:0.25}), hx-31,y+0.1,hz,false); bk.rotation.y=-Math.PI/2; }
   // ===== PARKED PLANES (Cessna to pilot, airliner for round trips) =====
   cessna3d=new THREE.Group(); cessna3d.rotation.order='YXZ'; const ci=buildPlane(cessna3d,{body:0xeef2f6,accent:0x2f6fd0}); cessnaProp=ci.prop;
   PLANE_PARK_C={x:ax-118,z:apz+6,hdg:Math.PI/2,gearY:ci.gearY}; cessna3d.position.set(PLANE_PARK_C.x,y+ci.gearY,PLANE_PARK_C.z); cessna3d.rotation.y=PLANE_PARK_C.hdg; scene.add(cessna3d);
   airliner3d=new THREE.Group(); airliner3d.rotation.order='YXZ'; const ai=buildPlane(airliner3d,{airliner:true,body:0xf3f3f5,accent:0xd23b46});
   PLANE_PARK_A={x:ax+8,z:apz+8,hdg:Math.PI/2,gearY:ai.gearY}; airliner3d.position.set(PLANE_PARK_A.x,y+ai.gearY,PLANE_PARK_A.z); airliner3d.rotation.y=PLANE_PARK_A.hdg; scene.add(airliner3d);
-  { const jbM=new THREE.MeshStandardMaterial({color:0xd7dbe0,roughness:0.5,metalness:0.15});   // jet bridge to the airliner
+  { const jbM=new THREE.MeshStandardMaterial({color:0xd7dbe0,roughness:0.5,metalness:0.15,envMapIntensity:0.3});   // jet bridge to the airliner
     const a1=[ax+0,termz-70], a2=[PLANE_PARK_A.x-2,PLANE_PARK_A.z+4], dxj=a2[0]-a1[0],dzj=a2[1]-a1[1],Lj=Math.hypot(dxj,dzj);
     const tb=M(B(3,3,Lj),jbM,(a1[0]+a2[0])/2,y+5.2,(a1[1]+a2[1])/2,true); tb.rotation.y=Math.atan2(dxj,dzj); M(C(2.4,2.4,4,12),jbM,a1[0],y+5.2,a1[1],false); }
   for(const sx of [PLANE_PARK_C.x, PLANE_PARK_A.x]) for(let k=0;k<8;k++) M(B(0.4,0.03,2),yellow, sx,y+0.2,apz+30-k*4,false);   // lead-in lines
@@ -12744,7 +12772,7 @@ function buildAirport(){
   const pkZ=-742, pkX=ax+10;
   M(B(380,0.2,16),asph, ax,y+0.12,termz+31,false).receiveShadow=true;                        // forecourt drop-off
   M(B(370,0.2,104),asph, pkX,y+0.1,pkZ,false).receiveShadow=true;                            // car park slab
-  const bayM=new THREE.MeshStandardMaterial({color:0xeae6d2,roughness:0.6,polygonOffset:true,polygonOffsetFactor:-4,polygonOffsetUnits:-4});
+  const bayM=new THREE.MeshStandardMaterial({color:0xeae6d2,roughness:0.6,envMapIntensity:0.2,polygonOffset:true,polygonOffsetFactor:-4,polygonOffsetUnits:-4});
   for(let r=-1;r<=1;r+=2) for(let k=-16;k<=16;k++) M(B(0.25,0.03,11),bayM, pkX+k*11,y+0.22,pkZ+r*26,false);
   const cCol=[0xcf3b3b,0x2f6fd0,0xe4e7ea,0x2b2f36,0x2f9e5a,0xd9a441,0x8a8f96];
   for(let r=-1;r<=1;r+=2) for(let k=-15;k<=15;k++){ if((k*7+r)%3===0) continue; const cc=cCol[((k+15)*2+ (r>0?1:0))%7], pc=new THREE.Group();
@@ -12754,9 +12782,9 @@ function buildAirport(){
   { const s=AB_A, ex=-2140, ez=pkZ, mx=(s.x+ex)/2, mz=(s.z+ez)/2, L=Math.hypot(ex-s.x,ez-s.z), a=Math.atan2(ex-s.x,ez-s.z);   // access road bridge->park
     const rd=M(B(14,0.2,L+14),asph, mx,y+0.12,mz,false); rd.rotation.y=a; rd.receiveShadow=true; }
   // ===== ENTRANCE, WALKWAYS & DECOR (landside) =====
-  const paveM=new THREE.MeshStandardMaterial({color:0xaeb3b9,roughness:0.86}),
-        curbM=new THREE.MeshStandardMaterial({color:0x878d94,roughness:0.8}),
-        zebra=new THREE.MeshStandardMaterial({color:0xe2e0d6,roughness:0.7,polygonOffset:true,polygonOffsetFactor:-4,polygonOffsetUnits:-4}),
+  const paveM=new THREE.MeshStandardMaterial({color:0xaeb3b9,roughness:0.86,envMapIntensity:0.2}),
+        curbM=new THREE.MeshStandardMaterial({color:0x878d94,roughness:0.8,envMapIntensity:0.2}),
+        zebra=new THREE.MeshStandardMaterial({color:0xe2e0d6,roughness:0.7,envMapIntensity:0.25,polygonOffset:true,polygonOffsetFactor:-4,polygonOffsetUnits:-4}),
         potM=new THREE.MeshStandardMaterial({color:0x626870,roughness:0.7}),
         shrubM=new THREE.MeshStandardMaterial({color:0x3f7d45,roughness:0.85}),
         trunkM=new THREE.MeshStandardMaterial({color:0x6b4a2c,roughness:0.9}),
@@ -12927,19 +12955,21 @@ function buildAirportBridge(){
   const c=AB_C, a=AB_A, len=Math.hypot(a.x-c.x,a.z-c.z), dx=(a.x-c.x)/len, dz=(a.z-c.z)/len, nx=-dz, nz=dx;
   ABRIDGE={x0:c.x,z0:c.z,x1:a.x,z1:a.z,len:len,dx:dx,dz:dz,nx:nx,nz:nz,y0:15,y1:11,arch:7};
   const ang=Math.atan2(dx,dz), hAt=(t)=>15+(11-15)*t+7*Math.sin(t*Math.PI), wp=(al,perp,y)=>[c.x+dx*al+nx*perp, y, c.z+dz*al+nz*perp];
-  const grp=new THREE.Group(); grp.matrixAutoUpdate=false; scene.add(grp);
-  const conc=new THREE.MeshStandardMaterial({color:0xc2c6cb,roughness:0.9}),
-        asph=new THREE.MeshStandardMaterial({color:0x33353b,roughness:0.95,polygonOffset:true,polygonOffsetFactor:-2,polygonOffsetUnits:-2}),
-        lineM=new THREE.MeshStandardMaterial({color:0xe9e2c8,roughness:0.6,polygonOffset:true,polygonOffsetFactor:-4,polygonOffsetUnits:-4}),
-        steelW=new THREE.MeshStandardMaterial({color:0xeceef1,roughness:0.5,metalness:0.35,envMapIntensity:0.7}),
-        cableM=new THREE.MeshStandardMaterial({color:0x9aa0a6,roughness:0.5,metalness:0.6}),
-        railS=new THREE.MeshStandardMaterial({color:0xbfc6cc,roughness:0.4,metalness:0.7}),
-        para=new THREE.MeshStandardMaterial({color:0xd3d7db,roughness:0.7}),
-        walkM=new THREE.MeshStandardMaterial({color:0x8b9096,roughness:0.85}),
-        ballast=new THREE.MeshStandardMaterial({color:0x55585d,roughness:0.95}),
-        sleeper=new THREE.MeshStandardMaterial({color:0x3b3f45,roughness:0.9}),
-        lampHead=new THREE.MeshStandardMaterial({color:0xfff2c8,emissive:0xffcc66,emissiveIntensity:2.0,roughness:0.4}),
-        lampDk=new THREE.MeshStandardMaterial({color:0x2a2c31,roughness:0.5,metalness:0.5});
+  const grp=new THREE.Group(); grp.matrixAutoUpdate=false; grp.userData.staticMerge=true; scene.add(grp);
+  // envMapIntensity capped on all deck/steel materials — at the default (1.0) the HDRI sky
+  // reflection made the whole bridge glow blinding white in daylight
+  const conc=new THREE.MeshStandardMaterial({color:0xc2c6cb,roughness:0.9,envMapIntensity:0.25}),
+        asph=new THREE.MeshStandardMaterial({color:0x33353b,roughness:0.95,envMapIntensity:0.12,polygonOffset:true,polygonOffsetFactor:-2,polygonOffsetUnits:-2}),
+        lineM=new THREE.MeshStandardMaterial({color:0xe9e2c8,roughness:0.6,envMapIntensity:0.2,polygonOffset:true,polygonOffsetFactor:-4,polygonOffsetUnits:-4}),
+        steelW=new THREE.MeshStandardMaterial({color:0xeceef1,roughness:0.5,metalness:0.35,envMapIntensity:0.4}),
+        cableM=new THREE.MeshStandardMaterial({color:0x9aa0a6,roughness:0.5,metalness:0.6,envMapIntensity:0.4}),
+        railS=new THREE.MeshStandardMaterial({color:0xbfc6cc,roughness:0.4,metalness:0.7,envMapIntensity:0.4}),
+        para=new THREE.MeshStandardMaterial({color:0xd3d7db,roughness:0.7,envMapIntensity:0.25}),
+        walkM=new THREE.MeshStandardMaterial({color:0x8b9096,roughness:0.85,envMapIntensity:0.2}),
+        ballast=new THREE.MeshStandardMaterial({color:0x55585d,roughness:0.95,envMapIntensity:0.15}),
+        sleeper=new THREE.MeshStandardMaterial({color:0x3b3f45,roughness:0.9,envMapIntensity:0.15}),
+        lampHead=new THREE.MeshStandardMaterial({color:0xfff2c8,emissive:0xffcc66,emissiveIntensity:1.0,roughness:0.4}),
+        lampDk=new THREE.MeshStandardMaterial({color:0x2a2c31,roughness:0.5,metalness:0.5,envMapIntensity:0.3});
   const N=26, seg=len/N, ROAD=-4, RAIL=6.5, HALF=13;
   // paved bridge-foot plaza where the perimeter boulevard meets the ramp
   { const foot=new THREE.Mesh(new THREE.CylinderGeometry(28,28,0.4,32),asph); foot.position.set(c.x,15.02,c.z); foot.receiveShadow=true; grp.add(foot);
@@ -13078,6 +13108,50 @@ function manageLights(dt){ if(LIGHTS_POOL.length<=MAX_LIVE_LIGHTS) return;   // 
   for(const L of LIGHTS_POOL){ L.getWorldPosition(_lp); L._d=(_lp.x-c.x)*(_lp.x-c.x)+(_lp.y-c.y)*(_lp.y-c.y)+(_lp.z-c.z)*(_lp.z-c.z); }
   LIGHTS_POOL.sort((a,b)=>a._d-b._d);
   for(let i=0;i<LIGHTS_POOL.length;i++){ const v=i<MAX_LIVE_LIGHTS; if(LIGHTS_POOL[i].visible!==v) LIGHTS_POOL[i].visible=v; } }
+// merge the hundreds of small same-material static meshes that sit DIRECTLY under a static
+// container group (road dashes, kerbs, sidewalk pads, lamp posts, port bollards, runway marks…)
+// into ONE mesh per material. Animated things (traffic, NPCs, cranes, landmarks) live in nested
+// groups, so a direct-children-only sweep can never freeze them. The city alone was several
+// thousand extra draw calls per frame without this.
+function mergeStaticDirect(root){
+  if(!root) return;
+  const byMat=new Map();
+  for(const o of root.children){
+    if(!o.isMesh || o.isInstancedMesh || Array.isArray(o.material)) continue;
+    if(o===WATER || o.material===roadMat || o.material.transparent) continue;   // roads stay separate (the road audit reads them per-box)
+    const g=o.geometry; if(!g || !g.index || !g.attributes.position || !g.attributes.normal || !g.attributes.uv) continue;
+    const det=o.matrixWorld.determinant();
+    if(!isFinite(det)||Math.abs(det)<1e-10) continue;                  // degenerate transform → NaN normals; leave unmerged
+    if(!byMat.has(o.material)) byMat.set(o.material,[]);
+    byMat.get(o.material).push(o);
+  }
+  root.updateMatrixWorld(true);
+  const nm=new THREE.Matrix3(), v=new THREE.Vector3();
+  byMat.forEach((list,mat)=>{ if(list.length<30) return;
+    let vtot=0,itot=0;
+    for(const m of list){ vtot+=m.geometry.attributes.position.count; itot+=m.geometry.index.count; }
+    const pos=new Float32Array(vtot*3), nor=new Float32Array(vtot*3), uv=new Float32Array(vtot*2);
+    const idx=(vtot>65535)?new Uint32Array(itot):new Uint16Array(itot);
+    let vo=0,io=0;
+    for(const m of list){ const g=m.geometry, mw=m.matrixWorld; nm.getNormalMatrix(mw);
+      const p=g.attributes.position, n=g.attributes.normal, u=g.attributes.uv, ix=g.index;
+      for(let i=0;i<p.count;i++){ v.fromBufferAttribute(p,i).applyMatrix4(mw);
+        pos[(vo+i)*3]=v.x; pos[(vo+i)*3+1]=v.y; pos[(vo+i)*3+2]=v.z;
+        v.fromBufferAttribute(n,i).applyMatrix3(nm).normalize();
+        if(!isFinite(v.x+v.y+v.z)) v.set(0,1,0);                       // zero-length source normal
+        nor[(vo+i)*3]=v.x; nor[(vo+i)*3+1]=v.y; nor[(vo+i)*3+2]=v.z;
+        uv[(vo+i)*2]=u.getX(i); uv[(vo+i)*2+1]=u.getY(i); }
+      for(let i=0;i<ix.count;i++) idx[io+i]=ix.getX(i)+vo;
+      vo+=p.count; io+=ix.count; }
+    for(const m of list) root.remove(m);
+    const g2=new THREE.BufferGeometry();
+    g2.setAttribute('position',new THREE.BufferAttribute(pos,3));
+    g2.setAttribute('normal',new THREE.BufferAttribute(nor,3));
+    g2.setAttribute('uv',new THREE.BufferAttribute(uv,2));
+    g2.setIndex(new THREE.BufferAttribute(idx,1));
+    const mm=new THREE.Mesh(g2,mat); mm.name='__mergedStatic'; mm.receiveShadow=true; root.add(mm);
+  });
+}
 function optimizeScene(){
   scene.updateMatrixWorld(true);
   // gather every decorative point/spot light; only the few nearest the camera will stay lit
@@ -13089,6 +13163,75 @@ function optimizeScene(){
     if(!o.geometry.boundingBox) o.geometry.computeBoundingBox(); const bb=o.geometry.boundingBox; if(!bb) return;
     o.getWorldScale(_s); const mx=Math.max((bb.max.x-bb.min.x)*Math.abs(_s.x),(bb.max.y-bb.min.y)*Math.abs(_s.y),(bb.max.z-bb.min.z)*Math.abs(_s.z));
     if(mx<6.5) o.castShadow=false; });
+  // heavy instanced models (the downloaded trees) must not cast — every instance re-renders its
+  // full poly count into the shadow map each shadow pass
+  scene.traverse(o=>{ if(o.isInstancedMesh && o.geometry && o.geometry.attributes.position && o.geometry.attributes.position.count>2500) o.castShadow=false; });
+  // collapse static clutter into one draw call per material
+  mergeStaticDirect(cityGroup); mergeStaticDirect(airportGroup); mergeStaticDirect(portGroup);
+  // collapse each static SUB-GROUP (a building ≈ 40–100 meshes) into one mesh per material.
+  // Anything animated is protected: every object referenced by an animation registry — and
+  // its whole containing group — is skipped, as is any group under 20 meshes (people, ducks…).
+  const animSet=_collectAnimated();
+  const roots=[cityGroup, airportGroup, portGroup];
+  for(const c of scene.children){ if(!c.isGroup) continue; const p=c.position;   // farm & village island containers
+    if(Math.hypot(p.x-FARM.x,p.z-FARM.z)<4 || Math.hypot(p.x-VILLAGE.x,p.z-VILLAGE.z)<4) roots.push(c); }
+  for(const r of roots){ if(!r) continue; for(const c of [...r.children]){ if(c.isGroup) mergeGroupLocal(c,animSet); } }
+  // static one-piece structures (the two bridges) flagged at build time
+  for(const c of scene.children){ if(c.isGroup && c.userData && c.userData.staticMerge) mergeStaticDirect(c); }
+}
+// every Object3D referenced by an animation registry (landmark anims, traffic, NPCs, cranes …)
+function _collectAnimated(){
+  const set=new Set();
+  function addVal(v,depth){ if(!v||depth>3) return;
+    if(v.isObject3D){ set.add(v); return; }
+    if(Array.isArray(v)){ for(const e of v) addVal(e,depth+1); return; }
+    if(typeof v==='object'){ for(const k in v) addVal(v[k],depth+1); } }
+  const regs=['LM_ANIMS','TRAFFIC','NPCS','AREA_NPCS','VILLAGE_NPCS','FARM_SAILS','FARM_TRACTOR',
+              'PORT_CRANES','PORT_STACKERS','PORT_TRUCKS',
+              'FARM_ANIMALS','VILLAGE_DUCKS','VILLAGE_SHOPKEEPERS','VILLAGE_RIPPLES'];
+  for(const name of regs){ try{ addVal(eval('typeof '+name+'!=="undefined"?'+name+':null'),0); }catch(e){} }
+  return set;
+}
+// merge a static group's same-material meshes IN ITS LOCAL SPACE (the group can still be
+// repositioned as a whole). Skips the group entirely if it contains any animated object.
+function mergeGroupLocal(g, animSet){
+  let bad=false, count=0;
+  g.traverse(o=>{ if(animSet.has(o)) bad=true; if(o.isMesh) count++; });
+  if(bad || count<10) return;
+  g.updateMatrixWorld(true);
+  const inv=new THREE.Matrix4().copy(g.matrixWorld).invert();
+  const byMat=new Map(), rel=new THREE.Matrix4(), nm=new THREE.Matrix3(), v=new THREE.Vector3();
+  const list=[];
+  g.traverse(o=>{ if(o.isMesh && !o.isInstancedMesh && !o.isSkinnedMesh && !Array.isArray(o.material)
+    && !o.material.vertexColors
+    && o.geometry && o.geometry.index && o.geometry.attributes.position && o.geometry.attributes.normal && o.geometry.attributes.uv
+    && !(o.geometry.morphAttributes && o.geometry.morphAttributes.position)) list.push(o); });
+  for(const m of list){ rel.copy(inv).multiply(m.matrixWorld); const det=rel.determinant();
+    if(!isFinite(det)||Math.abs(det)<1e-10) continue;                  // degenerate (zero-scale) transform → NaN normals; leave unmerged
+    if(!byMat.has(m.material)) byMat.set(m.material,[]); byMat.get(m.material).push(m); }
+  byMat.forEach((ms,mat)=>{ if(ms.length<2) return;
+    let vtot=0,itot=0; for(const m of ms){ vtot+=m.geometry.attributes.position.count; itot+=m.geometry.index.count; }
+    const pos=new Float32Array(vtot*3), nor=new Float32Array(vtot*3), uvv=new Float32Array(vtot*2);
+    const idx=(vtot>65535)?new Uint32Array(itot):new Uint16Array(itot);
+    let vo=0,io=0,cast=false;
+    for(const m of ms){ rel.copy(inv).multiply(m.matrixWorld); nm.getNormalMatrix(rel); cast=cast||m.castShadow;
+      const p=m.geometry.attributes.position, n=m.geometry.attributes.normal, u=m.geometry.attributes.uv, ix=m.geometry.index;
+      for(let i=0;i<p.count;i++){ v.fromBufferAttribute(p,i).applyMatrix4(rel);
+        pos[(vo+i)*3]=v.x; pos[(vo+i)*3+1]=v.y; pos[(vo+i)*3+2]=v.z;
+        v.fromBufferAttribute(n,i).applyMatrix3(nm).normalize();
+        if(!isFinite(v.x+v.y+v.z)) v.set(0,1,0);                       // zero-length source normal
+        nor[(vo+i)*3]=v.x; nor[(vo+i)*3+1]=v.y; nor[(vo+i)*3+2]=v.z;
+        uvv[(vo+i)*2]=u.getX(i); uvv[(vo+i)*2+1]=u.getY(i); }
+      for(let i=0;i<ix.count;i++) idx[io+i]=ix.getX(i)+vo;
+      vo+=p.count; io+=ix.count; }
+    for(const m of ms) m.parent.remove(m);
+    const g2=new THREE.BufferGeometry();
+    g2.setAttribute('position',new THREE.BufferAttribute(pos,3));
+    g2.setAttribute('normal',new THREE.BufferAttribute(nor,3));
+    g2.setAttribute('uv',new THREE.BufferAttribute(uvv,2));
+    g2.setIndex(new THREE.BufferAttribute(idx,1));
+    const mm=new THREE.Mesh(g2,mat); mm.name='__mergedStatic'; mm.castShadow=cast; mm.receiveShadow=true; g.add(mm);
+  });
 }
 function buildWorld(){
   // ---- terrain (islands + seabed) ----
@@ -13127,7 +13270,7 @@ function buildWorld(){
 // ============================================================
 //  WATER — Gerstner displacement + HDRI reflection + foam + normal detail
 // ============================================================
-const SEG=540, SIZE=4400;
+const SEG=320, SIZE=4400;   // 320² ≈ 103k verts (540² was 292k — the Gerstner loop runs per vertex; normal maps carry the fine detail)
 function buildWater(){
   const geo=new THREE.PlaneGeometry(SIZE,SIZE,SEG,SEG); geo.rotateX(-Math.PI/2);
   const mat=new THREE.MeshStandardMaterial({ color:0x0c3346, roughness:0.075, metalness:0.0,
@@ -13194,6 +13337,11 @@ function buildWater(){
         roughnessFactor = mix(roughnessFactor, 0.55, clamp(fm,0.0,1.0)); }`);
   };
   WATER=new THREE.Mesh(geo,mat); WATER.renderOrder=1; scene.add(WATER);
+  // endless-ocean skirt: a huge flat plane just below the wave field so the sea never shows an
+  // edge — the bare seabed used to appear beyond the 4.4 km detailed plane from any high viewpoint
+  const skirt=new THREE.Mesh(new THREE.PlaneGeometry(40000,40000).rotateX(-Math.PI/2),
+    new THREE.MeshStandardMaterial({color:0x0c3346, roughness:0.18, metalness:0, envMapIntensity:1.2}));
+  skirt.position.y=-4; scene.add(skirt);   // below the deepest wave trough so it never pokes through the swell
 }
 
 // ============================================================
@@ -13391,16 +13539,21 @@ const DOCK=(function(){ const d=new THREE.Vector2(-CITY.x,-CITY.z).normalize();
   return {cx:CITY.x,cz:CITY.z,dx:d.x,dz:d.y,rx:d.y,rz:-d.x,ang:Math.atan2(d.x,d.y),start:430,len:104,width:15,deckTop:3.35,endCd:534}; })();
 function onDock(x,z){ const ax=x-DOCK.cx,az=z-DOCK.cz, al=ax*DOCK.dx+az*DOCK.dz, lt=Math.abs(ax*DOCK.rx+az*DOCK.rz); return al>DOCK.start-3 && al<DOCK.endCd+3 && lt<DOCK.width/2; }
 function dockReach(x,z){ const ax=x-DOCK.cx,az=z-DOCK.cz, al=ax*DOCK.dx+az*DOCK.dz, lt=Math.abs(ax*DOCK.rx+az*DOCK.rz); return al>DOCK.start-8 && al<DOCK.endCd+8 && lt<DOCK.width/2+9; }
-function avatarGround(x,z){ return onABridgeDeck(x,z)?abH(x,z):onBridge(x,z)?bridgeHeight(x,z):onQuay(x,z)?PORT.deckY:onDock(x,z)?DOCK.deckTop:landH(x,z); }
+// the harbour causeway ramps from the city shelf (15) down to the pier deck instead of following
+// the shore slope underwater; causewayTop() is the walkable/drivable surface height on it
+function onCausewayRamp(x,z){ const ax=x-DOCK.cx,az=z-DOCK.cz, al=ax*DOCK.dx+az*DOCK.dz, lt=Math.abs(ax*DOCK.rx+az*DOCK.rz); return al>300 && al<DOCK.start+2 && lt<DOCK.width/2+5; }
+function causewayTop(x,z){ const ax=x-DOCK.cx,az=z-DOCK.cz, al=ax*DOCK.dx+az*DOCK.dz;
+  const t=THREE.MathUtils.smoothstep(al,308,430); return Math.max(landH(x,z), 15+(DOCK.deckTop-15.12)*t)+0.12; }
+function avatarGround(x,z){ return onABridgeDeck(x,z)?abH(x,z):onBridge(x,z)?bridgeHeight(x,z):onQuay(x,z)?PORT.deckY:onDock(x,z)?DOCK.deckTop:onCausewayRamp(x,z)?causewayTop(x,z):landH(x,z); }
 // the drivable road network — keeps the car on the streets (grid lanes, avenues, roundabout rings,
 // the perimeter boulevard and the harbour causeway) instead of bumping over sidewalks, parks & blocks
 function onCityRoad(x,z){
   const dx=x-CITY.x, dz=z-CITY.z, cd=Math.hypot(dx,dz), ce=cityEdge(Math.atan2(dz,dx));
+  const al=dx*DOCK.dx+dz*DOCK.dz, lat=Math.abs(dx*DOCK.rx+dz*DOCK.rz);
+  if(al>30 && al<432 && lat<DOCK.width/2+3) return true;                        // harbour causeway / avenue down to the dock (checked BEFORE the shelf reject — the ramp runs off the shelf)
   if(cd > ce+2) return false;                                                  // off the city shelf
   if(x<PORT.edgeX+6 && x>PORT.faceX-6 && z>PORT.z0-6 && z<PORT.z1+6) return false;   // not across the cargo port
   for(const P of LM_PLAZAS){ const pd=Math.hypot(x-P.x,z-P.z); if(pd<P.r-11) return false; if(pd<P.r+8) return true; }  // roundabout ring drivable, landmark centre blocked
-  const al=dx*DOCK.dx+dz*DOCK.dz, lat=Math.abs(dx*DOCK.rx+dz*DOCK.rz);
-  if(al>30 && al<432 && lat<DOCK.width/2+3) return true;                        // harbour causeway / avenue down to the dock
   if(inAvenueRoad(dx,dz)) return true;                                          // diagonal boulevards
   if(Math.abs(cd-(ce-15))<8) return true;                                       // perimeter boulevard ring
   if(cd < ce-9){ const RH=8;                                                    // the street grid (a lane on every (k+0.5)*GRID line)
@@ -14573,7 +14726,7 @@ function updateFoot(dt){
   const tgt=(fwd?3.4*(keys['shift']?1.95:1):0)-(bwd?2.0:0);   // walk ~12 km/h, run (Shift) ~24 km/h
   AV.speed += (tgt-AV.speed)*Math.min(1,dt*9);
   const nx=AV.x+Math.sin(AV.heading)*AV.speed*dt, nz=AV.z+Math.cos(AV.heading)*AV.speed*dt;
-  if(onDock(nx,nz)||onQuay(nx,nz)||onBridge(nx,nz)||onABridgeDeck(nx,nz)||onCarBridge(nx,nz)||landH(nx,nz)>0.4){ AV.x=nx; AV.z=nz; } else AV.speed=0;   // don't walk into deep water (but do cross the bridges)
+  if(onDock(nx,nz)||onQuay(nx,nz)||onBridge(nx,nz)||onABridgeDeck(nx,nz)||onCarBridge(nx,nz)||onCausewayRamp(nx,nz)||landH(nx,nz)>0.4){ AV.x=nx; AV.z=nz; } else AV.speed=0;   // don't walk into deep water (but do cross the bridges)
   AV.y=avatarGround(AV.x,AV.z);
   AV.step += Math.abs(AV.speed)*dt*2.4;
   const sw=Math.sin(AV.step)*0.5*Math.min(1,Math.abs(AV.speed)/4), L=avatar.userData;
@@ -14592,7 +14745,7 @@ function updateCar(dt){
   else if(drv(nx,CAR.z)){ CAR.x=nx; CAR.speed*=0.6; }        // slide along X
   else if(drv(CAR.x,nz)){ CAR.z=nz; CAR.speed*=0.6; }        // slide along Z
   else CAR.speed*=-0.3;                                       // nose into a kerb head-on → nudge back
-  CAR.y=onABridgeDeck(CAR.x,CAR.z)?abH(CAR.x,CAR.z):(onQuay(CAR.x,CAR.z)?PORT.deckY:landH(CAR.x,CAR.z));
+  CAR.y=onABridgeDeck(CAR.x,CAR.z)?abH(CAR.x,CAR.z):(onQuay(CAR.x,CAR.z)?PORT.deckY:(onCausewayRamp(CAR.x,CAR.z)?causewayTop(CAR.x,CAR.z):landH(CAR.x,CAR.z)));
   car3d.position.set(CAR.x,CAR.y,CAR.z); car3d.rotation.y=CAR.heading+carYaw;
 }
 const PROMPTS={dock:'Press  F  — dock & explore on foot', drive:'Press  F  — get in the car', ride:'Press  F  — ride the jetski', exit:'Press  F  — get out of the car', board:'Press  F  — board the boat', land:'Press  F  — tie up at the dock', boardShip:'Press  F  — board the ship', leaveShip:'Press  F  — disembark', landIsland:'Press  F  — step onto the island', elevator:'Press  F  — take the elevator (next deck)', stairUp:'Press  F  — up the stairs', stairDown:'Press  F  — down the stairs', heli:'Press  F  — helicopter', heliExit:'Press  F  — get out of the helicopter', flyPlane:'Press  F  — fly the plane', ridePlane:'Press  F  — board for a round trip', planeExit:'Press  F  — get out of the plane', boardTrain:'Press  F  — ride the shuttle train', trainExit:'Press  F  — step off the train', flyJet:'Press  F  — fly the fighter jet', jetExit:'Press  F  — land & hop out of the jet'};
@@ -14821,8 +14974,9 @@ function loop(now){
     rGeo.attributes.position.needsUpdate=true; }
   renderer.toneMappingExposure=Math.max(0.18, exposureBase-0.22*storm); scene.fog.density=0.00055+0.0007*storm;
 
-  // water follows the camera target; feed the shared clock to the GPU
-  WATER.position.set(Math.round(FX),0,Math.round(FZ));
+  // water follows the CAMERA (not the player) so the detailed plane always covers the view —
+  // in freecam/jet/heli the old player-centred plane showed its edge; waves are world-anchored via uOff
+  WATER.position.set(Math.round(camera.position.x),0,Math.round(camera.position.z));
   if(seaU){ seaU.uTime.value=gameT; seaU.uStorm.value=storm; seaU.uOff.value.set(WATER.position.x,WATER.position.z); }
 
   // camera (per mode) — user orbit (cam.yaw/pitch/dist) layered on the chase view
@@ -14905,8 +15059,10 @@ function loop(now){
   updateBridgeTraffic(dt);   // cars crossing the airport bridge
   updateAreaNPCs(dt);   // station / airport crowds
   if(pmode!=='boat') mooredBoatBob();
+  _shadowFrame=(_shadowFrame+1)&1; if(_shadowFrame===0) renderer.shadowMap.needsUpdate=true;   // half-rate shadow pass
   composer.render();
 }
+let _shadowFrame=0;
 function boostFov(){ return keys['shift']?4:0; }
 
 // ============================================================
@@ -14953,6 +15109,7 @@ const RS_FLOOR=0.5;
 function setRenderScale(s){ renderScale=s; const pr=DPR*s;
   renderer.setPixelRatio(pr); renderer.setSize(VW,VH,false);
   composer.setPixelRatio(pr);
+  bloom.setSize(Math.round(VW*pr*0.5),Math.round(VH*pr*0.5));   // bloom at half res — it's a blur; full-res mips were pure waste
   fxaa.material.uniforms.resolution.value.set(1/(VW*pr),1/(VH*pr)); }
 setRenderScale(1);
 function adaptResolution(dt){ warmup+=dt; if(warmup<2.5) return;       // let things settle first

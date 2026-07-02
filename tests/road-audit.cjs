@@ -17,8 +17,13 @@
  * Exit code 0 = pass, 1 = violations found, 2 = harness error.
  */
 const { execSync, spawn } = require('child_process');
-const URL = process.env.URL || 'http://mini-games-.test/wipeoutbay.html';
-const CHROME = process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const fs = require('fs'), os = require('os'), path = require('path');
+const URL = process.env.URL || 'http://mini-games.test/wipeoutbay.html';
+const CHROME = process.env.CHROME || [
+  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+  'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+  'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+].find(p => { try { return fs.existsSync(p); } catch(e){ return false; } });
 const PORT = 9333;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -34,7 +39,9 @@ const AUDIT = `(function(){
   const LM=(typeof LANDMARK_DEFS!=='undefined'?LANDMARK_DEFS:[]).filter(L=>!L.abs).map(L=>({x:CITY.x+(L.dx||0),z:CITY.z+(L.dz||0),r:(L.clear||20)+8}));
   function nearLM(x,z){ for(const L of LM) if(Math.hypot(x-L.x,z-L.z)<L.r) return true; return false; }
   const roads=[],paths=[],solids=[];
-  scene.traverse(function(o){ if(!o.isMesh||!o.geometry||o.isInstancedMesh) return; const m=o.material; const col=(m&&m.color)?m.color.getHex():-1;
+  scene.traverse(function(o){ if(!o.isMesh||!o.geometry||o.isInstancedMesh) return;
+    if(o.name==='__mergedStatic') return;   // perf-merged static clutter — coarse combined bbox, not a real object footprint (buildings are still covered by the GROUP check below)
+    const m=o.material; const col=(m&&m.color)?m.color.getHex():-1;
     if(m===roadMat){ if(o.geometry.type==='BoxGeometry') roads.push(orient(o)); return; }
     if(SURF.has(m)) return; const b=new THREE.Box3().setFromObject(o); const sy=b.max.y-b.min.y,sx=b.max.x-b.min.x,sz=b.max.z-b.min.z;
     if(PATHCOL.has(col)&&sy<0.6){ if(o.geometry.type==='BoxGeometry') paths.push(orient(o)); return; }
@@ -121,7 +128,8 @@ function rpc(ws,method,params){ return new Promise((res,rej)=>{ const i=++id; pe
 
 (async()=>{
   // launch chrome
-  const udd = execSync('mktemp -d').toString().trim();
+  if(!CHROME){ console.error('Chrome not found — set CHROME=<path to chrome binary>'); process.exit(2); }
+  const udd = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-audit-'));
   const chrome = spawn(CHROME, ['--headless=new','--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader',
     '--remote-debugging-port='+PORT,'--window-size=420,300','--user-data-dir='+udd, URL], {stdio:'ignore', detached:false});
   const cleanup=()=>{ try{ process.kill(-chrome.pid); }catch(e){} try{ chrome.kill('SIGKILL'); }catch(e){} };
